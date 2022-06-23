@@ -1,0 +1,20 @@
+server:
+  port: 8088
+
+shiro:
+  limiter:
+    enable: true
+    rate: 1
+    capacity: 5
+    await-task: false
+  ws-config:
+    ws-url: "/qimenbot/ws/"
+  plugin-list:
+    - com.mryunqi.qimenbot.Plugin.DemoPlugin
+
+
+plugin:
+  runMode: dev
+  mainPackage: com.mryunqi.qimenbot
+  pluginPath:
+    - ~/plugins
