@@ -11,3 +11,15 @@
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# AI Agent 工具本地文件（源文件在 skills/ 目录，通过 install.sh 安装）
+.claude/plans/
+.claude/worktrees/
+.claude/settings.local.json
+/.cursor/
+/.windsurf/
+/.kiro/
+/GEMINI.md
+/AGENTS.md
+.github/copilot-instructions.md
+.github/instructions/

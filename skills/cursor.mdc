@@ -1,0 +1,84 @@
+---
+description: QimenBot 插件开发规则 — 编辑 plugins/ 目录下的 Rust 文件时自动激活，提供宏、API、消息构建等开发指导。
+globs: plugins/**/*.rs
+alwaysApply: false
+---
+
+# QimenBot 插件开发
+
+导入：`use qimen_plugin_api::prelude::*;`
+
+## 模块与命令
+
+```rust
+#[module(id = "my-plugin", version = "0.1.0", name = "名称", description = "描述", interceptors = [MyInterceptor])]
+#[commands]
+impl MyPlugin {
+    #[command("描述", aliases = ["别名"], examples = ["/cmd arg"], category = "general", role = "admin", hidden)]
+    async fn cmd(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> CommandPluginSignal { ... }
+
+    #[notice(GroupPoke, PrivatePoke)]
+    async fn on_poke(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal { ... }
+
+    #[request(Friend)]
+    async fn on_friend(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal { ... }
+
+    #[meta(Heartbeat)]
+    async fn on_heartbeat(&self) -> SystemPluginSignal { SystemPluginSignal::Continue }
+}
+```
+
+## 命令 4 种签名
+
+- `async fn cmd(&self) -> &str`
+- `async fn cmd(&self, ctx: &CommandPluginContext<'_>) -> String`
+- `async fn cmd(&self, args: Vec<String>) -> Message`
+- `async fn cmd(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> CommandPluginSignal`
+
+返回值自动转换：`&str`/`String` → Reply(text)，`Message` → Reply(msg)，`Result<T,E>` → Ok转T
+
+## 信号
+
+- CommandPluginSignal: `Reply(Message)` | `Continue` | `Block(Message)` | `Ignore`
+- SystemPluginSignal: `Continue` | `Reply(Message)` | `ApproveFriend{flag,remark}` | `RejectFriend{flag,reason}` | `ApproveGroupInvite{flag,sub_type}` | `Block(Message)` | `Ignore`
+
+## 上下文
+
+- CommandPluginContext: `sender_id()`, `group_id_i64()`, `is_group()`, `is_private()`, `plain_text()`, `message()`, `onebot_actions()`
+- event: `sender_nickname()`, `sender_role()`, `message_id()`, `is_at_self()`, `is_group_admin_or_owner()`
+- SystemPluginContext: `bot_id`, `event`(原始JSON), `onebot_actions()`
+
+## 消息
+
+```rust
+Message::builder().text("文本").at("QQ号").image("URL").face("1").reply(id).keyboard(kb).build()
+```
+
+KeyboardBuilder: `.command_button("标签", "/cmd")`, `.jump_button("标签", "url")`, `.row()`, `.build()`
+
+## OneBot API
+
+```rust
+let actions = ctx.onebot_actions();
+actions.send_group_msg(group_id, msg).await
+actions.set_group_ban(group_id, user_id, duration).await
+actions.get_group_info(group_id, false).await
+```
+
+## 拦截器
+
+```rust
+pub struct MyInterceptor;
+#[async_trait]
+impl MessageEventInterceptor for MyInterceptor {
+    async fn pre_handle(&self, bot_id: &str, event: &NormalizedEvent) -> bool { true }
+}
+// 注册：#[module(interceptors = [MyInterceptor])]
+```
+
+## 规范
+
+- 中英文双语注释，tracing 日志
+- 新插件放 `plugins/`，根 Cargo.toml workspace members 注册
+- 参考 `plugins/qimen-plugin-example/src/`
+- `cargo check --workspace` 验证
