@@ -1,0 +1,52 @@
+[workspace]
+members = [
+  "apps/qimenbotd",
+  "apps/qimenctl",
+  "plugins/qimen-plugin-example",
+  "crates/abi-stable-host-api",
+  "crates/qimen-framework",
+  "crates/qimen-host-types",
+  "crates/qimen-command-registry",
+  "crates/qimen-official-host",
+  "crates/qimen-error",
+  "crates/qimen-config",
+  "crates/qimen-observability",
+  "crates/qimen-message",
+  "crates/qimen-protocol-core",
+  "crates/qimen-transport-core",
+  "crates/qimen-runtime",
+  "crates/qimen-plugin-api",
+  "crates/qimen-plugin-host",
+  "crates/qimen-storage",
+  "crates/qimen-adapter-onebot11",
+  "crates/qimen-adapter-onebot12",
+  "crates/qimen-adapter-satori",
+  "crates/qimen-transport-ws",
+  "crates/qimen-transport-http",
+  "crates/qimen-mod-command",
+  "crates/qimen-mod-admin",
+  "crates/qimen-mod-scheduler",
+  "crates/qimen-mod-bridge",
+  "crates/qimen-testkit",
+  "crates/qimen-plugin-derive",
+]
+default-members = ["apps/qimenbotd"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.89"
+version = "0.1.0"
+
+[workspace.dependencies]
+abi_stable = "0.11"
+async-trait = "0.1"
+bytes = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }

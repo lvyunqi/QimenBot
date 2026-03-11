@@ -1,0 +1,11 @@
+[package]
+name = "qimen-transport-core"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+qimen-error = { path = "../qimen-error" }
+qimen-protocol-core = { path = "../qimen-protocol-core" }

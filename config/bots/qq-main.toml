@@ -1,0 +1,83 @@
+# ============================================================================
+# Bot 实例独立配置：qq-main / Bot Instance Config: qq-main
+# ============================================================================
+# 将 Bot 配置拆分到独立文件，便于多 Bot 管理。
+# 此文件的字段与 base.toml 中 [[bots]] 块的字段完全一致。
+
+# Bot 唯一标识
+id = "qq-main"
+
+# 通信协议："onebot11" | "onebot12" | "satori"
+protocol = "onebot11"
+
+# 传输方式："ws-forward" | "ws-reverse" | "http"
+transport = "ws-forward"
+
+# 正向 WebSocket 连接地址（填写你的 OneBot 实现端的 WS 监听地址）
+endpoint = "ws://127.0.0.1:3001"
+
+# 是否启用
+enabled = true
+
+# 此 Bot 启用的模块
+enabled_modules = ["command", "admin"]
+
+# 所有者用户 ID 列表（拥有最高权限）
+owners = ["123456"]
+
+# 管理员用户 ID 列表
+admins = []
+
+# ── 好友请求自动审批 ──
+
+# 是否自动同意所有好友请求
+auto_approve_friend_requests = false
+
+# 好友请求用户白名单（始终自动同意）
+auto_approve_friend_request_user_whitelist = []
+
+# 好友请求用户黑名单（始终自动拒绝）
+auto_approve_friend_request_user_blacklist = []
+
+# 验证消息关键词白名单（包含则自动同意）
+auto_approve_friend_request_comment_keywords = []
+
+# 验证消息关键词黑名单（包含则自动拒绝）
+auto_reject_friend_request_comment_keywords = []
+
+# 自动同意时的备注
+auto_approve_friend_request_remark = ""
+
+# ── 群邀请自动审批 ──
+
+# 是否自动同意所有群邀请
+auto_approve_group_invites = false
+
+# 群邀请用户白名单
+auto_approve_group_invite_user_whitelist = []
+
+# 群邀请用户黑名单
+auto_approve_group_invite_user_blacklist = []
+
+# 群号白名单（被邀请加入这些群时自动同意）
+auto_approve_group_invite_group_whitelist = []
+
+# 群号黑名单（被邀请加入这些群时自动拒绝）
+auto_approve_group_invite_group_blacklist = []
+
+# 邀请验证消息关键词白名单
+auto_approve_group_invite_comment_keywords = []
+
+# 邀请验证消息关键词黑名单
+auto_reject_group_invite_comment_keywords = []
+
+# 自动拒绝时的拒绝理由
+auto_reject_group_invite_reason = ""
+
+# ── 戳一戳自动回复 ──
+
+# 是否启用
+auto_reply_poke_enabled = true
+
+# 回复内容
+auto_reply_poke_message = "别戳了，我在忙。"

@@ -1,0 +1,22 @@
+# ============================================================================
+# 开发环境覆盖配置 / Development Environment Overrides
+# ============================================================================
+# 此文件中的字段会覆盖 base.toml 中的同名字段。
+# 仅在 runtime.env = "dev" 时生效。
+
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 15
+task_grace_secs = 5
+
+[observability]
+# 开发环境使用 debug 级别，输出更详细的日志
+level = "debug"
+json_logs = false
+metrics_bind = "127.0.0.1:9090"
+
+[official_host]
+builtin_modules = ["command", "admin", "scheduler", "bridge"]
+plugin_modules = ["example-plugin"]
+plugin_state_path = "config/plugin-state.toml"
+plugin_bin_dir = "plugins/bin"

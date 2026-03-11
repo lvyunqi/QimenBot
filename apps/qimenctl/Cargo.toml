@@ -1,0 +1,10 @@
+[package]
+name = "qimenctl"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-config = { path = "../../crates/qimen-config" }
+qimen-error = { path = "../../crates/qimen-error" }

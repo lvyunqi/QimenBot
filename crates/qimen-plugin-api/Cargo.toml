@@ -1,0 +1,15 @@
+[package]
+name = "qimen-plugin-api"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+qimen-error = { path = "../qimen-error" }
+qimen-message = { path = "../qimen-message" }
+qimen-plugin-derive = { path = "../qimen-plugin-derive" }
+qimen-protocol-core = { path = "../qimen-protocol-core" }
+serde.workspace = true
+serde_json.workspace = true

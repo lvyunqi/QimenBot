@@ -1,0 +1,90 @@
+/* ── 品牌色：紫色系，匹配 logo 色调 ── */
+:root {
+  --vp-c-brand-1: #8b5cf6;
+  --vp-c-brand-2: #7c3aed;
+  --vp-c-brand-3: #6d28d9;
+  --vp-c-brand-soft: rgba(139, 92, 246, 0.14);
+
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: #fff;
+  --vp-button-brand-bg: #7c3aed;
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: #fff;
+  --vp-button-brand-hover-bg: #6d28d9;
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: #fff;
+  --vp-button-brand-active-bg: #5b21b6;
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #7c3aed 30%, #c084fc);
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #7c3aed33 50%, #c084fc33 50%);
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+.dark {
+  --vp-c-brand-1: #a78bfa;
+  --vp-c-brand-2: #8b5cf6;
+  --vp-c-brand-3: #7c3aed;
+  --vp-c-brand-soft: rgba(167, 139, 250, 0.14);
+
+  --vp-button-brand-bg: #7c3aed;
+  --vp-button-brand-hover-bg: #8b5cf6;
+  --vp-button-brand-active-bg: #6d28d9;
+
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #7c3aed44 50%, #c084fc44 50%);
+}
+
+/* ── 导航栏 logo：圆形 + 阴影 ── */
+.VPNavBarTitle .logo {
+  border-radius: 50% !important;
+  width: 32px !important;
+  height: 32px !important;
+  object-fit: cover !important;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+}
+
+/* ── 首页 Hero 图片：圆形裁剪 + 光晕 ── */
+.VPHero .image-src,
+.VPHero .VPImage,
+.VPHero img.VPImage {
+  border-radius: 50% !important;
+  object-fit: cover !important;
+  max-width: 200px !important;
+  max-height: 200px !important;
+  box-shadow:
+    0 0 30px rgba(139, 92, 246, 0.4),
+    0 0 60px rgba(139, 92, 246, 0.15) !important;
+  border: 3px solid rgba(139, 92, 246, 0.3) !important;
+  transition: box-shadow 0.3s ease !important;
+}
+
+.VPHero .image-src:hover,
+.VPHero .VPImage:hover,
+.VPHero img.VPImage:hover {
+  box-shadow:
+    0 0 40px rgba(139, 92, 246, 0.5),
+    0 0 80px rgba(139, 92, 246, 0.2) !important;
+}
+
+/* 暗色模式下光晕更明显 */
+.dark .VPHero .image-src,
+.dark .VPHero .VPImage,
+.dark .VPHero img.VPImage {
+  box-shadow:
+    0 0 40px rgba(167, 139, 250, 0.5),
+    0 0 80px rgba(167, 139, 250, 0.2) !important;
+  border-color: rgba(167, 139, 250, 0.4) !important;
+}
+
+.dark .VPHero .image-src:hover,
+.dark .VPHero .VPImage:hover,
+.dark .VPHero img.VPImage:hover {
+  box-shadow:
+    0 0 50px rgba(167, 139, 250, 0.6),
+    0 0 100px rgba(167, 139, 250, 0.25) !important;
+}
+
+/* ── Hero 图片容器背景光晕 ── */
+.VPHero .image-bg {
+  opacity: 0.8;
+}

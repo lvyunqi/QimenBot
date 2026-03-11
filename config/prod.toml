@@ -1,0 +1,22 @@
+# ============================================================================
+# 生产环境覆盖配置 / Production Environment Overrides
+# ============================================================================
+# 此文件中的字段会覆盖 base.toml 中的同名字段。
+# 仅在 runtime.env = "prod" 时生效。
+
+[runtime]
+env = "prod"
+
+# 生产环境给更长的关闭等待时间，确保所有消息处理完毕
+shutdown_timeout_secs = 30
+task_grace_secs = 10
+
+[observability]
+# 生产环境使用 info 级别，减少日志量
+level = "info"
+
+# 生产环境启用 JSON 日志，方便日志采集系统（ELK、Loki 等）解析
+json_logs = true
+
+# 生产环境监听所有网卡，以便 Prometheus 等采集工具拉取指标
+metrics_bind = "0.0.0.0:9090"

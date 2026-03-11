@@ -1,0 +1,10 @@
+[package]
+name = "qimen-command-registry"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-host-types = { path = "../qimen-host-types" }
+qimen-plugin-api = { path = "../qimen-plugin-api" }

@@ -1,0 +1,173 @@
+# ============================================================================
+# QimenBot 主配置文件 / Main Configuration
+# ============================================================================
+# 这是基础配置，dev.toml 和 prod.toml 可以覆盖其中的字段。
+# 支持环境变量占位符，格式：${ENV_VAR_NAME}
+# 例如：access_token = "${QQ_TOKEN}"
+
+# ── 运行时配置 / Runtime ─────────────────────────────────────────────────
+[runtime]
+# 运行环境："dev"（开发）或 "prod"（生产）
+# 影响日志级别、配置覆盖文件的选择等
+env = "dev"
+
+# 收到关闭信号后，等待所有任务完成的超时时间（秒）
+# 超时后强制退出
+shutdown_timeout_secs = 15
+
+# 后台任务（如定时器、WebSocket 重连）的优雅退出等待时间（秒）
+task_grace_secs = 5
+
+# ── 可观测性配置 / Observability ─────────────────────────────────────────
+[observability]
+# 日志级别："trace" | "debug" | "info" | "warn" | "error"
+# 开发环境建议 "debug"，生产环境建议 "info"
+level = "info"
+
+# 是否以 JSON 格式输出日志（适合日志采集系统，如 ELK、Loki）
+json_logs = false
+
+# Metrics 指标暴露地址（预留，暂未启用）
+metrics_bind = "127.0.0.1:9090"
+
+# ── Official Host 配置 / Official Host ───────────────────────────────────
+[official_host]
+# 启用的内置模块列表，可选值：
+#   "command"   — 命令系统（/ping、/echo、/help 等内置命令）
+#   "admin"     — 管理模块（权限管理、插件管理）
+#   "scheduler" — 定时任务调度器
+#   "bridge"    — 消息桥接（跨群/跨bot转发）
+builtin_modules = ["command", "admin", "scheduler", "bridge"]
+
+# 启用的插件模块列表
+# 填写插件的 module id（即 #[module(id = "xxx")] 中的 id）
+# 示例插件的可用 id：
+#   "example-plugin"  — BasicModule 的别名（向后兼容）
+#   "example-basic"   — 基础命令示例（ping、echo、whoami、group-info、ban、stop）
+#   "example-message" — 消息构建示例（rich、parse、card、reply-quote、keyboard）
+#   "example-events"  — 事件处理示例（戳一戳、入群欢迎、撤回、好友请求、心跳）
+plugin_modules = ["example-plugin"]
+
+# 插件启用/禁用状态的持久化文件路径
+# 通过 /plugins 命令或管理 API 修改的状态会保存在这里
+plugin_state_path = "config/plugin-state.toml"
+
+# 动态插件（.so/.dll/.dylib）的扫描目录
+plugin_bin_dir = "plugins/bin"
+
+# ── Bot 实例配置 / Bot Instances ─────────────────────────────────────────
+# 每个 [[bots]] 块定义一个 Bot 实例，可以配置多个
+
+# ── Bot 1：正向 WebSocket 连接 ──
+[[bots]]
+# Bot 唯一标识，不可重复
+id = "qq-main"
+
+# 通信协议："onebot11"（生产就绪）| "onebot12"（计划中）| "satori"（计划中）
+protocol = "onebot11"
+
+# 传输方式：
+#   "ws-forward"  — 正向 WebSocket（框架主动连接 OneBot 实现端）
+#   "ws-reverse"  — 反向 WebSocket（OneBot 实现端连接框架）
+#   "http"        — HTTP API + HTTP POST
+transport = "ws-forward"
+
+# 正向 WebSocket 的连接地址（transport = "ws-forward" 时必填）
+# 填写你的 OneBot 实现端（如 NapCat、Lagrange）的 WS 监听地址
+endpoint = "ws://127.0.0.1:3001"
+
+# 是否启用此 Bot（设为 false 则跳过加载）
+enabled = true
+
+# 此 Bot 启用的模块列表
+# 留空则使用 official_host.builtin_modules 中的全部模块
+enabled_modules = ["command", "admin", "scheduler"]
+
+# ── 权限配置 ──
+# Bot 所有者的用户 ID 列表（拥有最高权限，如重启、插件管理）
+owners = ["123456"]
+
+# 管理员的用户 ID 列表（拥有管理权限，如禁言、踢人命令）
+admins = []
+
+# ── 好友请求自动审批 ──
+# 是否自动同意所有好友请求（true = 全部同意）
+auto_approve_friend_requests = false
+
+# 好友请求用户白名单（这些用户的请求始终自动同意）
+auto_approve_friend_request_user_whitelist = []
+
+# 好友请求用户黑名单（这些用户的请求始终自动拒绝）
+auto_approve_friend_request_user_blacklist = []
+
+# 好友请求验证消息关键词白名单（包含这些关键词则自动同意）
+auto_approve_friend_request_comment_keywords = []
+
+# 好友请求验证消息关键词黑名单（包含这些关键词则自动拒绝）
+auto_reject_friend_request_comment_keywords = []
+
+# 自动同意好友请求时设置的备注
+auto_approve_friend_request_remark = ""
+
+# ── 群邀请自动审批 ──
+# 是否自动同意所有群邀请（true = 全部同意）
+auto_approve_group_invites = false
+
+# 群邀请用户白名单（这些用户发起的邀请始终自动同意）
+auto_approve_group_invite_user_whitelist = []
+
+# 群邀请用户黑名单（这些用户发起的邀请始终自动拒绝）
+auto_approve_group_invite_user_blacklist = []
+
+# 群邀请群号白名单（被邀请加入这些群时自动同意）
+auto_approve_group_invite_group_whitelist = []
+
+# 群邀请群号黑名单（被邀请加入这些群时自动拒绝）
+auto_approve_group_invite_group_blacklist = []
+
+# 群邀请验证消息关键词白名单
+auto_approve_group_invite_comment_keywords = []
+
+# 群邀请验证消息关键词黑名单
+auto_reject_group_invite_comment_keywords = []
+
+# 自动拒绝群邀请时的拒绝理由
+auto_reject_group_invite_reason = ""
+
+# ── 戳一戳自动回复 ──
+# 是否启用戳一戳自动回复
+auto_reply_poke_enabled = true
+
+# 戳一戳自动回复的消息内容
+auto_reply_poke_message = "别戳了，我在忙。"
+
+# ── Bot 2：反向 WebSocket（由 OneBot 实现端主动连接框架）──
+[[bots]]
+id = "qq-reverse"
+protocol = "onebot11"
+transport = "ws-reverse"
+
+# 反向 WebSocket 监听地址（transport = "ws-reverse" 时必填）
+bind = "0.0.0.0:6701"
+
+# 反向 WebSocket 的路径（OneBot 实现端需要配置相同路径）
+path = "/onebot/reverse"
+
+# 连接鉴权 Token（支持环境变量：${QQ_REVERSE_TOKEN}）
+# OneBot 实现端连接时需要在 Header 中携带此 Token
+access_token = "${QQ_REVERSE_TOKEN}"
+
+enabled = false
+enabled_modules = ["command", "bridge"]
+owners = []
+admins = []
+
+# ── Bot 3：OneBot 12 预留 ──
+[[bots]]
+id = "future-ob12"
+protocol = "onebot12"
+transport = "ws-forward"
+endpoint = "ws://127.0.0.1:6710"
+enabled = false
+owners = []
+admins = []

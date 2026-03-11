@@ -1,0 +1,17 @@
+[package]
+name = "qimen-framework"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-command-registry = { path = "../qimen-command-registry" }
+qimen-config = { path = "../qimen-config" }
+qimen-error = { path = "../qimen-error" }
+qimen-message = { path = "../qimen-message" }
+qimen-plugin-api = { path = "../qimen-plugin-api" }
+qimen-plugin-host = { path = "../qimen-plugin-host" }
+qimen-protocol-core = { path = "../qimen-protocol-core" }
+qimen-runtime = { path = "../qimen-runtime" }
+qimen-transport-core = { path = "../qimen-transport-core" }

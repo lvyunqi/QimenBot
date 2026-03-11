@@ -1,0 +1,13 @@
+[package]
+name = "qimen-storage"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-error = { path = "../qimen-error" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true

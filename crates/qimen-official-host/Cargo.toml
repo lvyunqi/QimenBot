@@ -1,0 +1,25 @@
+[package]
+name = "qimen-official-host"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+abi-stable-host-api = { path = "../abi-stable-host-api" }
+libloading = "0.7"
+qimen-config = { path = "../qimen-config" }
+qimen-error = { path = "../qimen-error" }
+qimen-framework = { path = "../qimen-framework" }
+qimen-host-types = { path = "../qimen-host-types" }
+qimen-mod-admin = { path = "../qimen-mod-admin" }
+qimen-mod-bridge = { path = "../qimen-mod-bridge" }
+qimen-mod-command = { path = "../qimen-mod-command" }
+qimen-mod-scheduler = { path = "../qimen-mod-scheduler" }
+qimen-observability = { path = "../qimen-observability" }
+qimen-plugin-api = { path = "../qimen-plugin-api" }
+qimen-plugin-example = { path = "../../plugins/qimen-plugin-example" }
+qimen-plugin-host = { path = "../qimen-plugin-host" }
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true

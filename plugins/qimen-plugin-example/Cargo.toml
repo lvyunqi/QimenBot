@@ -1,0 +1,16 @@
+[package]
+name = "qimen-plugin-example"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+qimen-error = { path = "../../crates/qimen-error" }
+qimen-message = { path = "../../crates/qimen-message" }
+qimen-plugin-api = { path = "../../crates/qimen-plugin-api" }
+qimen-plugin-derive = { path = "../../crates/qimen-plugin-derive" }

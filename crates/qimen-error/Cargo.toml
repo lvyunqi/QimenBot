@@ -1,0 +1,11 @@
+[package]
+name = "qimen-error"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true

@@ -1,0 +1,25 @@
+# ============================================================================
+# Bot 实例独立配置：qq-backup / Bot Instance Config: qq-backup
+# ============================================================================
+# 备用 Bot，使用反向 WebSocket 模式（由 OneBot 实现端主动连接框架）。
+
+# Bot 唯一标识
+id = "qq-backup"
+
+# 通信协议
+protocol = "onebot11"
+
+# 反向 WebSocket 模式
+transport = "ws-reverse"
+
+# 框架监听地址（OneBot 实现端需要配置连接此地址）
+bind = "0.0.0.0:6702"
+
+# 反向 WebSocket 路径
+path = "/onebot/reverse"
+
+# 默认禁用，需要时手动改为 true
+enabled = false
+
+# 仅启用命令模块
+enabled_modules = ["command"]

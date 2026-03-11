@@ -1,0 +1,14 @@
+[package]
+name = "qimen-mod-command"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+qimen-error = { path = "../qimen-error" }
+qimen-message = { path = "../qimen-message" }
+qimen-plugin-api = { path = "../qimen-plugin-api" }
+qimen-protocol-core = { path = "../qimen-protocol-core" }
+serde_json.workspace = true

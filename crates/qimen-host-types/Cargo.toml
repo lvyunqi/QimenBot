@@ -1,0 +1,10 @@
+[package]
+name = "qimen-host-types"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-error = { path = "../qimen-error" }
+toml.workspace = true

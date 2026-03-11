@@ -1,0 +1,11 @@
+[package]
+name = "qimenbotd"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-error = { path = "../../crates/qimen-error" }
+qimen-official-host = { path = "../../crates/qimen-official-host" }
+tokio.workspace = true

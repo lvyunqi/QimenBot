@@ -1,0 +1,14 @@
+[package]
+name = "qimen-protocol-core"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+qimen-error = { path = "../qimen-error" }
+qimen-message = { path = "../qimen-message" }
+serde.workspace = true
+serde_json.workspace = true

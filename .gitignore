@@ -1,0 +1,13 @@
+/target/
+/.idea/
+/.vscode/
+*.log
+.env
+
+# 本地参考项目
+参考项目/
+
+# docs
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

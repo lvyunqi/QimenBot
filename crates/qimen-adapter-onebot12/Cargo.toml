@@ -1,0 +1,8 @@
+[package]
+name = "qimen-adapter-onebot12"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]

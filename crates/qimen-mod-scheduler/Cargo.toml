@@ -1,0 +1,15 @@
+[package]
+name = "qimen-mod-scheduler"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono = "0.4"
+cron = "0.13"
+qimen-error = { path = "../qimen-error" }
+qimen-plugin-api = { path = "../qimen-plugin-api" }
+tokio.workspace = true
+tracing.workspace = true

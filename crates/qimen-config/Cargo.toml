@@ -1,0 +1,12 @@
+[package]
+name = "qimen-config"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+qimen-error = { path = "../qimen-error" }
+qimen-plugin-api = { path = "../qimen-plugin-api" }
+serde.workspace = true
+toml.workspace = true
