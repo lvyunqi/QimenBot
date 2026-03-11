@@ -22,7 +22,7 @@ features:
     details: Rust 原生异步运行时，零成本抽象，轻松应对高并发消息处理场景
   - icon: 🔌
     title: 插件化架构
-    details: 通过 #[module] + #[commands] 宏，只需几行代码就能开发功能完整的插件
+    details: '通过 #[module] + #[commands] 宏，只需几行代码就能开发功能完整的插件'
   - icon: 🌐
     title: 多协议支持
     details: 已支持 OneBot 11 协议全部功能，WebSocket / HTTP 多种传输方式可选
