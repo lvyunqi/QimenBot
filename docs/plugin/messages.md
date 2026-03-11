@@ -1,22 +1,18 @@
 # 消息构建
 
-QimenBot 提供了强大的消息构建 API，支持文本、图片、@、表情、分享卡片、交互按钮等多种消息类型。
+QimenBot 支持发送各种类型的消息：文本、图片、@、表情、分享卡片、交互按钮等。
 
-## 消息模型
+## 消息是什么？
 
-每条消息由多个**消息段（Segment）**组成：
+一条消息由多个**消息段（Segment）**组成，每个段代表一种内容：
 
 ```
-Message
-  ├── Segment { kind: "text",  data: { text: "Hello " } }
-  ├── Segment { kind: "at",    data: { qq: "123456" } }
-  ├── Segment { kind: "face",  data: { id: "1" } }
-  └── Segment { kind: "image", data: { file: "https://..." } }
+Message = [文本段] + [@段] + [表情段] + [图片段] + ...
 ```
 
-这与 OneBot 11 协议的消息段格式完全兼容。
+这和 OneBot 11 协议的消息段格式完全对应。
 
-## 创建消息
+## 三种创建方式
 
 ### 方式一：MessageBuilder（推荐）
 
@@ -31,7 +27,7 @@ let msg = Message::builder()
     .build();
 ```
 
-### 方式二：Message 快捷方法
+### 方式二：快捷方法
 
 ```rust
 // 纯文本
@@ -44,99 +40,188 @@ let msg = Message::from_segments(vec![
 ]);
 ```
 
-### 方式三：字符串自动转换
+### 方式三：直接返回字符串
 
 在命令处理器中，直接返回字符串会自动转为文本消息：
 
 ```rust
 #[command("打招呼")]
 async fn hello(&self) -> &str {
-    "Hello!" // 自动转为 Message::text("Hello!")
+    "Hello!" // 自动变成 Message::text("Hello!")
 }
 ```
 
 ## MessageBuilder 完整 API
 
-### 文本类
+### 文本与提及
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.text(text)` | `impl Into<String>` | 普通文本 |
+| `.at(target)` | `impl Into<String>` | @某人（传 QQ 号） |
+| `.at_all()` | — | @全体成员 |
+| `.tts(text)` | `impl Into<String>` | TTS 语音合成文本 |
 
 ```rust
 Message::builder()
-    .text("普通文本")      // 文本段
-    .tts("语音合成文本")    // TTS 语音文本
+    .text("你好 ")
+    .at("123456")
+    .text("\n")
+    .text("大家好 ")
+    .at_all()
     .build()
 ```
 
-### 提及类
+### 多媒体
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.image(file)` | `impl Into<String>` | 图片（URL 或本地路径） |
+| `.flash_image(file)` | `impl Into<String>` | 闪照（阅后即焚） |
+| `.image_with_opts(file, cache, proxy)` | `String, bool, bool` | 带选项的图片 |
+| `.record(file)` | `impl Into<String>` | 语音消息 |
+| `.record_magic(file)` | `impl Into<String>` | 变声语音 |
+| `.video(file)` | `impl Into<String>` | 视频消息 |
+| `.card_image(file)` | `impl Into<String>` | 装扮大图 |
 
 ```rust
+// 发送网络图片
 Message::builder()
-    .at("123456")       // @某人
-    .at_all()           // @全体成员
+    .text("看看这张图：\n")
+    .image("https://example.com/photo.jpg")
+    .build()
+
+// 发送闪照
+Message::builder()
+    .flash_image("https://example.com/secret.jpg")
     .build()
 ```
 
-### 多媒体类
+### 表情与互动
 
-```rust
-Message::builder()
-    .image("https://example.com/img.png")           // 图片（URL 或本地路径）
-    .flash_image("https://example.com/flash.png")   // 闪照
-    .image_with_opts("url", true, true)              // 图片（带缓存和代理选项）
-    .record("https://example.com/audio.mp3")         // 语音
-    .record_magic("https://example.com/audio.mp3")   // 变声语音
-    .video("https://example.com/video.mp4")          // 视频
-    .card_image("https://example.com/card.png")      // 装扮卡片图片
-    .build()
-```
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.face(id)` | `impl Into<String>` | QQ 表情（ID 编号） |
+| `.rps()` | — | 猜拳 |
+| `.dice()` | — | 骰子 |
+| `.shake()` | — | 窗口抖动（私聊） |
+| `.poke(type, id)` | `impl Into<String>` x2 | 戳一戳 |
+| `.anonymous()` | — | 匿名模式 |
 
-### 表情类
-
-```rust
-Message::builder()
-    .face(1)            // QQ 表情（ID）
-    .rps()              // 猜拳
-    .dice()             // 骰子
-    .shake()            // 窗口抖动
-    .poke(1, 1)         // 戳一戳（类型, ID）
-    .build()
-```
+::: tip QQ 表情 ID
+常见表情 ID：0=惊讶 1=撇嘴 2=色 4=得意 5=流泪 6=害羞 14=微笑 21=飞吻 ...
+完整列表可参考 [OneBot 11 文档](https://github.com/botuniverse/onebot-11/blob/master/message/segment.md#qq-%E8%A1%A8%E6%83%85)。
+:::
 
 ### 分享类
 
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.share(url, title)` | `String, String` | 链接分享卡片 |
+| `.contact(type, id)` | `String, String` | 推荐联系人（`"qq"` 或 `"group"`） |
+| `.location(lat, lon, title)` | `f64, f64, String` | 位置分享 |
+| `.music(type, id)` | `String, String` | 音乐（`"163"` / `"qq"` + 歌曲ID） |
+| `.music_custom(url, audio, title)` | `String, String, String` | 自定义音乐 |
+
 ```rust
+// 分享链接
 Message::builder()
-    .share("https://example.com", "网站标题")          // 链接分享
-    .contact("qq", "123456")                           // 推荐好友/群
-    .location(39.9, 116.4, "天安门")                    // 位置分享
-    .music("163", "12345")                             // 音乐（平台, ID）
-    .music_custom("http://play.url", "http://audio.url", "歌曲名") // 自定义音乐
+    .share("https://github.com/lvyunqi/QimenBot", "QimenBot - Rust Bot 框架")
+    .build()
+
+// 分享位置
+Message::builder()
+    .location(39.9042, 116.4074, "北京天安门")
     .build()
 ```
 
-### 特殊类
+### 引用与转发
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.reply(message_id)` | `impl Into<String>` | 引用回复某条消息 |
+| `.forward(id)` | `impl Into<String>` | 合并转发 |
+| `.node(user_id, nickname, content)` | `String, String, Message` | 转发节点 |
 
 ```rust
+// 引用回复
+let msg_id = ctx.event.message_id().unwrap_or(0);
 Message::builder()
-    .reply(12345678)                  // 引用回复（消息 ID）
-    .forward("abcdef")               // 合并转发（转发 ID）
-    .node(123456, "昵称", "内容")      // 合并转发节点
-    .xml("<xml>...</xml>")            // XML 消息
-    .json_msg(r#"{"key":"value"}"#)   // JSON 消息
-    .markdown("**加粗文本**")          // Markdown（部分平台支持）
-    .anonymous()                      // 匿名消息
+    .reply(msg_id)
+    .text("收到你的消息了！")
     .build()
 ```
 
-### 交互按钮
+### 特殊格式
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.xml(data)` | `impl Into<String>` | XML 消息 |
+| `.json_msg(data)` | `impl Into<String>` | JSON 消息 |
+| `.markdown(content)` | `impl Into<String>` | Markdown（部分平台支持） |
+| `.keyboard(kb)` | `Keyboard` | 交互按钮 |
+| `.segment(segment)` | `Segment` | 添加任意自定义段 |
+
+### 构建
+
+| 方法 | 说明 |
+|------|------|
+| `.build()` | 完成构建，返回 `Message` |
+
+## 消息解析
+
+收到用户消息后，你可以用这些方法**提取内容**：
+
+### 文本
+
+```rust
+let msg = ctx.message();
+let text = msg.plain_text(); // 获取纯文本（忽略图片、@等）
+```
+
+### @提及
+
+```rust
+let at_list = msg.at_list();        // 所有被 @ 的 QQ 号
+let mentioned = msg.has_at("123");   // 是否 @ 了某人
+let at_all = msg.has_at_all();       // 是否 @全体
+```
+
+### 多媒体
+
+```rust
+msg.has_image();          // 是否有图片
+msg.has_record();         // 是否有语音
+msg.has_video();          // 是否有视频
+
+let urls = msg.image_urls();   // 所有图片 URL
+let voices = msg.record_urls();  // 所有语音 URL
+let videos = msg.video_urls();   // 所有视频 URL
+```
+
+### 引用回复
+
+```rust
+if msg.has_reply() {
+    let reply_id = msg.reply_id().unwrap_or_default();
+    // reply_id 是被引用消息的 ID
+}
+```
+
+## 交互按钮（Keyboard）
+
+交互按钮让用户可以点击按钮来触发操作。
+
+### 基本用法
 
 ```rust
 use qimen_message::keyboard::*;
 
 let kb = KeyboardBuilder::new()
-    .command_button("执行命令", "/help")
-    .jump_button("打开链接", "https://example.com")
-    .row()  // 换行
-    .callback_button("回调", "callback_data")
+    .command_button("帮助", "/help")       // 点击后发送 /help
+    .jump_button("GitHub", "https://github.com/lvyunqi/QimenBot")  // 打开链接
+    .row()                                  // 换行
+    .callback_button("回调", "my_data")    // 触发回调
     .build();
 
 let msg = Message::builder()
@@ -145,78 +230,59 @@ let msg = Message::builder()
     .build();
 ```
 
-## 消息解析
+### 按钮类型
 
-`Message` 对象也提供了丰富的**内容提取**方法：
+| 类型 | 方法 | 点击效果 |
+|------|------|---------|
+| 命令按钮 | `command_button(label, cmd)` | 将命令发送到输入框 |
+| 跳转按钮 | `jump_button(label, url)` | 打开 URL |
+| 回调按钮 | `callback_button(label, data)` | 触发回调事件 |
 
-### 文本提取
-
-```rust
-let msg: &Message = ctx.message();
-
-// 获取纯文本（合并所有 text 段）
-let text = msg.plain_text();
-```
-
-### @提及检测
+### 样式和权限
 
 ```rust
-// 获取所有被 @ 的用户 ID
-let at_list: Vec<String> = msg.at_list();
-
-// 是否 @ 了某个人
-let mentioned = msg.has_at("123456");
-
-// 是否 @全体
-let at_all = msg.has_at_all();
+let kb = KeyboardBuilder::new()
+    .command_button("蓝色按钮", "/help")
+    .style(ButtonStyle::Blue)              // 蓝色样式
+    .permission(ButtonPermission::All)     // 所有人可点
+    .command_button("管理员专用", "/admin")
+    .style(ButtonStyle::Grey)
+    .permission(ButtonPermission::Manager) // 仅管理员
+    .build();
 ```
 
-### 多媒体提取
+| 样式 | 说明 |
+|------|------|
+| `ButtonStyle::Grey` | 灰色（默认） |
+| `ButtonStyle::Blue` | 蓝色（推荐用于主要操作） |
 
-```rust
-// 提取所有图片 URL
-let image_urls: Vec<String> = msg.image_urls();
+| 权限 | 说明 |
+|------|------|
+| `ButtonPermission::All` | 所有人可点 |
+| `ButtonPermission::Manager` | 仅管理员 |
+| `ButtonPermission::SpecifiedUsers` | 指定用户 |
+| `ButtonPermission::SpecifiedRoles` | 指定角色 |
 
-// 提取所有语音 URL
-let record_urls: Vec<String> = msg.record_urls();
-
-// 提取所有视频 URL
-let video_urls: Vec<String> = msg.video_urls();
-
-// 检测是否包含某种媒体
-msg.has_image();   // 是否有图片
-msg.has_record();  // 是否有语音
-msg.has_video();   // 是否有视频
-```
-
-### 回复检测
-
-```rust
-// 是否引用了其他消息
-msg.has_reply();
-
-// 获取引用的消息 ID
-if let Some(reply_id) = msg.reply_id() {
-    println!("回复了消息: {}", reply_id);
-}
-```
+::: warning 兼容性提醒
+Keyboard 功能依赖具体的 OneBot 实现和聊天平台。不是所有平台和 OneBot 实现都支持交互按钮。
+:::
 
 ## 实战示例
 
-### 构建富媒体回复
+### 构建一条富媒体回复
 
 ```rust
 #[command("富媒体消息演示")]
 async fn rich(&self, ctx: &CommandPluginContext<'_>) -> Message {
     Message::builder()
         .text("这是一条富媒体消息：\n")
-        .text("  - @你: ")
+        .text("  @你: ")
         .at(ctx.sender_id())
-        .text("\n  - 表情: ")
-        .face(1)
-        .face(2)
-        .face(3)
-        .text("\n  - 分享: ")
+        .text("\n  表情: ")
+        .face("1")
+        .face("2")
+        .face("3")
+        .text("\n  分享: ")
         .share("https://github.com/lvyunqi/QimenBot", "QimenBot")
         .build()
 }
@@ -275,56 +341,3 @@ async fn reply_quote(&self, ctx: &CommandPluginContext<'_>) -> CommandPluginSign
     CommandPluginSignal::Reply(reply)
 }
 ```
-
-## KeyboardBuilder 详解
-
-交互按钮（Keyboard）让用户可以通过点击按钮来触发操作。
-
-### 按钮类型
-
-| 类型 | 方法 | 说明 |
-|------|------|------|
-| 命令按钮 | `command_button(label, command)` | 点击后发送命令到输入框 |
-| 跳转按钮 | `jump_button(label, url)` | 点击后打开 URL |
-| 回调按钮 | `callback_button(label, data)` | 点击后触发回调 |
-
-### 按钮样式
-
-```rust
-use qimen_message::keyboard::*;
-
-let kb = KeyboardBuilder::new()
-    .command_button("蓝色按钮", "/help")
-    .style(ButtonStyle::Blue)
-    .command_button("灰色按钮", "/ping")
-    .style(ButtonStyle::Grey)
-    .build();
-```
-
-### 按钮权限
-
-```rust
-let kb = KeyboardBuilder::new()
-    .command_button("所有人可点", "/help")
-    .permission(ButtonPermission::All)
-    .command_button("仅管理员", "/admin")
-    .permission(ButtonPermission::Manager)
-    .build();
-```
-
-### 多行按钮
-
-```rust
-let kb = KeyboardBuilder::new()
-    // 第一行
-    .command_button("帮助", "/help")
-    .command_button("状态", "/status")
-    .row()  // 换行
-    // 第二行
-    .jump_button("GitHub", "https://github.com/lvyunqi/QimenBot")
-    .build();
-```
-
-::: tip 注意
-Keyboard 功能依赖于具体的 OneBot 实现和聊天平台的支持。不是所有平台都支持交互按钮。
-:::

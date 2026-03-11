@@ -77,6 +77,7 @@ export default defineConfig({
             { text: '消息 API', link: '/api/message-api' },
             { text: 'OneBot API 客户端', link: '/api/onebot-client' },
             { text: 'FFI 接口', link: '/api/ffi-api' },
+            { text: '类型参考', link: '/api/types' },
           ]
         }
       ],

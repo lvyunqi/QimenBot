@@ -1,10 +1,8 @@
 # 命令开发
 
-命令是 QimenBot 最核心的交互方式。用户通过 `/命令名 参数` 的格式触发命令，框架将请求路由到对应的处理函数。
+命令是 QimenBot 最核心的交互方式。用户发送 `/命令名 参数`，Bot 通过命令处理函数做出响应。
 
-## 基础命令
-
-### 最简命令
+## 最简命令
 
 ```rust
 #[command("回复 pong")]
@@ -13,11 +11,11 @@ async fn ping(&self) -> &str {
 }
 ```
 
-用户发送 `/ping`，Bot 回复 `pong!`。
+用户发送 `/ping`，Bot 回复 `pong!`。就是这么简单。
 
-### 命令名推导规则
+## 命令名怎么来的？
 
-如果你没有显式指定命令名，宏会自动从**函数名**推导：
+如果你没有手动指定命令名，宏会**自动从函数名推导**：
 
 | 函数名 | 推导出的命令名 | 用户输入 |
 |--------|--------------|---------|
@@ -26,41 +24,42 @@ async fn ping(&self) -> &str {
 | `group_info` | `group-info` | `/group-info` |
 | `my_cmd` | `my-cmd` | `/my-cmd` |
 
-规则：函数名中的下划线 `_` 自动替换为连字符 `-`。
+规则很简单：下划线 `_` 变连字符 `-`。
 
-你也可以手动指定命令名：
+你也可以手动指定：
 
 ```rust
 #[command(name = "greet", desc = "打招呼")]
 async fn my_greeting_function(&self) -> &str {
     "你好！"
 }
+// 命令名是 "greet"，不是 "my-greeting-function"
 ```
 
-## `#[command]` 属性
+## `#[command]` 完整属性
 
 ```rust
 #[command(
-    "命令描述",                   // 必填，位置参数
-    aliases = ["e", "回显"],      // 别名列表
+    "命令描述",                   // 必填，显示在 /help 中
+    aliases = ["e", "回显"],      // 别名
     examples = ["/echo hello"],  // 使用示例
     category = "tools",          // 分类（默认 "general"）
     role = "admin",              // 权限要求
-    hidden,                      // 隐藏（不显示在 /help 中）
+    hidden,                      // 不显示在 /help 中
 )]
 ```
 
 | 属性 | 类型 | 默认值 | 说明 |
 |------|------|-------|------|
-| 第一个参数 | `&str` | — | 命令描述（必填） |
+| 第一个参数 | `&str` | **必填** | 命令描述（显示在 `/help` 中） |
 | `name` | `&str` | 函数名推导 | 显式指定命令名 |
-| `aliases` | `[&str]` | `[]` | 别名列表 |
-| `examples` | `[&str]` | `[]` | 使用示例（显示在 /help 中） |
+| `aliases` | `[&str]` | `[]` | 别名列表，用户可以用别名触发 |
+| `examples` | `[&str]` | `[]` | 使用示例（显示在 `/help` 中） |
 | `category` | `&str` | `"general"` | 命令分类 |
-| `role` | `&str` | — | 权限要求：`"admin"` 或 `"owner"` |
-| `hidden` | flag | — | 隐藏命令 |
+| `role` | `&str` | 无限制 | `"admin"`（管理员）或 `"owner"`（所有者） |
+| `hidden` | flag | — | 隐藏命令，不在 `/help` 中显示 |
 
-### 别名
+### 别名示例
 
 ```rust
 #[command("回显文本", aliases = ["e", "回显"])]
@@ -69,31 +68,39 @@ async fn echo(&self, args: Vec<String>) -> String {
 }
 ```
 
-现在用户可以通过 `/echo`、`/e`、`/回显` 三种方式触发这个命令。
+现在 `/echo hello`、`/e hello`、`/回显 hello` 三种方式都能触发。
 
 ### 权限控制
 
 ```rust
-// 任何人都可以使用（默认）
+// 任何人都能用（默认）
 #[command("回复 pong")]
 async fn ping(&self) -> &str { "pong!" }
 
 // 仅管理员可用
 #[command("禁言用户", role = "admin")]
-async fn ban(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> CommandPluginSignal {
+async fn ban(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> String {
     // ...
 }
 
 // 仅所有者可用
-#[command("关闭 Bot", role = "owner")]
-async fn stop(&self) -> &str { "正在关闭..." }
+#[command("重载插件", role = "owner")]
+async fn reload(&self) -> &str { "正在重载..." }
 ```
+
+::: info 权限层级
+| 角色 | 配置来源 | 权限范围 |
+|------|---------|---------|
+| **Owner** | `owners = ["QQ号"]` | 所有命令 |
+| **Admin** | `admins = ["QQ号"]` 或群管理员 | `role = "admin"` 的命令 |
+| **Anyone** | 所有用户 | 无权限限制的命令 |
+:::
 
 ## 方法签名
 
-宏会根据你的方法签名**自动检测**需要注入的参数。以下是所有支持的签名组合：
+宏根据你的方法参数**自动注入**所需内容。共四种写法：
 
-### 无参数
+### 无参数 — 最简单
 
 ```rust
 #[command("回复 pong")]
@@ -102,7 +109,7 @@ async fn ping(&self) -> &str {
 }
 ```
 
-### 只有参数
+### 只有 `args` — 获取用户输入
 
 ```rust
 #[command("回显文本")]
@@ -115,14 +122,14 @@ async fn echo(&self, args: Vec<String>) -> String {
 }
 ```
 
-`args` 是命令后面的文本按空格拆分后的列表：
+`args` 是命令名后面的文本，按空格拆分：
 
 ```
 /echo hello world → args = ["hello", "world"]
 /echo             → args = []
 ```
 
-### 只有上下文
+### 只有 `ctx` — 获取上下文信息
 
 ```rust
 #[command("查看身份")]
@@ -133,24 +140,18 @@ async fn whoami(&self, ctx: &CommandPluginContext<'_>) -> String {
 }
 ```
 
-`CommandPluginContext` 提供了丰富的上下文信息，详见[上下文对象](#上下文对象)。
-
-### 上下文 + 参数
+### `ctx` + `args` — 两者都要
 
 ```rust
 #[command("禁言用户", role = "admin")]
 async fn ban(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> CommandPluginSignal {
-    // ctx 必须在 args 前面
     let user_id = args.first().and_then(|s| s.parse::<i64>().ok());
-    let duration = args.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(60);
+    let duration = args.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(60);
 
     match (ctx.group_id_i64(), user_id) {
-        (Some(group_id), Some(uid)) => {
-            let client = ctx.onebot_actions();
-            let _ = client.set_group_ban(group_id, uid, duration).await;
-            CommandPluginSignal::Reply(Message::text(
-                format!("已禁言用户 {uid} {duration} 秒")
-            ))
+        (Some(gid), Some(uid)) => {
+            let _ = ctx.onebot_actions().set_group_ban(gid, uid, duration).await;
+            CommandPluginSignal::Reply(Message::text(format!("已禁言 {uid} {duration} 秒")))
         }
         _ => CommandPluginSignal::Reply(Message::text("用法: /ban <QQ号> [秒数]")),
     }
@@ -158,113 +159,85 @@ async fn ban(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> Comman
 ```
 
 ::: warning 参数顺序
-当同时使用 `ctx` 和 `args` 时，**`ctx` 必须在 `args` 前面**：
+`ctx` 必须在 `args` **前面**，不能反过来：
 ```rust
 // ✅ 正确
 async fn cmd(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>)
 
-// ❌ 错误
+// ❌ 错误，编译不通过
 async fn cmd(&self, args: Vec<String>, ctx: &CommandPluginContext<'_>)
 ```
 :::
 
-## 上下文对象
+## CommandPluginContext 常用方法
 
-`CommandPluginContext` 提供了访问事件信息和执行操作的入口：
+`ctx` 是你和框架交互的入口，以下是最常用的方法：
 
-### 常用便捷方法
+### 发送者信息
+
+| 方法 | 返回类型 | 说明 |
+|------|---------|------|
+| `ctx.sender_id()` | `&str` | 发送者 QQ 号 |
+| `ctx.sender_id_i64()` | `Option<i64>` | 发送者 QQ 号（数字） |
+| `ctx.event.sender_nickname()` | `Option<&str>` | 发送者昵称 |
+| `ctx.event.sender_role()` | `Option<&str>` | 群角色：`"owner"` / `"admin"` / `"member"` |
+| `ctx.event.sender_card()` | `Option<&str>` | 群名片 |
+
+### 聊天环境
+
+| 方法 | 返回类型 | 说明 |
+|------|---------|------|
+| `ctx.is_group()` | `bool` | 是否在群聊中 |
+| `ctx.is_private()` | `bool` | 是否在私聊中 |
+| `ctx.group_id()` | `&str` | 群号（私聊返回空字符串） |
+| `ctx.group_id_i64()` | `Option<i64>` | 群号（私聊返回 None） |
+| `ctx.chat_id()` | `&str` | 聊天 ID（群号或用户 ID） |
+
+### 消息内容
+
+| 方法 | 返回类型 | 说明 |
+|------|---------|------|
+| `ctx.plain_text()` | `String` | 消息纯文本（去掉图片、@等） |
+| `ctx.message()` | `&Message` | 完整消息对象（包含所有段） |
+| `ctx.event.message_id()` | `Option<i64>` | 消息 ID |
+| `ctx.event.is_at_self()` | `bool` | 用户是否 @了 Bot |
+
+### 调用 API
 
 ```rust
-async fn example(&self, ctx: &CommandPluginContext<'_>) {
-    // ── 发送者信息 ──
-    ctx.sender_id();        // 发送者 ID（字符串）
-    ctx.sender_id_i64();    // 发送者 ID（i64）
-
-    // ── 聊天环境 ──
-    ctx.is_group();         // 是否群聊
-    ctx.is_private();       // 是否私聊
-    ctx.group_id();         // 群号（字符串，私聊为空）
-    ctx.group_id_i64();     // 群号（Option<i64>）
-    ctx.chat_id();          // 聊天 ID（群号或用户 ID）
-
-    // ── 消息内容 ──
-    ctx.plain_text();       // 纯文本内容
-    ctx.message();          // 完整 Message 对象
-
-    // ── OneBot API ──
-    let client = ctx.onebot_actions(); // 获取 API 客户端
-    let info = client.get_login_info().await;
-}
+let client = ctx.onebot_actions();
+let info = client.get_login_info().await?;
+let _ = client.send_group_msg(group_id, Message::text("hello")).await;
 ```
 
-### 原始事件访问
-
-通过 `ctx.event` 可以访问 `NormalizedEvent`，它提供了更多底层字段：
-
-```rust
-let event = ctx.event;
-event.sender_nickname();  // 发送者昵称
-event.sender_role();      // 群角色（owner/admin/member）
-event.sender_card();      // 群名片
-event.message_id();       // 消息 ID
-event.self_id();          // Bot 自身 ID
-event.is_at_self();       // 是否 @了 Bot
-```
+完整 API 列表见 [OneBot API 客户端](/api/onebot-client)。
 
 ## 返回值
 
-命令处理函数可以返回多种类型，框架自动转换：
+命令处理函数支持多种返回值类型，框架自动帮你转换：
 
-### 字符串
+| 返回类型 | 效果 | 示例 |
+|---------|------|------|
+| `&str` | 发送文本回复 | `"pong!"` |
+| `String` | 发送文本回复 | `format!("hello {}", name)` |
+| `Message` | 发送富媒体回复 | `Message::builder().text("hi").face(1).build()` |
+| `CommandPluginSignal` | 完全控制行为 | `Reply` / `Continue` / `Block` / `Ignore` |
+| `Result<T, E>` | Ok 正常处理，Err 发送错误信息 | `Ok("done")` / `Err(e)` → `"Error: ..."` |
 
-```rust
-// &str
-async fn cmd(&self) -> &str { "hello" }
+### CommandPluginSignal 详解
 
-// String
-async fn cmd(&self) -> String { format!("hello {}", "world") }
-```
+当你需要精确控制行为时，返回 `CommandPluginSignal`：
 
-### Message 对象
+| 信号 | 效果 |
+|------|------|
+| `Reply(Message)` | 发送回复消息，**继续**执行后续插件 |
+| `Continue` | 什么都不做，继续后续插件 |
+| `Block(Message)` | 发送回复消息，**终止**后续所有插件 |
+| `Ignore` | 什么都不做，**终止**后续所有插件 |
 
-```rust
-async fn cmd(&self) -> Message {
-    Message::builder()
-        .text("你好 ")
-        .face(1)
-        .build()
-}
-```
-
-### CommandPluginSignal
-
-完全控制行为：
-
-```rust
-async fn cmd(&self) -> CommandPluginSignal {
-    // 回复并继续处理链
-    CommandPluginSignal::Reply(Message::text("已处理"))
-
-    // 不做任何事
-    CommandPluginSignal::Continue
-
-    // 回复并终止后续插件
-    CommandPluginSignal::Block(Message::text("命令已拦截"))
-
-    // 静默终止
-    CommandPluginSignal::Ignore
-}
-```
-
-### Result 类型
-
-```rust
-async fn cmd(&self) -> Result<String, Box<dyn std::error::Error>> {
-    let data = fetch_something().await?;
-    Ok(format!("结果: {data}"))
-}
-// 如果 Err → 自动回复 "Error: {错误信息}"
-```
+::: tip 什么时候用 Block？
+当你想"独占"处理这个命令时，用 `Block` 可以防止后续插件也响应同一个命令。比如一个验证码插件，验证成功后不希望其他插件再处理这条消息。
+:::
 
 ## 完整示例
 
@@ -280,7 +253,7 @@ impl BasicModule {
         "pong!"
     }
 
-    /// 带参数和别名的命令
+    /// 带参数和别名
     #[command("回显文本", aliases = ["e"])]
     async fn echo(&self, args: Vec<String>) -> String {
         if args.is_empty() {
@@ -302,24 +275,21 @@ impl BasicModule {
     /// 管理员命令：查询群信息
     #[command("查看群信息", aliases = ["gi"], role = "admin")]
     async fn group_info(&self, ctx: &CommandPluginContext<'_>) -> CommandPluginSignal {
-        let Some(group_id) = ctx.group_id_i64() else {
+        let Some(gid) = ctx.group_id_i64() else {
             return CommandPluginSignal::Reply(Message::text("此命令仅在群聊中可用"));
         };
 
-        let client = ctx.onebot_actions();
-        match client.get_group_info(group_id, false).await {
+        match ctx.onebot_actions().get_group_info(gid, false).await {
             Ok(info) => CommandPluginSignal::Reply(Message::text(format!(
                 "群名: {}\n群号: {}\n成员数: {}",
-                info.group_name,
-                info.group_id,
-                info.member_count.unwrap_or(0),
+                info.group_name, info.group_id, info.member_count.unwrap_or(0),
             ))),
             Err(e) => CommandPluginSignal::Reply(Message::text(format!("查询失败: {e}"))),
         }
     }
 
     /// 终止插件链
-    #[command("阻止后续插件处理")]
+    #[command("阻止后续插件处理", hidden)]
     async fn stop(&self) -> CommandPluginSignal {
         CommandPluginSignal::Block(Message::text("插件链已终止"))
     }
