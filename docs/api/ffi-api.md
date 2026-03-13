@@ -405,6 +405,119 @@ pub unsafe extern "C" fn callback_name(req: &InterceptorRequest)
 Rust 2024 Edition 要求写 `#[unsafe(no_mangle)]` 而不是旧版的 `#[no_mangle]`。如果你使用 `edition = "2024"`，必须使用新语法。
 :::
 
+## SendAction
+
+插件通过 `BotApi` / `SendBuilder` 队列化的发送动作。回调返回后由宿主异步执行。
+
+```rust
+#[repr(C)]
+pub struct SendAction {
+    pub message_type: RString,    // "private" 或 "group"
+    pub target_id: RString,       // user_id 或 group_id
+    pub message: RString,         // 纯文本（segments_json 为空时使用）
+    pub segments_json: RString,   // 富媒体 JSON（优先于 message）
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `message_type` | `"private"`（私聊）或 `"group"`（群聊） |
+| `target_id` | 目标 QQ 号或群号（字符串） |
+| `message` | 纯文本消息体 |
+| `segments_json` | OneBot 消息段 JSON，非空时优先于 `message` |
+
+::: tip
+通常不需要手动构造 `SendAction`，使用 `BotApi` 或 `SendBuilder` 即可。
+:::
+
+## BotApi
+
+静态方法集合，在 FFI 回调中向任意目标发送消息。内部 push 到进程内 `SEND_QUEUE`，回调返回后宿主 flush 并异步发送。
+
+```rust
+/// 向私聊发送纯文本
+BotApi::send_private_msg(user_id: &str, text: &str)
+
+/// 向群发送纯文本
+BotApi::send_group_msg(group_id: &str, text: &str)
+
+/// 向私聊发送富媒体
+BotApi::send_private_rich(user_id: &str, segments_json: &str)
+
+/// 向群发送富媒体
+BotApi::send_group_rich(group_id: &str, segments_json: &str)
+```
+
+### 使用示例
+
+```rust
+use abi_stable_host_api::BotApi;
+
+#[command(name = "broadcast", description = "广播消息")]
+fn broadcast(req: &CommandRequest) -> CommandResponse {
+    BotApi::send_group_msg("111111", "广播消息！");
+    BotApi::send_group_msg("222222", "广播消息！");
+    BotApi::send_private_msg("333333", "管理通知");
+    CommandResponse::text("广播完成")
+}
+```
+
+## SendBuilder
+
+流式构建并入队发送到任意目标的富媒体消息，类似 `ReplyBuilder` 但目标自由指定。
+
+```rust
+/// 开始构建群消息
+SendBuilder::group(group_id: &str) -> SendBuilder
+
+/// 开始构建私聊消息
+SendBuilder::private(user_id: &str) -> SendBuilder
+```
+
+### 链式方法
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `.text(text)` | `&str` | 文本段 |
+| `.at(user_id)` | `&str` | @某人 |
+| `.at_all()` | — | @全体成员 |
+| `.face(id)` | `i32` | QQ 表情 |
+| `.image_url(url)` | `&str` | 图片（URL） |
+| `.image_base64(base64)` | `&str` | 图片（Base64） |
+| `.send()` | — | 入队发送（消耗 builder） |
+
+### 使用示例
+
+```rust
+use abi_stable_host_api::SendBuilder;
+
+SendBuilder::group("123456")
+    .text("来自 ")
+    .at("789")
+    .text(" 的消息")
+    .face(1)
+    .send();
+
+SendBuilder::private("789")
+    .text("私信通知")
+    .image_url("https://example.com/img.png")
+    .send();
+```
+
+## 队列刷新符号
+
+使用 `#[dynamic_plugin]` 宏时自动生成，无需手动编写：
+
+```rust
+/// 宏自动生成 — drain 插件的发送队列
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_flush_sends() -> RVec<SendAction>
+```
+
+::: tip 向后兼容
+旧插件不导出此符号时，宿主会优雅降级（返回空列表），行为无变化。使用宏的旧插件重新编译后自动获得此符号。
+:::
+
 ## 向后兼容
 
 v0.3 FFI 接口向后兼容 v0.1 和 v0.2：
@@ -413,3 +526,4 @@ v0.3 FFI 接口向后兼容 v0.1 和 v0.2：
 - v0.1 的单命令/单路由字段仍然可用
 - 框架会优先尝试 v0.2+ 符号 `qimen_plugin_descriptor`，找不到再尝试 v0.1
 - v0.2 的 `CommandDescriptorEntry`（无 `scope` 字段）会自动使用 `scope = "all"` 默认值
+- 旧插件无 `qimen_plugin_flush_sends` 符号时宿主返回空 Vec，无副作用

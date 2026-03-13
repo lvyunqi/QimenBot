@@ -8,7 +8,8 @@
 |------|---------|---------|
 | 编译方式 | 与框架一同编译 | 独立编译为动态库 |
 | API 访问 | 完整（async、OneBotActionClient 等） | FFI 接口（同步、C ABI） |
-| 消息构建 | `Message` + `MessageBuilder` | `ReplyBuilder`（流式构建）/ JSON 段 |
+| 消息构建 | `Message` + `MessageBuilder` | `ReplyBuilder` / `SendBuilder` / JSON 段 |
+| 主动发送 | `OneBotActionClient::send_*` | `BotApi::send_*` / `SendBuilder`（队列模式） |
 | 拦截器 | `MessageEventInterceptor` trait（async） | `#[pre_handle]` / `#[after_completion]`（同步 FFI） |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 生命周期 | `on_load` / `on_unload` | `#[init]` / `#[shutdown]` |
@@ -462,10 +463,10 @@ fn on_init(config: PluginInitConfig) -> PluginInitResult {
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use abi_stable_host_api::{
-    CommandRequest, CommandResponse, DynamicActionResponse,
+    BotApi, CommandRequest, CommandResponse, DynamicActionResponse,
     InterceptorRequest, InterceptorResponse,
     NoticeRequest, NoticeResponse,
-    PluginInitConfig, PluginInitResult,
+    PluginInitConfig, PluginInitResult, SendBuilder,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
@@ -544,6 +545,33 @@ mod example {
     #[command(name = "secret", description = "仅私聊悄悄话", scope = "private")]
     fn secret(_req: &CommandRequest) -> CommandResponse {
         CommandResponse::text("🤫 这是一条仅私聊可见的秘密消息！")
+    }
+
+    /// 主动发送 — 演示 BotApi + SendBuilder
+    #[command(name = "notify", description = "向指定群发送通知", role = "admin")]
+    fn notify(req: &CommandRequest) -> CommandResponse {
+        let args = req.args.as_str().trim();
+        let parts: Vec<&str> = args.splitn(2, ' ').collect();
+
+        if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+            return CommandResponse::text("用法：notify <group_id> <内容>");
+        }
+
+        let target_group = parts[0];
+        let content = parts[1];
+
+        // 简单文本发送到目标群
+        BotApi::send_group_msg(target_group, &format!("[通知] {content}"));
+
+        // 流式构建发送到发送者私聊
+        SendBuilder::private(req.sender_id.as_str())
+            .text("✅ 通知已发送到群 ")
+            .text(target_group)
+            .text("：")
+            .text(content)
+            .send();
+
+        CommandResponse::text(&format!("通知已发送到群 {target_group}！"))
     }
 
     /// 管理员命令 — 演示 role
@@ -671,6 +699,124 @@ pub unsafe extern "C" fn my_plugin_pre_handle(req: &InterceptorRequest) -> Inter
 ```
 
 </details>
+
+## 自定义发送（BotApi） {#bot-api}
+
+动态插件默认只能通过 `CommandResponse` / `NoticeResponse` 回复触发事件的来源（原群/原用户）。`BotApi` 和 `SendBuilder` 允许你在回调中向**任意用户或群**发送消息。
+
+### 工作原理
+
+由于 FFI 回调是同步的 `extern "C"` 函数，无法直接执行异步网络操作。QimenBot 采用**队列模式**：
+
+```
+插件回调中:     BotApi::send_group_msg("12345", "hello")
+                    ↓
+               push 到进程内 SEND_QUEUE
+                    ↓
+回调返回后:     宿主自动 flush 队列
+                    ↓
+               异步逐个发送
+```
+
+::: tip 线程安全
+每个 cdylib 有独立的 `SEND_QUEUE` 静态变量，不存在跨插件干扰。
+:::
+
+### BotApi — 简单发送
+
+```rust
+use abi_stable_host_api::BotApi;
+
+// 向群发送纯文本
+BotApi::send_group_msg("123456789", "大家好！");
+
+// 向私聊发送纯文本
+BotApi::send_private_msg("987654321", "你好！");
+
+// 向群发送富媒体（OneBot 消息段 JSON）
+BotApi::send_group_rich("123456789", r#"[{"type":"text","data":{"text":"hello"}},{"type":"face","data":{"id":"1"}}]"#);
+
+// 向私聊发送富媒体
+BotApi::send_private_rich("987654321", r#"[{"type":"image","data":{"file":"https://example.com/img.png"}}]"#);
+```
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `send_group_msg(group_id, text)` | `&str, &str` | 向群发送纯文本 |
+| `send_private_msg(user_id, text)` | `&str, &str` | 向私聊发送纯文本 |
+| `send_group_rich(group_id, json)` | `&str, &str` | 向群发送富媒体 JSON |
+| `send_private_rich(user_id, json)` | `&str, &str` | 向私聊发送富媒体 JSON |
+
+### SendBuilder — 流式构建发送
+
+`SendBuilder` 类似 `ReplyBuilder`，但目标是**任意群/用户**而非回复来源：
+
+```rust
+use abi_stable_host_api::SendBuilder;
+
+// 向群发送富媒体消息
+SendBuilder::group("123456789")
+    .text("通知：")
+    .at("987654321")
+    .text(" 你的任务已完成！")
+    .face(1)
+    .send();
+
+// 向私聊发送富媒体消息
+SendBuilder::private("987654321")
+    .text("来自管理员的消息：")
+    .image_url("https://example.com/img.png")
+    .send();
+```
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `SendBuilder::group(group_id)` | `&str` | 开始构建群消息 |
+| `SendBuilder::private(user_id)` | `&str` | 开始构建私聊消息 |
+| `.text(text)` | `&str` | 文本段 |
+| `.at(user_id)` | `&str` | @某人 |
+| `.at_all()` | — | @全体成员 |
+| `.face(id)` | `i32` | QQ 表情 |
+| `.image_url(url)` | `&str` | 图片（URL） |
+| `.image_base64(base64)` | `&str` | 图片（Base64） |
+| `.send()` | — | 入队发送 |
+
+### 完整示例
+
+```rust
+use abi_stable_host_api::{BotApi, SendBuilder, CommandRequest, CommandResponse};
+
+#[command(name = "notify", description = "转发消息到其他群", role = "admin")]
+fn notify(req: &CommandRequest) -> CommandResponse {
+    let args = req.args.as_str().trim();
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+
+    if parts.len() < 2 {
+        return CommandResponse::text("用法：notify <group_id> <内容>");
+    }
+
+    let target_group = parts[0];
+    let content = parts[1];
+
+    // 简单文本发送
+    BotApi::send_group_msg(target_group, &format!("[通知] {content}"));
+
+    // 流式构建发送到发送者私聊
+    SendBuilder::private(req.sender_id.as_str())
+        .text("✅ 你的通知已发送到群 ")
+        .text(target_group)
+        .send();
+
+    CommandResponse::text(&format!("通知已发送到群 {target_group}！"))
+}
+```
+
+::: warning 注意事项
+1. `BotApi` / `SendBuilder` 只能在 FFI 回调（命令、事件路由、拦截器）中使用
+2. 消息不会立即发送，而是在回调返回后由宿主异步执行
+3. 一次回调中可以调用多次 `send_*` / `.send()`，所有消息都会按顺序发送
+4. `target_id` 必须是有效的 QQ 号或群号（字符串形式）
+:::
 
 ## 运行时管理 {#runtime}
 
