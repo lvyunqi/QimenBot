@@ -413,6 +413,15 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
                 #(#route_registrations)*
                 #interceptor_registration
         }
+
+        /// Drain all queued `SendAction`s produced by `BotApi` / `SendBuilder`
+        /// during the most recent FFI callback.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn qimen_plugin_flush_sends() -> ::abi_stable::std_types::RVec<::abi_stable_host_api::SendAction> {
+            ::abi_stable_host_api::drain_send_queue()
+                .into_iter()
+                .collect()
+        }
     };
 
     Ok(output)

@@ -1,6 +1,8 @@
 # QimenBot 动态插件示例
 
-本项目演示如何开发 QimenBot 动态插件——编译为 `.so` / `.dll` / `.dylib` 的独立库，运行时通过 `dlopen` 加载。
+本项目演示如何使用 `#[dynamic_plugin]` 过程宏开发 QimenBot 动态插件——编译为 `.so` / `.dll` / `.dylib` 的独立库，运行时通过 `dlopen` 加载。
+
+**API 版本：v0.3**
 
 ## 快速开始
 
@@ -19,11 +21,11 @@ cargo build --release
 # Linux
 cp target/release/libqimen_dynamic_plugin_example.so ../../plugins/bin/
 
-# Windows
-cp target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
-
 # macOS
 cp target/release/libqimen_dynamic_plugin_example.dylib ../../plugins/bin/
+
+# Windows
+cp target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 ```
 
 ### 3. 热重载
@@ -34,102 +36,146 @@ cp target/release/libqimen_dynamic_plugin_example.dylib ../../plugins/bin/
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
-| `/greet [消息]` | `/hi`, `/hello` | 向发送者打招呼，支持富媒体（文本+表情） |
-| `/time` | - | 显示当前 Unix 时间戳 |
+| `greet [内容]` | `hi`, `hello`, `你好` | 打招呼，演示 ReplyBuilder + 昵称 + 引用回复 |
+| `time` | `时间` | 显示时间，演示 `CommandResponse::text()` + 时间戳 |
+| `echo <内容>` | `复读`, `say` | 复读消息，演示参数解析 + 空参检查 |
+| `info` | `debug`, `调试` | 显示 CommandRequest 所有字段（仅管理员） |
+| `example-help` | `示例帮助` | 帮助菜单 |
 
 | 事件路由 | 说明 |
 |----------|------|
 | GroupPoke, PrivatePoke | 戳一戳回复 |
 
-## FFI 接口 (v0.2)
+| 生命周期钩子 | 说明 |
+|-------------|------|
+| `#[init]` | 插件加载时初始化（打印配置信息） |
+| `#[shutdown]` | 插件卸载时清理 |
 
-### 必须导出的符号
+## 过程宏写法（推荐）
 
-每个动态插件必须导出 `qimen_plugin_descriptor` 函数：
-
-```rust
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn qimen_plugin_descriptor() -> PluginDescriptor {
-    PluginDescriptor::new("plugin-id", "0.1.0")
-        .add_command("cmd", "描述", "callback_symbol")
-        .add_route("notice", "GroupPoke", "on_poke_symbol")
-}
-```
-
-### 命令回调签名
+本示例使用 `#[dynamic_plugin]` 过程宏，一个 `mod` 包含所有功能：
 
 ```rust
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn callback_symbol(req: &CommandRequest) -> CommandResponse {
-    // req.args        — 命令参数
-    // req.sender_id   — 发送者 ID
-    // req.group_id    — 群 ID（私聊为空）
-    // req.command_name — 匹配的命令名
-    // req.raw_event_json — 原始 OneBot 事件 JSON
-    CommandResponse {
-        action: DynamicActionResponse::text_reply("回复内容"),
+use qimen_dynamic_plugin_derive::dynamic_plugin;
+use abi_stable_host_api::*;
+
+#[dynamic_plugin(id = "my-plugin", version = "0.1.0")]
+mod my_plugin {
+    use super::*;
+
+    // 生命周期钩子（可选）
+    #[init]
+    fn on_init(config: PluginInitConfig) -> PluginInitResult {
+        PluginInitResult::ok()
+    }
+
+    #[shutdown]
+    fn on_shutdown() { }
+
+    // 命令注册
+    #[command(name = "greet", description = "打招呼", aliases = "hi,hello", category = "示例")]
+    fn greet(req: &CommandRequest) -> CommandResponse {
+        CommandResponse::text(&format!("Hello, {}!", req.sender_nickname.as_str()))
+    }
+
+    // 事件路由
+    #[route(kind = "notice", events = "GroupPoke,PrivatePoke")]
+    fn on_poke(req: &NoticeRequest) -> NoticeResponse {
+        NoticeResponse {
+            action: DynamicActionResponse::text_reply("被戳了！"),
+        }
     }
 }
+// 宏自动生成：
+// - qimen_plugin_descriptor()（含命令、路由注册）
+// - qimen_plugin_init() / qimen_plugin_shutdown()
+// - 所有 extern "C" fn 导出
 ```
 
-### 事件回调签名
+### 可用属性
+
+| 属性 | 用途 | 参数 |
+|------|------|------|
+| `#[command(...)]` | 注册命令回调 | `name`, `description`, `aliases`, `category`, `role` |
+| `#[route(...)]` | 注册事件路由 | `kind`（notice/request/meta）, `events` |
+| `#[init]` | 插件加载钩子 | 无（函数签名固定） |
+| `#[shutdown]` | 插件卸载钩子 | 无（函数签名固定） |
+
+## CommandRequest 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `args` | RString | 命令参数（空格分隔） |
+| `command_name` | RString | 匹配的命令名 |
+| `sender_id` | RString | 发送者 ID |
+| `sender_nickname` | RString | 发送者昵称 **(v0.3)** |
+| `group_id` | RString | 群 ID（私聊为空） |
+| `message_id` | RString | 消息 ID **(v0.3)** |
+| `timestamp` | i64 | Unix 秒时间戳 **(v0.3)** |
+| `raw_event_json` | RString | 完整 OneBot 事件 JSON |
+
+## 三种回复方式
 
 ```rust
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn on_poke_symbol(req: &NoticeRequest) -> NoticeResponse {
-    // req.route         — 路由名（如 "GroupPoke"）
-    // req.raw_event_json — 原始 OneBot 事件 JSON
-    NoticeResponse {
-        action: DynamicActionResponse::text_reply("被戳了！"),
-    }
-}
-```
+// 1. 纯文本回复（最简单）
+CommandResponse::text("Hello!")
 
-### 响应类型
+// 2. ReplyBuilder 链式构建富媒体（推荐）
+CommandResponse::builder()
+    .reply(msg_id)         // 引用原消息
+    .at("12345")           // @某人
+    .at_all()              // @全体
+    .text("Hello!")        // 文本
+    .face(1)               // QQ 表情
+    .image_url("https://...") // 图片
+    .record("https://...")  // 语音
+    .build()
 
-| 方法 | 用途 |
-|------|------|
-| `DynamicActionResponse::text_reply(text)` | 纯文本回复 |
-| `DynamicActionResponse::rich_reply(json)` | 富媒体回复（OneBot 段 JSON） |
-| `DynamicActionResponse::ignore()` | 忽略事件 |
-| `DynamicActionResponse::approve(remark)` | 同意请求 |
-| `DynamicActionResponse::reject(reason)` | 拒绝请求 |
-
-### 富媒体段格式
-
-```rust
-let segments = serde_json::json!([
-    { "type": "text", "data": { "text": "Hello " } },
-    { "type": "face", "data": { "id": "1" } },
-    { "type": "at", "data": { "qq": "123456" } },
-    { "type": "image", "data": { "file": "https://example.com/img.png" } }
-]);
-DynamicActionResponse::rich_reply(&segments.to_string())
+// 3. 忽略事件
+CommandResponse::ignore()
 ```
 
 ## Cargo.toml 模板
 
 ```toml
 [package]
-name = "my-dynamic-plugin"
+name = "qimen-dynamic-plugin-myname"
 edition = "2024"
 version = "0.1.0"
+rust-version = "1.89"
 
+[workspace]                     # 独立于主工作空间
 [lib]
-crate-type = ["cdylib"]  # 编译为动态库
-
-[workspace]  # 独立于主工作空间
+crate-type = ["cdylib"]         # 编译为动态库
 
 [dependencies]
 abi-stable-host-api = { path = "../../crates/abi-stable-host-api" }
 abi_stable = "0.11"
-serde_json = "1"  # 可选，用于构建富媒体和解析事件
+serde_json = "1"
+qimen-dynamic-plugin-derive = { path = "../../crates/qimen-dynamic-plugin-derive" }
+```
+
+## 手动 FFI 写法
+
+如果不想使用过程宏，也可以手动导出 FFI 符号：
+
+```rust
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_descriptor() -> PluginDescriptor {
+    PluginDescriptor::new("plugin-id", "0.1.0")
+        .add_command_full(CommandDescriptorEntry { ... })
+        .add_route("notice", "GroupPoke", "on_poke_symbol")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn my_callback(req: &CommandRequest) -> CommandResponse { ... }
 ```
 
 ## 注意事项
 
-- 动态插件使用 C ABI (`extern "C"`)，所有导出函数必须标记 `#[unsafe(no_mangle)]`
+- 动态插件使用 C ABI (`extern "C"`)，过程宏自动处理 `#[unsafe(no_mangle)]` 标记
 - `abi_stable` crate 提供跨动态库安全传递的类型（`RString`、`RVec`）
 - 动态插件不支持 async——所有回调都是同步执行的
+- 插件 panic 会被宿主 `catch_unwind` 捕获，不会崩溃宿主进程（v0.3）
 - 熔断器保护：连续 3 次失败会自动隔离插件 60 秒
-- 向后兼容：v0.1 的 `qimen_demo_plugin_descriptor` 符号名仍然支持
+- 向后兼容：v0.1 / v0.2 的插件仍然支持

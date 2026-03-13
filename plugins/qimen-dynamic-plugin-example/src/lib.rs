@@ -19,8 +19,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use abi_stable_host_api::{
-    CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
+    BotApi, CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
     InterceptorResponse, NoticeRequest, NoticeResponse, PluginInitConfig, PluginInitResult,
+    SendBuilder,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
@@ -185,6 +186,35 @@ mod example {
     #[command(name = "secret", description = "仅私聊悄悄话 / Private whisper only", category = "示例", scope = "private")]
     fn secret(_req: &CommandRequest) -> CommandResponse {
         CommandResponse::text("🤫 这是一条仅在私聊中可用的秘密消息！/ This is a private-only secret!")
+    }
+
+    /// 主动发送 — 演示 BotApi::send_group_msg 和 SendBuilder
+    /// 用法: notify <group_id> <内容>
+    #[command(name = "notify", description = "向指定群发送通知 / Send notification to a group", category = "示例", role = "admin")]
+    fn notify(req: &CommandRequest) -> CommandResponse {
+        let args = req.args.as_str().trim();
+        let parts: Vec<&str> = args.splitn(2, ' ').collect();
+
+        if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+            return CommandResponse::text("用法：notify <group_id> <内容>\nUsage: notify <group_id> <message>");
+        }
+
+        let target_group = parts[0];
+        let content = parts[1];
+
+        // 简单文本发送
+        BotApi::send_group_msg(target_group, &format!("[通知] {content}"));
+
+        // 流式构建富媒体发送到发送者私聊
+        let sender = req.sender_id.as_str();
+        SendBuilder::private(sender)
+            .text("✅ 你的通知已发送到群 ")
+            .text(target_group)
+            .text("：")
+            .text(content)
+            .send();
+
+        CommandResponse::text(&format!("通知已发送到群 {target_group}！"))
     }
 
     /// 帮助菜单 — 纯静态文本

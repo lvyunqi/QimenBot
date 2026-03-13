@@ -31,6 +31,7 @@ use qimen_plugin_api::{
 };
 use self::interceptor::InterceptorChain;
 use self::rate_limiter::TokenBucketLimiter;
+use abi_stable_host_api::SendAction;
 use self::dynamic_runtime::{DynamicPluginRuntime, DynamicResponse};
 use self::permission::PermissionResolver;
 use self::onebot11_dispatch::{OneBotSystemDispatchSignal, OneBotSystemDispatcher};
@@ -122,10 +123,16 @@ pub struct BotRuntimeInfo {
     pub limiter_config: RateLimiterConfig,
 }
 
+/// Shared buffer for send actions queued by dynamic interceptors.
+/// Drained by the main event loop after each interceptor chain call.
+type PendingSendBuffer = Arc<std::sync::Mutex<Vec<SendAction>>>;
+
 /// Adapter that wraps a dynamic plugin interceptor as a [`MessageEventInterceptor`].
 struct DynamicInterceptorAdapter {
     descriptor: DynamicInterceptorDescriptor,
     dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
+    /// Shared buffer — same instance held by [`Runtime`] for draining.
+    pending_sends: PendingSendBuffer,
 }
 
 impl DynamicInterceptorAdapter {
@@ -180,7 +187,14 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
         .await;
 
         match result {
-            Ok(Ok(allow)) => allow,
+            Ok(Ok((allow, sends))) => {
+                if !sends.is_empty() {
+                    if let Ok(mut pending) = self.pending_sends.lock() {
+                        pending.extend(sends);
+                    }
+                }
+                allow
+            }
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle failed, allowing");
                 true
@@ -209,7 +223,13 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
         .await;
 
         match result {
-            Ok(Ok(())) => {}
+            Ok(Ok(sends)) => {
+                if !sends.is_empty() {
+                    if let Ok(mut pending) = self.pending_sends.lock() {
+                        pending.extend(sends);
+                    }
+                }
+            }
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion failed");
             }
@@ -235,6 +255,8 @@ pub struct Runtime {
     pub dedup: Arc<MessageDedup>,
     pub group_event_filter: Arc<GroupEventFilter>,
     pub plugin_acl: Arc<PluginAclManager>,
+    /// Shared buffer for send actions queued by dynamic interceptors.
+    interceptor_pending_sends: PendingSendBuffer,
 }
 
 impl Default for Runtime {
@@ -253,6 +275,7 @@ impl Default for Runtime {
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
+            interceptor_pending_sends: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 }
@@ -321,6 +344,7 @@ impl Runtime {
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
+            interceptor_pending_sends: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -362,6 +386,7 @@ impl Runtime {
                 let adapter = Arc::new(DynamicInterceptorAdapter {
                     descriptor,
                     dynamic_runtime: Arc::clone(&self.dynamic_runtime),
+                    pending_sends: Arc::clone(&self.interceptor_pending_sends),
                 });
                 chain.add(adapter);
             }
@@ -750,8 +775,11 @@ impl Runtime {
                 OneBotSystemDispatchSignal::Continue(route) => {
                     let report_guard = self.host_plugin_report.read().unwrap();
                     if let Some(report) = report_guard.as_ref() {
-                        if let Some(signal) = self.execute_dynamic_system_route(report, &route, &payload)? {
+                        if let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload)? {
                             drop(report_guard);
+                            if !sends.is_empty() {
+                                self.process_send_actions(bot, adapter, client, sends).await?;
+                            }
                             self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
                                 .await?;
                         }
@@ -840,8 +868,20 @@ impl Runtime {
         }
 
         if !self.interceptor_chain.read().unwrap().pre_handle(&bot.id, &event).await {
+            // Drain any sends queued during pre_handle even if blocked
+            let sends = self.drain_interceptor_sends();
+            if !sends.is_empty() {
+                self.process_send_actions(bot, adapter, client, sends).await?;
+            }
             tracing::debug!(bot_id = %bot.id, "interceptor chain blocked event");
             return Ok(SessionSignal::EventHandled);
+        }
+        // Drain sends from pre_handle interceptors
+        {
+            let sends = self.drain_interceptor_sends();
+            if !sends.is_empty() {
+                self.process_send_actions(bot, adapter, client, sends).await?;
+            }
         }
 
         let permission = PermissionResolver::resolve(bot, &event);
@@ -918,21 +958,28 @@ impl Runtime {
                     tracing::debug!(plugin_id = %descriptor.plugin_id, "event blocked by plugin ACL");
                     None
                 } else {
-                let mut runtime = self.dynamic_runtime.lock().map_err(|_| {
-                    QimenError::Runtime("dynamic runtime lock poisoned".to_string())
-                })?;
-                let sender_id = event.user_id().map(|id| id.to_string()).unwrap_or_default();
-                let group_id = event.group_id_i64().map(|id| id.to_string()).unwrap_or_default();
-                let raw_json = event.raw_json.to_string();
-                let sender_nickname = event.sender_nickname().unwrap_or_default().to_string();
-                let message_id = event.raw_json.get("message_id")
-                    .and_then(|v| v.as_i64())
-                    .map(|id| id.to_string())
-                    .unwrap_or_default();
-                let timestamp = event.raw_json.get("time")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                match runtime.execute_command(&descriptor, &args, &sender_id, &group_id, &raw_json, &sender_nickname, &message_id, timestamp)? {
+                let (dyn_response, sends) = {
+                    let mut runtime = self.dynamic_runtime.lock().map_err(|_| {
+                        QimenError::Runtime("dynamic runtime lock poisoned".to_string())
+                    })?;
+                    let sender_id = event.user_id().map(|id| id.to_string()).unwrap_or_default();
+                    let group_id = event.group_id_i64().map(|id| id.to_string()).unwrap_or_default();
+                    let raw_json = event.raw_json.to_string();
+                    let sender_nickname = event.sender_nickname().unwrap_or_default().to_string();
+                    let message_id = event.raw_json.get("message_id")
+                        .and_then(|v| v.as_i64())
+                        .map(|id| id.to_string())
+                        .unwrap_or_default();
+                    let timestamp = event.raw_json.get("time")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    runtime.execute_command(&descriptor, &args, &sender_id, &group_id, &raw_json, &sender_nickname, &message_id, timestamp)?
+                };
+                // Process BotApi sends (lock already dropped)
+                if !sends.is_empty() {
+                    self.process_send_actions(bot, adapter, client, sends).await?;
+                }
+                match dyn_response {
                     DynamicResponse::ReplyMessage(message) => Some(message),
                     DynamicResponse::Reply(message) => Some(Message::text(message)),
                     DynamicResponse::Ignore => None,
@@ -962,6 +1009,13 @@ impl Runtime {
         }
 
         self.interceptor_chain.read().unwrap().after_completion(&bot.id, &event).await;
+        // Drain sends from after_completion interceptors
+        {
+            let sends = self.drain_interceptor_sends();
+            if !sends.is_empty() {
+                self.process_send_actions(bot, adapter, client, sends).await?;
+            }
+        }
 
         Ok(SessionSignal::EventHandled)
     }
@@ -1120,6 +1174,74 @@ impl Runtime {
         Ok(response)
     }
 
+    /// Process outbound send actions queued by a dynamic plugin via `BotApi` / `SendBuilder`.
+    async fn process_send_actions(
+        &self,
+        bot: &BotRuntimeInfo,
+        adapter: &OneBot11Adapter,
+        client: &OneBot11ForwardWsClient,
+        sends: Vec<SendAction>,
+    ) -> Result<()> {
+        for send in sends {
+            let msg_type = send.message_type.as_str();
+            let target = send.target_id.as_str();
+            let segments_json = send.segments_json.as_str().trim();
+
+            let message_value = if !segments_json.is_empty() {
+                // Rich-media: parse JSON segments
+                match serde_json::from_str::<Value>(segments_json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "invalid segments_json in SendAction, falling back to text");
+                        json!([{"type": "text", "data": {"text": send.message.as_str()}}])
+                    }
+                }
+            } else {
+                json!([{"type": "text", "data": {"text": send.message.as_str()}}])
+            };
+
+            let (action_name, params) = match msg_type {
+                "group" => (
+                    "send_group_msg",
+                    json!({ "group_id": target.parse::<i64>().unwrap_or(0), "message": message_value }),
+                ),
+                "private" => (
+                    "send_private_msg",
+                    json!({ "user_id": target.parse::<i64>().unwrap_or(0), "message": message_value }),
+                ),
+                other => {
+                    tracing::warn!(message_type = %other, "unknown SendAction message_type, skipping");
+                    continue;
+                }
+            };
+
+            let action = NormalizedActionRequest {
+                protocol: ProtocolId::OneBot11,
+                bot_instance: bot.id.clone(),
+                action: action_name.to_string(),
+                params,
+                echo: Some(json!(build_echo(bot))),
+                timeout_ms: 5000,
+                metadata: ActionMeta {
+                    source: "dynamic-plugin-bot-api".to_string(),
+                },
+            };
+
+            if let Err(e) = self.execute_action(bot, adapter, client, action).await {
+                tracing::warn!(error = %e, target = %target, action = %action_name, "failed to execute BotApi send action");
+            }
+        }
+        Ok(())
+    }
+
+    /// Drain pending send actions accumulated by dynamic interceptors.
+    fn drain_interceptor_sends(&self) -> Vec<SendAction> {
+        self.interceptor_pending_sends
+            .lock()
+            .map(|mut q| q.drain(..).collect())
+            .unwrap_or_default()
+    }
+
     async fn apply_dynamic_system_signal(
         &self,
         bot: &BotRuntimeInfo,
@@ -1256,7 +1378,7 @@ impl Runtime {
         report: &HostPluginReport,
         route: &onebot11_dispatch::OneBotSystemRoute,
         payload: &Value,
-    ) -> Result<Option<DynamicResponse>> {
+    ) -> Result<Option<(DynamicResponse, Vec<SendAction>)>> {
         let mut runtime = self.dynamic_runtime.lock().map_err(|_| {
             QimenError::Runtime("dynamic runtime lock poisoned".to_string())
         })?;

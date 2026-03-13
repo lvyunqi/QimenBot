@@ -13,6 +13,7 @@
 //!   Added `PluginInitConfig` / `PluginInitResult` lifecycle hooks.
 
 use abi_stable::std_types::{RString, RVec};
+use std::sync::Mutex;
 
 /// Current plugin API version. Dynamic plugins must declare the same version
 /// to be loaded by the host.
@@ -517,5 +518,194 @@ impl PluginInitResult {
             code: 1,
             error_message: RString::from(message),
         }
+    }
+}
+
+// ─── Send queue (BotApi) ─────────────────────────────────────────────────
+
+/// An outbound send action queued by plugin code via `BotApi` / `SendBuilder`.
+///
+/// The host drains the queue after each FFI callback and executes the sends
+/// asynchronously.
+#[repr(C)]
+#[derive(Clone)]
+pub struct SendAction {
+    /// `"private"` or `"group"`.
+    pub message_type: RString,
+    /// Target user_id (for private) or group_id (for group).
+    pub target_id: RString,
+    /// Plain text message body (used when `segments_json` is empty).
+    pub message: RString,
+    /// JSON-encoded rich-media segments (takes precedence over `message`).
+    pub segments_json: RString,
+}
+
+static SEND_QUEUE: Mutex<Vec<SendAction>> = Mutex::new(Vec::new());
+
+/// Drain all queued send actions. Called by the generated `qimen_plugin_flush_sends` symbol.
+pub fn drain_send_queue() -> Vec<SendAction> {
+    SEND_QUEUE
+        .lock()
+        .map(|mut q| q.drain(..).collect())
+        .unwrap_or_default()
+}
+
+/// Provides static methods for plugins to queue outbound messages to arbitrary
+/// users or groups. Messages are buffered in a process-local queue and flushed
+/// by the host after the callback returns.
+pub struct BotApi;
+
+impl BotApi {
+    /// Send a plain text message to a private chat.
+    pub fn send_private_msg(user_id: &str, text: &str) {
+        Self::push(SendAction {
+            message_type: RString::from("private"),
+            target_id: RString::from(user_id),
+            message: RString::from(text),
+            segments_json: RString::new(),
+        });
+    }
+
+    /// Send a plain text message to a group chat.
+    pub fn send_group_msg(group_id: &str, text: &str) {
+        Self::push(SendAction {
+            message_type: RString::from("group"),
+            target_id: RString::from(group_id),
+            message: RString::from(text),
+            segments_json: RString::new(),
+        });
+    }
+
+    /// Send rich-media (JSON segments) to a private chat.
+    pub fn send_private_rich(user_id: &str, segments_json: &str) {
+        Self::push(SendAction {
+            message_type: RString::from("private"),
+            target_id: RString::from(user_id),
+            message: RString::new(),
+            segments_json: RString::from(segments_json),
+        });
+    }
+
+    /// Send rich-media (JSON segments) to a group chat.
+    pub fn send_group_rich(group_id: &str, segments_json: &str) {
+        Self::push(SendAction {
+            message_type: RString::from("group"),
+            target_id: RString::from(group_id),
+            message: RString::new(),
+            segments_json: RString::from(segments_json),
+        });
+    }
+
+    fn push(action: SendAction) {
+        if let Ok(mut q) = SEND_QUEUE.lock() {
+            q.push(action);
+        }
+    }
+}
+
+/// Fluent builder for constructing and queuing a rich-media send to an
+/// arbitrary target (group or private).
+///
+/// # Example
+/// ```ignore
+/// SendBuilder::group("123456")
+///     .text("hello ")
+///     .at("789")
+///     .send();
+/// ```
+pub struct SendBuilder {
+    message_type: String,
+    target_id: String,
+    segments: Vec<String>,
+}
+
+impl SendBuilder {
+    /// Start building a message destined for a group.
+    pub fn group(group_id: &str) -> Self {
+        Self {
+            message_type: "group".to_string(),
+            target_id: group_id.to_string(),
+            segments: Vec::new(),
+        }
+    }
+
+    /// Start building a message destined for a private chat.
+    pub fn private(user_id: &str) -> Self {
+        Self {
+            message_type: "private".to_string(),
+            target_id: user_id.to_string(),
+            segments: Vec::new(),
+        }
+    }
+
+    /// Add a text segment.
+    pub fn text(mut self, text: &str) -> Self {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+        self.segments.push(format!(
+            r#"{{"type":"text","data":{{"text":"{}"}}}}"#,
+            escaped
+        ));
+        self
+    }
+
+    /// Add an @mention segment.
+    pub fn at(mut self, user_id: &str) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"at","data":{{"qq":"{}"}}}}"#,
+            user_id
+        ));
+        self
+    }
+
+    /// Add an @all mention.
+    pub fn at_all(mut self) -> Self {
+        self.segments
+            .push(r#"{"type":"at","data":{"qq":"all"}}"#.to_string());
+        self
+    }
+
+    /// Add a QQ face emoji segment.
+    pub fn face(mut self, id: i32) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"face","data":{{"id":"{}"}}}}"#,
+            id
+        ));
+        self
+    }
+
+    /// Add an image segment by URL.
+    pub fn image_url(mut self, url: &str) -> Self {
+        let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
+        self.segments.push(format!(
+            r#"{{"type":"image","data":{{"file":"{}"}}}}"#,
+            escaped
+        ));
+        self
+    }
+
+    /// Add an image segment by base64 data.
+    pub fn image_base64(mut self, base64: &str) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"image","data":{{"file":"base64://{}"}}}}"#,
+            base64
+        ));
+        self
+    }
+
+    /// Queue the built message for sending. The host will flush and send
+    /// it after the current FFI callback returns.
+    pub fn send(self) {
+        let json = format!("[{}]", self.segments.join(","));
+        BotApi::push(SendAction {
+            message_type: RString::from(self.message_type),
+            target_id: RString::from(self.target_id),
+            message: RString::new(),
+            segments_json: RString::from(json),
+        });
     }
 }

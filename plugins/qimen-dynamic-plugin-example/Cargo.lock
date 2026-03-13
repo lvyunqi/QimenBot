@@ -205,11 +205,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "qimen-dynamic-plugin-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "qimen-dynamic-plugin-example"
 version = "0.1.0"
 dependencies = [
  "abi-stable-host-api",
  "abi_stable",
+ "qimen-dynamic-plugin-derive",
  "serde_json",
 ]
 

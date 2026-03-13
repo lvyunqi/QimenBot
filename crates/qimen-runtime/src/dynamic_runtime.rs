@@ -1,9 +1,10 @@
 use abi_stable::std_types::RString;
+use abi_stable::std_types::RVec;
 use abi_stable_host_api::{
     CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
     InterceptorResponse, NoticeRequest, NoticeResponse, PluginDescriptor, PluginInitConfig,
-    PluginInitResult, is_compatible_api_version, ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT,
-    ACTION_REPLY,
+    PluginInitResult, SendAction, is_compatible_api_version, ACTION_APPROVE, ACTION_IGNORE,
+    ACTION_REJECT, ACTION_REPLY,
 };
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
@@ -55,6 +56,8 @@ impl DynamicPluginRuntime {
     }
 
     /// Execute a command callback with v0.2 context.
+    /// Returns `(response, send_actions)` — the response from the callback plus
+    /// any outbound messages queued via `BotApi` / `SendBuilder`.
     pub fn execute_command(
         &mut self,
         descriptor: &DynamicCommandDescriptor,
@@ -65,7 +68,7 @@ impl DynamicPluginRuntime {
         sender_nickname: &str,
         message_id: &str,
         timestamp: i64,
-    ) -> Result<DynamicResponse> {
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         self.evict_idle_libraries(Duration::from_secs(300));
         let path = descriptor.library_path.clone();
         let callback = descriptor.callback_symbol.clone();
@@ -103,8 +106,10 @@ impl DynamicPluginRuntime {
                 symbol(request)
             }));
 
+            let sends = flush_sends_from_library(library);
+
             match result {
-                Ok(response) => Ok(map_action_response(response.action)),
+                Ok(response) => Ok((map_action_response(response.action), sends)),
                 Err(panic_info) => {
                     let panic_msg = panic_info
                         .downcast_ref::<String>()
@@ -131,7 +136,7 @@ impl DynamicPluginRuntime {
         &mut self,
         descriptor: &DynamicCommandDescriptor,
         args: &[String],
-    ) -> Result<DynamicResponse> {
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         self.execute_command(descriptor, args, "", "", "{}", "", "", 0)
     }
 
@@ -139,7 +144,7 @@ impl DynamicPluginRuntime {
         &mut self,
         descriptor: &DynamicNoticeDescriptor,
         raw_event_json: &str,
-    ) -> Result<DynamicResponse> {
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         self.execute_route_callback(
             &descriptor.library_path,
             &descriptor.callback_symbol,
@@ -153,7 +158,7 @@ impl DynamicPluginRuntime {
         &mut self,
         descriptor: &DynamicRequestDescriptor,
         raw_event_json: &str,
-    ) -> Result<DynamicResponse> {
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         self.execute_route_callback(
             &descriptor.library_path,
             &descriptor.callback_symbol,
@@ -167,7 +172,7 @@ impl DynamicPluginRuntime {
         &mut self,
         descriptor: &DynamicMetaDescriptor,
         raw_event_json: &str,
-    ) -> Result<DynamicResponse> {
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         self.execute_route_callback(
             &descriptor.library_path,
             &descriptor.callback_symbol,
@@ -274,17 +279,17 @@ impl DynamicPluginRuntime {
     }
 
     /// Execute a dynamic interceptor's pre_handle callback.
-    /// Returns `true` to allow, `false` to block.
+    /// Returns `(allow, send_actions)` — `true` to allow, `false` to block.
     pub fn execute_pre_handle(
         &mut self,
         descriptor: &DynamicInterceptorDescriptor,
         request: InterceptorRequest,
-    ) -> Result<bool> {
+    ) -> Result<(bool, Vec<SendAction>)> {
         let path = descriptor.library_path.clone();
         let symbol_name = descriptor.pre_handle_symbol.clone();
 
         if symbol_name.is_empty() {
-            return Ok(true);
+            return Ok((true, Vec::new()));
         }
 
         let path_for_error = path.clone();
@@ -303,8 +308,10 @@ impl DynamicPluginRuntime {
                 symbol(&request)
             }));
 
+            let sends = flush_sends_from_library(library);
+
             match result {
-                Ok(response) => Ok(response.allow != 0),
+                Ok(response) => Ok((response.allow != 0, sends)),
                 Err(panic_info) => {
                     let panic_msg = panic_info
                         .downcast_ref::<String>()
@@ -331,12 +338,12 @@ impl DynamicPluginRuntime {
         &mut self,
         descriptor: &DynamicInterceptorDescriptor,
         request: InterceptorRequest,
-    ) -> Result<()> {
+    ) -> Result<Vec<SendAction>> {
         let path = descriptor.library_path.clone();
         let symbol_name = descriptor.after_completion_symbol.clone();
 
         if symbol_name.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let path_for_error = path.clone();
@@ -355,8 +362,10 @@ impl DynamicPluginRuntime {
                 symbol(&request)
             }));
 
+            let sends = flush_sends_from_library(library);
+
             match result {
-                Ok(()) => Ok(()),
+                Ok(()) => Ok(sends),
                 Err(panic_info) => {
                     let panic_msg = panic_info
                         .downcast_ref::<String>()
@@ -400,7 +409,7 @@ impl DynamicPluginRuntime {
         route: String,
         kind: &str,
         raw_event_json: &str,
-    ) -> Result<DynamicResponse> {
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         self.evict_idle_libraries(Duration::from_secs(300));
         let path_owned = path.to_string();
         let callback_owned = callback.to_string();
@@ -425,8 +434,10 @@ impl DynamicPluginRuntime {
                 symbol(request)
             }));
 
+            let sends = flush_sends_from_library(library);
+
             match result {
-                Ok(response) => Ok(map_action_response(response.action)),
+                Ok(response) => Ok((map_action_response(response.action), sends)),
                 Err(panic_info) => {
                     let panic_msg = panic_info
                         .downcast_ref::<String>()
@@ -522,6 +533,29 @@ impl DynamicPluginRuntime {
         self.libraries.retain(|_, entry| {
             now.duration_since(entry.last_used) <= max_idle || entry.tripped_until.is_some()
         });
+    }
+}
+
+/// Try to call the plugin's `qimen_plugin_flush_sends` symbol to drain any
+/// queued `SendAction`s. Returns an empty Vec if the symbol doesn't exist
+/// (old plugin without macro) or if the call fails.
+unsafe fn flush_sends_from_library(library: &libloading::Library) -> Vec<SendAction> {
+    let symbol: std::result::Result<
+        libloading::Symbol<unsafe extern "C" fn() -> RVec<SendAction>>,
+        _,
+    > = unsafe { library.get(b"qimen_plugin_flush_sends") };
+
+    match symbol {
+        Ok(flush_fn) => {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { flush_fn() })) {
+                Ok(rvec) => rvec.into_iter().collect(),
+                Err(_) => {
+                    tracing::warn!("qimen_plugin_flush_sends panicked, discarding queued sends");
+                    Vec::new()
+                }
+            }
+        }
+        Err(_) => Vec::new(), // Symbol not found — old plugin, no sends
     }
 }
 

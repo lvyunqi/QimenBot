@@ -29,6 +29,7 @@ members = [
   "crates/qimen-mod-bridge",
   "crates/qimen-testkit",
   "crates/qimen-plugin-derive",
+  "crates/qimen-dynamic-plugin-derive",
 ]
 default-members = ["apps/qimenbotd"]
 resolver = "2"
