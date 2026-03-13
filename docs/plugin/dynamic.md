@@ -19,7 +19,7 @@
 - 如果你是第三方开发者，需要快速迭代和热重载 → 选择**动态插件**
 :::
 
-## 快速开始
+## 快速开始 {#quickstart}
 
 动态插件推荐使用 `#[dynamic_plugin]` **过程宏**来编写。宏会自动生成所有 FFI 导出函数，你只需关注业务逻辑。
 
@@ -110,7 +110,7 @@ cp target/release/qimen_dynamic_plugin_myplugin.dll ../../plugins/bin/
 
 在 Bot 中发送 `/plugins reload`，无需重启即可加载新插件。
 
-## `#[dynamic_plugin]` 宏详解
+## `#[dynamic_plugin]` 宏详解 {#macro}
 
 ### 宏属性
 
@@ -224,7 +224,7 @@ fn on_shutdown() {
 每个插件模块内最多一个 `#[init]` 和一个 `#[shutdown]` 函数。
 :::
 
-### `#[pre_handle]` — 消息预处理拦截器
+### `#[pre_handle]` — 消息预处理拦截器 {#pre-handle}
 
 在消息到达命令插件**之前**执行。返回 `InterceptorResponse::allow()` 放行，`InterceptorResponse::block()` 拦截。
 
@@ -245,7 +245,7 @@ fn my_filter(req: &InterceptorRequest) -> InterceptorResponse {
 }
 ```
 
-### `#[after_completion]` — 消息后置处理
+### `#[after_completion]` — 消息后置处理 {#after-completion}
 
 所有插件处理完毕后执行，适合做日志记录、统计等。
 
@@ -283,7 +283,7 @@ pub struct InterceptorRequest {
 每个插件模块内最多一个 `#[pre_handle]` 和一个 `#[after_completion]` 函数。
 :::
 
-## CommandRequest — 命令请求
+## CommandRequest — 命令请求 {#command-request}
 
 每个命令回调接收一个 `&CommandRequest`，包含完整的请求上下文：
 
@@ -314,7 +314,7 @@ pub struct CommandRequest {
 | `message_id` | 消息 ID，可用于引用回复（v0.3 新增） |
 | `timestamp` | 事件时间戳，0 表示不可用（v0.3 新增） |
 
-## CommandResponse — 命令响应
+## CommandResponse — 命令响应 {#command-response}
 
 ### 快捷方法
 
@@ -395,7 +395,7 @@ DynamicActionResponse::approve("备注")
 DynamicActionResponse::reject("理由")
 ```
 
-## NoticeRequest / NoticeResponse
+## NoticeRequest / NoticeResponse {#notice}
 
 事件回调使用 `NoticeRequest` 和 `NoticeResponse`：
 
@@ -426,7 +426,7 @@ fn on_poke(req: &NoticeRequest) -> NoticeResponse {
 }
 ```
 
-## 插件配置
+## 插件配置 {#config}
 
 动态插件可以拥有独立的配置文件。在 `config/plugins/` 目录下创建以插件 ID 命名的 TOML 文件：
 
@@ -456,7 +456,7 @@ fn on_init(config: PluginInitConfig) -> PluginInitResult {
 }
 ```
 
-## 完整示例
+## 完整示例 {#full-example}
 
 ```rust
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -596,7 +596,7 @@ mod example {
 }
 ```
 
-## 手动 FFI 写法（不使用宏）
+## 手动 FFI 写法（不使用宏） {#manual-ffi}
 
 如果你不想使用过程宏，也可以手动编写所有 FFI 导出函数。这种方式更底层，但能完全控制导出行为。
 
@@ -672,7 +672,7 @@ pub unsafe extern "C" fn my_plugin_pre_handle(req: &InterceptorRequest) -> Inter
 
 </details>
 
-## 运行时管理
+## 运行时管理 {#runtime}
 
 | 命令 | 说明 |
 |------|------|
@@ -682,7 +682,7 @@ pub unsafe extern "C" fn my_plugin_pre_handle(req: &InterceptorRequest) -> Inter
 | `/dynamic-errors` | 查看动态插件健康状态 |
 | `/dynamic-errors clear` | 清除错误计数，解除隔离 |
 
-## 熔断器机制
+## 熔断器机制 {#circuit-breaker}
 
 动态插件内置熔断器保护，防止有问题的插件影响整体稳定性：
 

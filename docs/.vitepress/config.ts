@@ -69,8 +69,18 @@ export default defineConfig({
         },
         {
           text: '动态插件开发',
+          collapsed: false,
           items: [
             { text: '动态插件教程', link: '/plugin/dynamic' },
+            { text: '快速开始', link: '/plugin/dynamic#quickstart' },
+            { text: '宏详解', link: '/plugin/dynamic#macro' },
+            { text: 'CommandRequest', link: '/plugin/dynamic#command-request' },
+            { text: 'CommandResponse', link: '/plugin/dynamic#command-response' },
+            { text: '拦截器', link: '/plugin/dynamic#pre-handle' },
+            { text: '插件配置', link: '/plugin/dynamic#config' },
+            { text: '完整示例', link: '/plugin/dynamic#full-example' },
+            { text: '手动 FFI 写法', link: '/plugin/dynamic#manual-ffi' },
+            { text: '运行时管理', link: '/plugin/dynamic#runtime' },
           ]
         }
       ],
