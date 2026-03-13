@@ -718,15 +718,16 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 or 0.2)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2 or 0.3)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
 
-        let is_v2 = descriptor.api_version.as_str() == "0.2";
+        let is_v2_plus = descriptor.api_version.as_str() == "0.2"
+            || descriptor.api_version.as_str() == "0.3";
 
-        // Parse v0.2 multi-command entries
-        let commands: Vec<DynamicCommandEntry> = if is_v2 && !descriptor.commands.is_empty() {
+        // Parse v0.2+ multi-command entries
+        let commands: Vec<DynamicCommandEntry> = if is_v2_plus && !descriptor.commands.is_empty() {
             descriptor
                 .commands
                 .iter()
@@ -772,8 +773,8 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             Vec::new()
         };
 
-        // Parse v0.2 multi-route entries
-        let routes: Vec<DynamicRouteEntry> = if is_v2 && !descriptor.routes.is_empty() {
+        // Parse v0.2+ multi-route entries
+        let routes: Vec<DynamicRouteEntry> = if is_v2_plus && !descriptor.routes.is_empty() {
             descriptor
                 .routes
                 .iter()
