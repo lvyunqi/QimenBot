@@ -2,8 +2,7 @@
 members = [
   "apps/qimenbotd",
   "apps/qimenctl",
-  "plugins/qimen-plugin-example",
-  "plugins/qimen-plugin-douluo",
+  "plugins/qimen-plugin-*",
   "crates/abi-stable-host-api",
   "crates/qimen-framework",
   "crates/qimen-host-types",

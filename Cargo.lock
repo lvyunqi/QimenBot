@@ -1284,7 +1284,6 @@ version = "0.1.0"
 dependencies = [
  "qimen-error",
  "qimen-official-host",
- "qimen-plugin-douluo",
  "qimen-plugin-example",
  "tokio",
 ]
