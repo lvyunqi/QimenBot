@@ -228,6 +228,63 @@ impl MessageEventInterceptor for KeywordFilterInterceptor {
 }
 ```
 
+## 动态插件中的拦截器
+
+动态插件也可以注册拦截器。由于动态插件使用同步 `extern "C"` FFI，拦截器回调接收 `InterceptorRequest` 而不是 `NormalizedEvent`。
+
+### 使用过程宏
+
+```rust
+use abi_stable_host_api::{InterceptorRequest, InterceptorResponse};
+
+#[dynamic_plugin(id = "my-plugin", version = "0.1.0")]
+mod my_plugin {
+    use super::*;
+
+    #[pre_handle]
+    fn filter(req: &InterceptorRequest) -> InterceptorResponse {
+        let text = req.message_text.as_str();
+        if text.contains("spam") {
+            return InterceptorResponse::block();
+        }
+        InterceptorResponse::allow()
+    }
+
+    #[after_completion]
+    fn log(req: &InterceptorRequest) {
+        eprintln!("processed: sender={}", req.sender_id.as_str());
+    }
+}
+```
+
+### InterceptorRequest 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `bot_id` | `RString` | Bot 实例 ID |
+| `sender_id` | `RString` | 发送者 QQ 号 |
+| `group_id` | `RString` | 群号（私聊为空字符串） |
+| `message_text` | `RString` | 消息纯文本 |
+| `raw_event_json` | `RString` | 完整事件 JSON |
+| `sender_nickname` | `RString` | 发送者昵称 |
+| `message_id` | `RString` | 消息 ID |
+| `timestamp` | `i64` | 事件 Unix 时间戳 |
+
+### InterceptorResponse
+
+```rust
+InterceptorResponse::allow()   // 放行
+InterceptorResponse::block()   // 拦截
+```
+
+::: tip 静态与动态拦截器共存
+静态插件的拦截器和动态插件的拦截器会合并到同一条链中执行：先执行静态拦截器，再执行动态拦截器。热重载（`/plugins reload`）时动态拦截器会自动重建。
+:::
+
+::: warning 每模块限制
+每个动态插件模块最多一个 `#[pre_handle]` 和一个 `#[after_completion]` 函数。
+:::
+
 ## 注意事项
 
 ::: warning 拦截器对所有消息生效

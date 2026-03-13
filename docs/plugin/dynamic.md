@@ -9,6 +9,7 @@
 | 编译方式 | 与框架一同编译 | 独立编译为动态库 |
 | API 访问 | 完整（async、OneBotActionClient 等） | FFI 接口（同步、C ABI） |
 | 消息构建 | `Message` + `MessageBuilder` | `ReplyBuilder`（流式构建）/ JSON 段 |
+| 拦截器 | `MessageEventInterceptor` trait（async） | `#[pre_handle]` / `#[after_completion]`（同步 FFI） |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 生命周期 | `on_load` / `on_unload` | `#[init]` / `#[shutdown]` |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
@@ -223,6 +224,65 @@ fn on_shutdown() {
 每个插件模块内最多一个 `#[init]` 和一个 `#[shutdown]` 函数。
 :::
 
+### `#[pre_handle]` — 消息预处理拦截器
+
+在消息到达命令插件**之前**执行。返回 `InterceptorResponse::allow()` 放行，`InterceptorResponse::block()` 拦截。
+
+```rust
+use abi_stable_host_api::{InterceptorRequest, InterceptorResponse};
+
+#[pre_handle]
+fn my_filter(req: &InterceptorRequest) -> InterceptorResponse {
+    let sender = req.sender_id.as_str();
+    let text = req.message_text.as_str();
+
+    // 示例：拦截包含特定关键词的消息
+    if text.contains("spam") {
+        return InterceptorResponse::block();
+    }
+
+    InterceptorResponse::allow()
+}
+```
+
+### `#[after_completion]` — 消息后置处理
+
+所有插件处理完毕后执行，适合做日志记录、统计等。
+
+```rust
+use abi_stable_host_api::InterceptorRequest;
+
+#[after_completion]
+fn my_logger(req: &InterceptorRequest) {
+    let sender = req.sender_id.as_str();
+    let group = req.group_id.as_str();
+    let text = req.message_text.as_str();
+    eprintln!("[log] sender={sender}, group={group}, text={text:?}");
+}
+```
+
+### InterceptorRequest
+
+拦截器回调接收的请求上下文：
+
+```rust
+#[repr(C)]
+pub struct InterceptorRequest {
+    pub bot_id: RString,           // Bot 实例 ID
+    pub sender_id: RString,        // 发送者 QQ 号
+    pub group_id: RString,         // 群号（私聊为空字符串）
+    pub message_text: RString,     // 消息纯文本
+    pub raw_event_json: RString,   // 原始事件 JSON
+    pub sender_nickname: RString,  // 发送者昵称
+    pub message_id: RString,       // 消息 ID
+    pub timestamp: i64,            // 事件 Unix 时间戳
+}
+```
+
+::: warning 限制
+每个插件模块内最多一个 `#[pre_handle]` 和一个 `#[after_completion]` 函数。
+:::
+
 ## CommandRequest — 命令请求
 
 每个命令回调接收一个 `&CommandRequest`，包含完整的请求上下文：
@@ -403,6 +463,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use abi_stable_host_api::{
     CommandRequest, CommandResponse, DynamicActionResponse,
+    InterceptorRequest, InterceptorResponse,
     NoticeRequest, NoticeResponse,
     PluginInitConfig, PluginInitResult,
 };
@@ -506,6 +567,17 @@ mod example {
         ))
     }
 
+    // ── 拦截器 ──
+
+    /// 消息预处理 — 记录日志，始终放行
+    #[pre_handle]
+    fn on_pre_handle(req: &InterceptorRequest) -> InterceptorResponse {
+        let sender = req.sender_id.as_str();
+        let text = req.message_text.as_str();
+        eprintln!("[example] pre_handle: sender={sender}, text={text:?}");
+        InterceptorResponse::allow()
+    }
+
     // ── 事件路由 ──
 
     #[route(kind = "notice", events = "GroupPoke,PrivatePoke")]
@@ -550,6 +622,7 @@ pub unsafe extern "C" fn qimen_plugin_descriptor() -> PluginDescriptor {
             scope: RString::from("group"),   // 仅群聊
         })
         .add_route("notice", "GroupPoke", "my_plugin_on_poke")
+        .add_interceptor("my_plugin_pre_handle", "")  // 注册拦截器
 }
 
 /// 初始化钩子（可选）
@@ -587,6 +660,13 @@ pub unsafe extern "C" fn my_plugin_on_poke(req: &NoticeRequest) -> NoticeRespons
     NoticeResponse {
         action: DynamicActionResponse::text_reply("别戳了！"),
     }
+}
+
+/// 拦截器 pre_handle 回调（可选）
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn my_plugin_pre_handle(req: &InterceptorRequest) -> InterceptorResponse {
+    eprintln!("pre_handle: sender={}", req.sender_id.as_str());
+    InterceptorResponse::allow()
 }
 ```
 
@@ -628,5 +708,5 @@ pub unsafe extern "C" fn my_plugin_on_poke(req: &NoticeRequest) -> NoticeRespons
 2. **C ABI** — 所有导出函数必须标记 `#[unsafe(no_mangle)]`（Rust 2024 Edition 语法）
 3. **ABI 稳定** — 使用 `abi_stable` crate 提供的类型（`RString`、`RVec`），不能直接传递 Rust 标准库类型跨 FFI 边界
 4. **独立编译** — 动态插件不属于主工作空间，Cargo.toml 中必须有空的 `[workspace]` 表
-5. **每模块限制** — 最多一个 `#[init]` 和一个 `#[shutdown]` 函数
+5. **每模块限制** — 最多一个 `#[init]`、一个 `#[shutdown]`、一个 `#[pre_handle]`、一个 `#[after_completion]` 函数
 :::

@@ -21,8 +21,8 @@ use qimen_adapter_onebot11::OneBot11Adapter;
 use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
-    DynamicCommandDescriptor, DynamicMetaDescriptor, DynamicNoticeDescriptor,
-    DynamicRequestDescriptor, HostPluginReport, load_plugin_state,
+    DynamicCommandDescriptor, DynamicInterceptorDescriptor, DynamicMetaDescriptor,
+    DynamicNoticeDescriptor, DynamicRequestDescriptor, HostPluginReport, load_plugin_state,
 };
 use qimen_message::Message;
 use qimen_plugin_api::{
@@ -122,6 +122,104 @@ pub struct BotRuntimeInfo {
     pub limiter_config: RateLimiterConfig,
 }
 
+/// Adapter that wraps a dynamic plugin interceptor as a [`MessageEventInterceptor`].
+struct DynamicInterceptorAdapter {
+    descriptor: DynamicInterceptorDescriptor,
+    dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
+}
+
+impl DynamicInterceptorAdapter {
+    fn build_request(bot_id: &str, event: &qimen_protocol_core::NormalizedEvent) -> abi_stable_host_api::InterceptorRequest {
+        use abi_stable::std_types::RString;
+
+        let sender_id = event.sender_id().unwrap_or("").to_string();
+        let group_id = event.group_id().unwrap_or("").to_string();
+        let message_text = event
+            .message
+            .as_ref()
+            .map(|m| m.plain_text())
+            .unwrap_or_default();
+        let raw_event_json = event.raw_json.to_string();
+        let sender_nickname = event.sender_nickname().unwrap_or("").to_string();
+        let message_id = event
+            .message_id()
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let timestamp = event.time.unwrap_or(0);
+
+        abi_stable_host_api::InterceptorRequest {
+            bot_id: RString::from(bot_id),
+            sender_id: RString::from(sender_id),
+            group_id: RString::from(group_id),
+            message_text: RString::from(message_text),
+            raw_event_json: RString::from(raw_event_json),
+            sender_nickname: RString::from(sender_nickname),
+            message_id: RString::from(message_id),
+            timestamp,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
+    async fn pre_handle(&self, bot_id: &str, event: &qimen_protocol_core::NormalizedEvent) -> bool {
+        if self.descriptor.pre_handle_symbol.is_empty() {
+            return true;
+        }
+        let request = Self::build_request(bot_id, event);
+        let descriptor = self.descriptor.clone();
+        let runtime = Arc::clone(&self.dynamic_runtime);
+
+        // Run the blocking FFI call on a blocking thread
+        let result = tokio::task::spawn_blocking(move || {
+            let mut rt = runtime.lock().map_err(|_| {
+                qimen_error::QimenError::Runtime("dynamic runtime lock poisoned".to_string())
+            })?;
+            rt.execute_pre_handle(&descriptor, request)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(allow)) => allow,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle failed, allowing");
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle task panicked, allowing");
+                true
+            }
+        }
+    }
+
+    async fn after_completion(&self, bot_id: &str, event: &qimen_protocol_core::NormalizedEvent) {
+        if self.descriptor.after_completion_symbol.is_empty() {
+            return;
+        }
+        let request = Self::build_request(bot_id, event);
+        let descriptor = self.descriptor.clone();
+        let runtime = Arc::clone(&self.dynamic_runtime);
+
+        let result = tokio::task::spawn_blocking(move || {
+            let mut rt = runtime.lock().map_err(|_| {
+                qimen_error::QimenError::Runtime("dynamic runtime lock poisoned".to_string())
+            })?;
+            rt.execute_after_completion(&descriptor, request)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion failed");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion task panicked");
+            }
+        }
+    }
+}
+
 pub struct Runtime {
     bots: Vec<BotRuntimeInfo>,
     command_plugins: Vec<std::sync::Arc<dyn CommandPlugin>>,
@@ -129,8 +227,10 @@ pub struct Runtime {
     host_plugin_report: std::sync::RwLock<Option<HostPluginReport>>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
-    dynamic_runtime: std::sync::Mutex<DynamicPluginRuntime>,
-    interceptor_chain: InterceptorChain,
+    dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
+    /// Static interceptors from compiled plugin bundles (preserved across rescan).
+    static_interceptors: Vec<Arc<dyn qimen_plugin_api::MessageEventInterceptor>>,
+    interceptor_chain: std::sync::RwLock<InterceptorChain>,
     rate_limiters: Vec<TokenBucketLimiter>,
     pub dedup: Arc<MessageDedup>,
     pub group_event_filter: Arc<GroupEventFilter>,
@@ -146,8 +246,9 @@ impl Default for Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_state_path: None,
             plugin_bin_dir: None,
-            dynamic_runtime: std::sync::Mutex::new(DynamicPluginRuntime::new()),
-            interceptor_chain: InterceptorChain::new(),
+            dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
+            static_interceptors: Vec::new(),
+            interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
@@ -200,9 +301,10 @@ impl Runtime {
             .map(|b| TokenBucketLimiter::new(&b.limiter_config))
             .collect();
 
+        let static_interceptors = plugins.interceptors;
         let mut interceptor_chain = InterceptorChain::new();
-        for interceptor in plugins.interceptors {
-            interceptor_chain.add(interceptor);
+        for interceptor in &static_interceptors {
+            interceptor_chain.add(interceptor.clone());
         }
 
         Self {
@@ -212,8 +314,9 @@ impl Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
-            dynamic_runtime: std::sync::Mutex::new(DynamicPluginRuntime::new()),
-            interceptor_chain,
+            dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
+            static_interceptors,
+            interceptor_chain: std::sync::RwLock::new(interceptor_chain),
             rate_limiters,
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
@@ -222,8 +325,49 @@ impl Runtime {
     }
 
     pub fn with_host_plugin_report(self, report: HostPluginReport) -> Self {
+        self.inject_dynamic_interceptors(&report);
         *self.host_plugin_report.write().unwrap() = Some(report);
         self
+    }
+
+    /// Rebuild the interceptor chain: static interceptors + dynamic interceptors from the report.
+    fn inject_dynamic_interceptors(&self, report: &HostPluginReport) {
+        let mut chain = InterceptorChain::new();
+
+        // Re-add static interceptors
+        for interceptor in &self.static_interceptors {
+            chain.add(interceptor.clone());
+        }
+
+        // Add dynamic interceptors
+        for entry in &report.dynamic_plugins {
+            for interceptor_entry in &entry.interceptors {
+                if interceptor_entry.pre_handle_symbol.is_empty()
+                    && interceptor_entry.after_completion_symbol.is_empty()
+                {
+                    continue;
+                }
+                let descriptor = DynamicInterceptorDescriptor {
+                    plugin_id: entry.plugin_id.clone(),
+                    library_path: entry.path.clone(),
+                    pre_handle_symbol: interceptor_entry.pre_handle_symbol.clone(),
+                    after_completion_symbol: interceptor_entry.after_completion_symbol.clone(),
+                };
+                tracing::info!(
+                    plugin = %descriptor.plugin_id,
+                    pre_handle = %descriptor.pre_handle_symbol,
+                    after_completion = %descriptor.after_completion_symbol,
+                    "registering dynamic interceptor"
+                );
+                let adapter = Arc::new(DynamicInterceptorAdapter {
+                    descriptor,
+                    dynamic_runtime: Arc::clone(&self.dynamic_runtime),
+                });
+                chain.add(adapter);
+            }
+        }
+
+        *self.interceptor_chain.write().unwrap() = chain;
     }
 
     pub fn bots(&self) -> &[BotRuntimeInfo] {
@@ -420,6 +564,17 @@ impl Runtime {
                 persisted_states: std::collections::BTreeMap::new(),
                 dynamic_plugins: new_entries,
             });
+        }
+
+        // Rebuild interceptor chain with updated dynamic plugins
+        if let Some(report) = report_guard.as_ref() {
+            // We need to drop the write lock before calling inject_dynamic_interceptors
+            // since it takes its own write lock on interceptor_chain.
+            let report_clone = report.clone();
+            drop(report_guard);
+            self.inject_dynamic_interceptors(&report_clone);
+        } else {
+            drop(report_guard);
         }
 
         tracing::info!(count = count, "dynamic plugin rescan complete");
@@ -684,7 +839,7 @@ impl Runtime {
             return Ok(SessionSignal::EventHandled);
         }
 
-        if !self.interceptor_chain.pre_handle(&bot.id, &event).await {
+        if !self.interceptor_chain.read().unwrap().pre_handle(&bot.id, &event).await {
             tracing::debug!(bot_id = %bot.id, "interceptor chain blocked event");
             return Ok(SessionSignal::EventHandled);
         }
@@ -806,7 +961,7 @@ impl Runtime {
             self.execute_action(bot, adapter, client, action).await?;
         }
 
-        self.interceptor_chain.after_completion(&bot.id, &event).await;
+        self.interceptor_chain.read().unwrap().after_completion(&bot.id, &event).await;
 
         Ok(SessionSignal::EventHandled)
     }

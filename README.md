@@ -485,6 +485,7 @@ impl MyPlugin { /* ... */ }
 | 编译方式 | 与框架一同编译 | 独立编译为动态库 |
 | API 访问 | 完整（async、OneBotActionClient 等） | FFI 接口（同步、C ABI） |
 | 消息类型 | 完整 Message（富媒体） | 纯文本 + JSON 段（v0.2 支持富媒体） |
+| 拦截器 | `MessageEventInterceptor` trait | `#[pre_handle]` / `#[after_completion]` |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
 
@@ -543,6 +544,7 @@ PluginDescriptor::new("plugin-id", "0.1.0")
     .add_route("notice", "GroupPoke,PrivatePoke", "on_poke_symbol")
     .add_route("request", "Friend", "on_friend_symbol")
     .add_route("meta", "Heartbeat", "on_heartbeat_symbol")
+    .add_interceptor("my_pre_handle", "my_after_completion")  // 拦截器（可选）
 ```
 
 #### `CommandRequest` — 命令请求

@@ -1,12 +1,14 @@
 use abi_stable::std_types::RString;
 use abi_stable_host_api::{
-    CommandRequest, CommandResponse, DynamicActionResponse, NoticeRequest, NoticeResponse,
-    PluginDescriptor, PluginInitConfig, PluginInitResult, is_compatible_api_version,
-    ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY,
+    CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
+    InterceptorResponse, NoticeRequest, NoticeResponse, PluginDescriptor, PluginInitConfig,
+    PluginInitResult, is_compatible_api_version, ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT,
+    ACTION_REPLY,
 };
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
-    DynamicCommandDescriptor, DynamicCommandEntry, DynamicMetaDescriptor, DynamicNoticeDescriptor,
+    DynamicCommandDescriptor, DynamicCommandEntry, DynamicInterceptorDescriptor,
+    DynamicInterceptorEntry, DynamicMetaDescriptor, DynamicNoticeDescriptor,
     DynamicPluginReportEntry, DynamicRequestDescriptor, DynamicRouteEntry,
     DynamicRuntimeHealthEntry,
 };
@@ -269,6 +271,111 @@ impl DynamicPluginRuntime {
                 }
             }
         }
+    }
+
+    /// Execute a dynamic interceptor's pre_handle callback.
+    /// Returns `true` to allow, `false` to block.
+    pub fn execute_pre_handle(
+        &mut self,
+        descriptor: &DynamicInterceptorDescriptor,
+        request: InterceptorRequest,
+    ) -> Result<bool> {
+        let path = descriptor.library_path.clone();
+        let symbol_name = descriptor.pre_handle_symbol.clone();
+
+        if symbol_name.is_empty() {
+            return Ok(true);
+        }
+
+        let path_for_error = path.clone();
+
+        self.with_library(&path, move |library| unsafe {
+            let symbol: libloading::Symbol<
+                unsafe extern "C" fn(&InterceptorRequest) -> InterceptorResponse,
+            > = library.get(symbol_name.as_bytes()).map_err(|err| {
+                QimenError::Runtime(format!(
+                    "failed to load interceptor pre_handle '{}' from '{}': {err}",
+                    symbol_name, path_for_error
+                ))
+            })?;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(&request)
+            }));
+
+            match result {
+                Ok(response) => Ok(response.allow != 0),
+                Err(panic_info) => {
+                    let panic_msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    tracing::error!(
+                        symbol = %symbol_name,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic interceptor pre_handle panicked"
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic interceptor pre_handle '{}' panicked: {}",
+                        symbol_name, panic_msg
+                    )))
+                }
+            }
+        })
+    }
+
+    /// Execute a dynamic interceptor's after_completion callback.
+    pub fn execute_after_completion(
+        &mut self,
+        descriptor: &DynamicInterceptorDescriptor,
+        request: InterceptorRequest,
+    ) -> Result<()> {
+        let path = descriptor.library_path.clone();
+        let symbol_name = descriptor.after_completion_symbol.clone();
+
+        if symbol_name.is_empty() {
+            return Ok(());
+        }
+
+        let path_for_error = path.clone();
+
+        self.with_library(&path, move |library| unsafe {
+            let symbol: libloading::Symbol<
+                unsafe extern "C" fn(&InterceptorRequest),
+            > = library.get(symbol_name.as_bytes()).map_err(|err| {
+                QimenError::Runtime(format!(
+                    "failed to load interceptor after_completion '{}' from '{}': {err}",
+                    symbol_name, path_for_error
+                ))
+            })?;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(&request)
+            }));
+
+            match result {
+                Ok(()) => Ok(()),
+                Err(panic_info) => {
+                    let panic_msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    tracing::error!(
+                        symbol = %symbol_name,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic interceptor after_completion panicked"
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic interceptor after_completion '{}' panicked: {}",
+                        symbol_name, panic_msg
+                    )))
+                }
+            }
+        })
     }
 
     /// Unload a specific library by path (for hot reload).
@@ -668,6 +775,16 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             routes
         };
 
+        // Parse interceptor entries
+        let interceptors: Vec<DynamicInterceptorEntry> = descriptor
+            .interceptors
+            .iter()
+            .map(|entry| DynamicInterceptorEntry {
+                pre_handle_symbol: entry.pre_handle_symbol.to_string(),
+                after_completion_symbol: entry.after_completion_symbol.to_string(),
+            })
+            .collect();
+
         Ok(DynamicPluginReportEntry {
             path: path.display().to_string(),
             plugin_id: descriptor.plugin_id.to_string(),
@@ -675,6 +792,7 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             api_version: descriptor.api_version.to_string(),
             commands,
             routes,
+            interceptors,
             // Legacy fields
             command_name: descriptor.command_name.to_string(),
             command_description: descriptor.command_description.to_string(),

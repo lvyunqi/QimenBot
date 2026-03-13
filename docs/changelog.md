@@ -35,6 +35,7 @@
 - **作用域支持** — `CommandDescriptorEntry` 新增 `scope` 字段
 - **热重载** — `/plugins reload` 无需重启
 - **熔断器保护** — 连续 3 次失败自动隔离 60 秒
+- **拦截器支持** — `#[pre_handle]` / `#[after_completion]` 宏属性，动态插件可注册消息拦截器，运行时自动包装为 `MessageEventInterceptor` 注入拦截器链
 - **向后兼容** — v0.1 / v0.2 符号名和字段仍然支持
 
 ### 请求自动化

@@ -186,6 +186,8 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
     let mut route_entries = Vec::new();
     let mut init_fn: Option<String> = None;
     let mut shutdown_fn: Option<String> = None;
+    let mut pre_handle_fn: Option<String> = None;
+    let mut after_completion_fn: Option<String> = None;
     let mut transformed_items = Vec::new();
 
     for item in items.drain(..) {
@@ -270,6 +272,64 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
                     };
                     transformed_items.push(shutdown_wrapper);
                     continue;
+                }
+                // Check for #[pre_handle]
+                else if has_bare_attr(&func.attrs, "pre_handle") {
+                    func.attrs.retain(|a| !a.path().is_ident("pre_handle"));
+                    let fn_name = func.sig.ident.to_string();
+
+                    if pre_handle_fn.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "only one #[pre_handle] function is allowed",
+                        ));
+                    }
+                    pre_handle_fn = Some(fn_name.clone());
+
+                    let inner_ident =
+                        syn::Ident::new(&format!("__{fn_name}_inner"), func.sig.ident.span());
+                    func.sig.ident = inner_ident.clone();
+                    transformed_items.push(syn::Item::Fn(func));
+
+                    let wrapper: syn::Item = syn::parse_quote! {
+                        #[unsafe(no_mangle)]
+                        pub unsafe extern "C" fn qimen_plugin_pre_handle(
+                            req: &::abi_stable_host_api::InterceptorRequest,
+                        ) -> ::abi_stable_host_api::InterceptorResponse {
+                            #inner_ident(req)
+                        }
+                    };
+                    transformed_items.push(wrapper);
+                    continue;
+                }
+                // Check for #[after_completion]
+                else if has_bare_attr(&func.attrs, "after_completion") {
+                    func.attrs.retain(|a| !a.path().is_ident("after_completion"));
+                    let fn_name = func.sig.ident.to_string();
+
+                    if after_completion_fn.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "only one #[after_completion] function is allowed",
+                        ));
+                    }
+                    after_completion_fn = Some(fn_name.clone());
+
+                    let inner_ident =
+                        syn::Ident::new(&format!("__{fn_name}_inner"), func.sig.ident.span());
+                    func.sig.ident = inner_ident.clone();
+                    transformed_items.push(syn::Item::Fn(func));
+
+                    let wrapper: syn::Item = syn::parse_quote! {
+                        #[unsafe(no_mangle)]
+                        pub unsafe extern "C" fn qimen_plugin_after_completion(
+                            req: &::abi_stable_host_api::InterceptorRequest,
+                        ) {
+                            #inner_ident(req)
+                        }
+                    };
+                    transformed_items.push(wrapper);
+                    continue;
                 } else {
                     // Pass through unchanged
                     transformed_items.push(syn::Item::Fn(func));
@@ -321,6 +381,25 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         })
         .collect();
 
+    // Generate interceptor registration if any interceptor hooks are present
+    let interceptor_registration = if pre_handle_fn.is_some() || after_completion_fn.is_some() {
+        let pre_sym = if pre_handle_fn.is_some() {
+            "qimen_plugin_pre_handle"
+        } else {
+            ""
+        };
+        let after_sym = if after_completion_fn.is_some() {
+            "qimen_plugin_after_completion"
+        } else {
+            ""
+        };
+        quote! {
+            .add_interceptor(#pre_sym, #after_sym)
+        }
+    } else {
+        quote! {}
+    };
+
     let output = quote! {
         #(#mod_attrs)*
         #mod_vis mod #mod_name {
@@ -332,6 +411,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
             ::abi_stable_host_api::PluginDescriptor::new(#plugin_id, #plugin_version)
                 #(#command_registrations)*
                 #(#route_registrations)*
+                #interceptor_registration
         }
     };
 

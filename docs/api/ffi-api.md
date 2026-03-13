@@ -24,7 +24,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 |------|------|
 | **0.1** | 初始版本：单命令、纯文本响应 |
 | **0.2** | 多命令/多路由 `RVec<CommandDescriptorEntry>`，富媒体 JSON 响应 |
-| **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段 |
+| **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段；`InterceptorRequest` / `InterceptorResponse` / `InterceptorDescriptorEntry` 拦截器支持 |
 
 ## PluginDescriptor
 
@@ -47,6 +47,7 @@ pub struct PluginDescriptor {
     // v0.2+ 字段
     pub commands: RVec<CommandDescriptorEntry>,
     pub routes: RVec<RouteDescriptorEntry>,
+    pub interceptors: RVec<InterceptorDescriptorEntry>,
 }
 ```
 
@@ -64,6 +65,9 @@ PluginDescriptor::new(id: &str, version: &str) -> Self
 
 /// 添加事件路由
 .add_route(kind: &str, route: &str, callback_symbol: &str) -> Self
+
+/// 添加拦截器（空字符串表示不注册对应回调）
+.add_interceptor(pre_handle_symbol: &str, after_completion_symbol: &str) -> Self
 ```
 
 ## CommandDescriptorEntry
@@ -196,6 +200,55 @@ let response = CommandResponse::builder()
 | `record(file)` | `&str` | 语音（URL 或路径） |
 | `reply(message_id)` | `&str` | 引用回复 |
 | `build()` | — | 构建为 `CommandResponse` |
+
+## InterceptorDescriptorEntry
+
+拦截器描述条目。
+
+```rust
+#[repr(C)]
+pub struct InterceptorDescriptorEntry {
+    pub pre_handle_symbol: RString,       // pre_handle 回调符号名（空 = 不注册）
+    pub after_completion_symbol: RString, // after_completion 回调符号名（空 = 不注册）
+}
+```
+
+## InterceptorRequest
+
+传递给拦截器回调的请求数据。
+
+```rust
+#[repr(C)]
+pub struct InterceptorRequest {
+    pub bot_id: RString,           // Bot 实例 ID
+    pub sender_id: RString,        // 发送者 QQ 号
+    pub group_id: RString,         // 群号（私聊为空字符串）
+    pub message_text: RString,     // 消息纯文本
+    pub raw_event_json: RString,   // 完整事件 JSON
+    pub sender_nickname: RString,  // 发送者昵称
+    pub message_id: RString,       // 消息 ID
+    pub timestamp: i64,            // 事件 Unix 时间戳（秒），0 表示不可用
+}
+```
+
+## InterceptorResponse
+
+`pre_handle` 拦截器回调的返回值。
+
+```rust
+#[repr(C)]
+pub struct InterceptorResponse {
+    pub allow: i32,   // 1 = 放行，0 = 拦截
+}
+```
+
+```rust
+/// 放行
+InterceptorResponse::allow() -> Self
+
+/// 拦截
+InterceptorResponse::block() -> Self
+```
 
 ## NoticeRequest
 
@@ -334,6 +387,18 @@ pub unsafe extern "C" fn callback_name(req: &CommandRequest) -> CommandResponse
 ```rust
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn callback_name(req: &NoticeRequest) -> NoticeResponse
+```
+
+### 拦截器回调
+
+```rust
+/// pre_handle — 返回 InterceptorResponse 控制放行/拦截
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn callback_name(req: &InterceptorRequest) -> InterceptorResponse
+
+/// after_completion — 无返回值
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn callback_name(req: &InterceptorRequest)
 ```
 
 ::: warning Rust 2024 Edition

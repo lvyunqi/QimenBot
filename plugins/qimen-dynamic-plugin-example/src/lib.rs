@@ -19,8 +19,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use abi_stable_host_api::{
-    CommandRequest, CommandResponse, DynamicActionResponse, NoticeRequest, NoticeResponse,
-    PluginInitConfig, PluginInitResult,
+    CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
+    InterceptorResponse, NoticeRequest, NoticeResponse, PluginInitConfig, PluginInitResult,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
@@ -201,6 +201,26 @@ mod example {
              \n\
              别名：hi / hello / 你好 / 时间 / 复读 / say / debug / 调试 / 示例帮助"
         )
+    }
+
+    // ── 拦截器 ──────────────────────────────────────────────────────────
+
+    /// 消息预处理拦截器 — 演示 #[pre_handle]
+    /// 记录所有收到的消息，始终放行。
+    #[pre_handle]
+    fn on_pre_handle(req: &InterceptorRequest) -> InterceptorResponse {
+        let sender = req.sender_id.as_str();
+        let group = req.group_id.as_str();
+        let text = req.message_text.as_str();
+        let ctx = if group.is_empty() { "private" } else { group };
+
+        eprintln!(
+            "[dynamic-example] pre_handle: sender={}, ctx={}, text={:?}",
+            sender, ctx, text
+        );
+
+        // Allow all messages
+        InterceptorResponse::allow()
     }
 
     // ── 事件路由 ──────────────────────────────────────────────────────────

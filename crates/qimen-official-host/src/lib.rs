@@ -3,8 +3,8 @@ use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
 use qimen_framework::Runtime;
 use qimen_host_types::{
-    DynamicCommandEntry, DynamicPluginReportEntry, DynamicRouteEntry, HostPluginReport,
-    PluginState, load_plugin_state,
+    DynamicCommandEntry, DynamicInterceptorEntry, DynamicPluginReportEntry, DynamicRouteEntry,
+    HostPluginReport, PluginState, load_plugin_state,
 };
 use qimen_mod_admin::AdminModule;
 use qimen_mod_bridge::BridgeModule;
@@ -153,6 +153,7 @@ fn build_host_plugin_report(
                 api_version: descriptor.api_version.clone(),
                 commands: descriptor.commands.clone(),
                 routes: descriptor.routes.clone(),
+                interceptors: descriptor.interceptors.clone(),
                 // Legacy fields
                 command_name: descriptor.command_name.clone(),
                 command_description: descriptor.command_description.clone(),
@@ -205,6 +206,8 @@ struct DynamicPluginDescriptor {
     commands: Vec<DynamicCommandEntry>,
     /// v0.2 multi-route entries.
     routes: Vec<DynamicRouteEntry>,
+    /// Interceptor entries.
+    interceptors: Vec<DynamicInterceptorEntry>,
     // Legacy v0.1 fields
     command_name: String,
     command_description: String,
@@ -345,6 +348,16 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             routes
         };
 
+        // Parse interceptor entries
+        let interceptors: Vec<DynamicInterceptorEntry> = descriptor
+            .interceptors
+            .iter()
+            .map(|entry| DynamicInterceptorEntry {
+                pre_handle_symbol: entry.pre_handle_symbol.to_string(),
+                after_completion_symbol: entry.after_completion_symbol.to_string(),
+            })
+            .collect();
+
         Ok(DynamicPluginDescriptor {
             path: path.display().to_string(),
             plugin_id: descriptor.plugin_id.to_string(),
@@ -352,6 +365,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             api_version: descriptor.api_version.to_string(),
             commands,
             routes,
+            interceptors,
             // Legacy fields
             command_name: descriptor.command_name.to_string(),
             command_description: descriptor.command_description.to_string(),

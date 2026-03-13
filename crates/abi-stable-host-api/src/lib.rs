@@ -268,6 +268,58 @@ impl Default for ReplyBuilder {
     }
 }
 
+// ─── Interceptor FFI types ───────────────────────────────────────────────
+
+/// Request passed to interceptor callbacks (pre_handle / after_completion).
+#[repr(C)]
+pub struct InterceptorRequest {
+    /// Bot instance ID.
+    pub bot_id: RString,
+    /// Sender user ID.
+    pub sender_id: RString,
+    /// Group ID (empty if private chat).
+    pub group_id: RString,
+    /// Message plain text.
+    pub message_text: RString,
+    /// Full event JSON.
+    pub raw_event_json: RString,
+    /// Sender display name / nickname.
+    pub sender_nickname: RString,
+    /// Message ID (if applicable).
+    pub message_id: RString,
+    /// Unix timestamp of the event (seconds since epoch). 0 if unavailable.
+    pub timestamp: i64,
+}
+
+/// Response from a `pre_handle` interceptor callback.
+#[repr(C)]
+pub struct InterceptorResponse {
+    /// 1 = allow (pass through), 0 = block (stop processing).
+    pub allow: i32,
+}
+
+impl InterceptorResponse {
+    /// Allow the event to continue processing.
+    pub fn allow() -> Self {
+        Self { allow: 1 }
+    }
+
+    /// Block the event from further processing.
+    pub fn block() -> Self {
+        Self { allow: 0 }
+    }
+}
+
+/// Describes an interceptor registered by a dynamic plugin.
+#[repr(C)]
+#[derive(Clone)]
+pub struct InterceptorDescriptorEntry {
+    /// Symbol name for the pre_handle callback. Empty = not registered.
+    pub pre_handle_symbol: RString,
+    /// Symbol name for the after_completion callback. Empty = not registered.
+    pub after_completion_symbol: RString,
+}
+
 // ─── Notice FFI types ───────────────────────────────────────────────────
 
 /// Request passed to notice/request/meta callbacks.
@@ -350,6 +402,8 @@ pub struct PluginDescriptor {
     pub commands: RVec<CommandDescriptorEntry>,
     /// Multiple route descriptors (v0.2). Takes precedence over legacy fields.
     pub routes: RVec<RouteDescriptorEntry>,
+    /// Interceptor descriptors.
+    pub interceptors: RVec<InterceptorDescriptorEntry>,
 }
 
 impl PluginDescriptor {
@@ -366,6 +420,7 @@ impl PluginDescriptor {
             meta_route: RString::new(),
             commands: RVec::new(),
             routes: RVec::new(),
+            interceptors: RVec::new(),
         }
     }
 
@@ -391,6 +446,19 @@ impl PluginDescriptor {
     /// Add a command with full options.
     pub fn add_command_full(mut self, entry: CommandDescriptorEntry) -> Self {
         self.commands.push(entry);
+        self
+    }
+
+    /// Add an interceptor entry.
+    pub fn add_interceptor(
+        mut self,
+        pre_handle_symbol: &str,
+        after_completion_symbol: &str,
+    ) -> Self {
+        self.interceptors.push(InterceptorDescriptorEntry {
+            pre_handle_symbol: RString::from(pre_handle_symbol),
+            after_completion_symbol: RString::from(after_completion_symbol),
+        });
         self
     }
 

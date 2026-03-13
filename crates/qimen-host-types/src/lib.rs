@@ -21,6 +21,8 @@ pub struct DynamicPluginReportEntry {
     pub commands: Vec<DynamicCommandEntry>,
     /// v0.2: Multiple event routes per plugin.
     pub routes: Vec<DynamicRouteEntry>,
+    /// Interceptor entries registered by this plugin.
+    pub interceptors: Vec<DynamicInterceptorEntry>,
 
     // ── v0.1 legacy fields (kept for backward compatibility) ──
     pub command_name: String,
@@ -54,6 +56,22 @@ pub struct DynamicRouteEntry {
     /// Route name(s), e.g. "GroupPoke" or "GroupPoke,PrivatePoke".
     pub route: String,
     pub callback_symbol: String,
+}
+
+/// A single interceptor entry registered by a dynamic plugin.
+#[derive(Debug, Clone)]
+pub struct DynamicInterceptorEntry {
+    pub pre_handle_symbol: String,
+    pub after_completion_symbol: String,
+}
+
+/// Descriptor for a dynamic plugin interceptor, used by the runtime.
+#[derive(Debug, Clone)]
+pub struct DynamicInterceptorDescriptor {
+    pub plugin_id: String,
+    pub library_path: String,
+    pub pre_handle_symbol: String,
+    pub after_completion_symbol: String,
 }
 
 #[derive(Debug, Clone)]
