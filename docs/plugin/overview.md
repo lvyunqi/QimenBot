@@ -117,6 +117,7 @@ impl MyPlugin {
 | [处理事件](/plugin/events) | `#[notice]` `#[request]` `#[meta]` | 处理戳一戳、入群、好友申请等 |
 | [拦截消息](/plugin/interceptors) | `MessageEventInterceptor` | 在命令处理前后插入自定义逻辑 |
 | [调用 API](/api/onebot-client) | `ctx.onebot_actions()` | 调用 40+ 个 OneBot API（发消息、踢人、禁言等） |
+| 作用域控制 | `scope = "group"` | 声明命令仅群聊或仅私聊生效，分发层自动过滤 |
 
 ## 注册插件到框架
 
@@ -250,8 +251,13 @@ INFO inventory plugin modules discovered, count=1, modules=my-plugin
 
 ## 下一步
 
-- [命令开发](/plugin/commands) — 别名、权限、参数注入、返回值类型
+### 静态插件开发
+
+- [命令开发](/plugin/commands) — 别名、权限、作用域、参数注入、返回值类型
 - [消息构建](/plugin/messages) — 图片、@、表情、交互按钮
 - [事件处理](/plugin/events) — 戳一戳、入群、好友申请
 - [拦截器](/plugin/interceptors) — 日志、冷却、黑名单
-- [动态插件](/plugin/dynamic) — FFI 热重载插件
+
+### 动态插件开发
+
+- [动态插件教程](/plugin/dynamic) — `#[dynamic_plugin]` 宏、ReplyBuilder、生命周期钩子、热重载

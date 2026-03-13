@@ -4,18 +4,27 @@
 
 ## API 版本
 
-当前 API 版本为 **0.2**，兼容 0.1 版本。
+当前 API 版本为 **0.3**，兼容 0.1 和 0.2 版本。
 
 ```rust
 /// 获取当前 API 版本
-pub fn expected_api_version() -> RString  // "0.2"
+pub fn expected_api_version() -> RString  // "0.3"
 
 /// 检查版本兼容性
 pub fn is_compatible_api_version(version: &str) -> bool
 // "0.1" → true
 // "0.2" → true
-// "0.3" → false
+// "0.3" → true
+// "0.4" → false
 ```
+
+### 版本历史
+
+| 版本 | 新增 |
+|------|------|
+| **0.1** | 初始版本：单命令、纯文本响应 |
+| **0.2** | 多命令/多路由 `RVec<CommandDescriptorEntry>`，富媒体 JSON 响应 |
+| **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段 |
 
 ## PluginDescriptor
 
@@ -24,16 +33,18 @@ pub fn is_compatible_api_version(version: &str) -> bool
 ```rust
 #[repr(C)]
 pub struct PluginDescriptor {
-    pub api_version: RString,
     pub plugin_id: RString,
     pub plugin_version: RString,
+    pub api_version: RString,
+
     // v0.1 遗留字段（已弃用，使用 commands/routes 代替）
     pub command_name: RString,
     pub command_description: RString,
-    pub command_callback_symbol: RString,
     pub notice_route: RString,
-    pub notice_callback_symbol: RString,
-    // v0.2 字段
+    pub request_route: RString,
+    pub meta_route: RString,
+
+    // v0.2+ 字段
     pub commands: RVec<CommandDescriptorEntry>,
     pub routes: RVec<RouteDescriptorEntry>,
 }
@@ -42,13 +53,13 @@ pub struct PluginDescriptor {
 ### 构造方法
 
 ```rust
-/// 创建新的描述符
+/// 创建新的描述符（api_version 自动设为 "0.3"）
 PluginDescriptor::new(id: &str, version: &str) -> Self
 
 /// 添加命令（简单方式）
 .add_command(name: &str, description: &str, callback_symbol: &str) -> Self
 
-/// 添加命令（完整方式，支持别名/分类/权限）
+/// 添加命令（完整方式，支持别名/分类/权限/作用域）
 .add_command_full(entry: CommandDescriptorEntry) -> Self
 
 /// 添加事件路由
@@ -68,8 +79,15 @@ pub struct CommandDescriptorEntry {
     pub aliases: RString,          // 别名（逗号分隔，如 "hi,hello"）
     pub category: RString,         // 分类（如 "general"）
     pub required_role: RString,    // 权限要求（""=任何人, "admin", "owner"）
+    pub scope: RString,            // 作用域（""/"all"=全部, "group"=仅群聊, "private"=仅私聊）
 }
 ```
+
+| `scope` 值 | 说明 |
+|------------|------|
+| `""` / `"all"` | 群聊和私聊均可触发（默认） |
+| `"group"` | 仅在群聊中触发 |
+| `"private"` | 仅在私聊中触发 |
 
 ## RouteDescriptorEntry
 
@@ -96,6 +114,11 @@ pub struct CommandRequest {
     pub sender_id: RString,        // 发送者 QQ 号
     pub group_id: RString,         // 群号（私聊为空字符串）
     pub raw_event_json: RString,   // 原始 OneBot 事件完整 JSON
+
+    // ── v0.3 新增 ──
+    pub sender_nickname: RString,  // 发送者昵称
+    pub message_id: RString,       // 消息 ID
+    pub timestamp: i64,            // 事件 Unix 时间戳（秒），0 表示不可用
 }
 ```
 
@@ -105,19 +128,19 @@ pub struct CommandRequest {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn my_callback(req: &CommandRequest) -> CommandResponse {
     let sender = req.sender_id.as_str();
+    let nickname = req.sender_nickname.as_str();
     let args = req.args.as_str().trim();
-    let group = req.group_id.as_str();
-    let cmd = req.command_name.as_str();
+    let msg_id = req.message_id.as_str();
 
-    // 解析原始事件获取更多信息
-    if let Ok(event) = serde_json::from_str::<serde_json::Value>(req.raw_event_json.as_str()) {
-        let nickname = event["sender"]["nickname"].as_str().unwrap_or("unknown");
-        // ...
+    // 使用 ReplyBuilder 构建富媒体回复
+    let mut builder = CommandResponse::builder();
+    if !msg_id.is_empty() {
+        builder = builder.reply(msg_id);  // 引用回复
     }
-
-    CommandResponse {
-        action: DynamicActionResponse::text_reply(&format!("收到命令 /{cmd}")),
-    }
+    builder
+        .at(sender)
+        .text(&format!(" 你好 {}！", nickname))
+        .build()
 }
 ```
 
@@ -131,6 +154,48 @@ pub struct CommandResponse {
     pub action: DynamicActionResponse,
 }
 ```
+
+### 快捷构造
+
+```rust
+/// 纯文本回复
+CommandResponse::text("Hello!")
+
+/// 忽略事件
+CommandResponse::ignore()
+
+/// 流式构建富媒体回复
+CommandResponse::builder()  // → ReplyBuilder
+```
+
+## ReplyBuilder
+
+流式构建富媒体命令响应，无需手动拼接 JSON。
+
+```rust
+let response = CommandResponse::builder()
+    .reply("12345")              // 引用回复
+    .at("67890")                 // @某人
+    .at_all()                    // @全体
+    .text("Hello!")              // 文本
+    .face(1)                     // QQ 表情
+    .image_url("https://...")    // 图片（URL）
+    .image_base64("iVBOR...")    // 图片（Base64）
+    .record("https://...")       // 语音
+    .build();                    // → CommandResponse
+```
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `text(text)` | `&str` | 文本段 |
+| `at(user_id)` | `&str` | @某人 |
+| `at_all()` | — | @全体成员 |
+| `face(id)` | `i32` | QQ 表情 |
+| `image_url(url)` | `&str` | 图片（URL） |
+| `image_base64(base64)` | `&str` | 图片（Base64） |
+| `record(file)` | `&str` | 语音（URL 或路径） |
+| `reply(message_id)` | `&str` | 引用回复 |
+| `build()` | — | 构建为 `CommandResponse` |
 
 ## NoticeRequest
 
@@ -196,22 +261,57 @@ DynamicActionResponse::approve(remark: &str) -> Self
 DynamicActionResponse::reject(reason: &str) -> Self
 ```
 
-### rich_reply 格式
-
-`segments_json` 应为 OneBot 11 消息段 JSON 数组：
-
-```json
-[
-    {"type": "text", "data": {"text": "Hello "}},
-    {"type": "at", "data": {"qq": "123456"}},
-    {"type": "face", "data": {"id": "1"}},
-    {"type": "image", "data": {"file": "https://example.com/img.png"}}
-]
-```
-
 ::: tip 优先级
 框架处理响应时，**`segments_json` 优先于 `message`**。如果 `segments_json` 非空，框架会将其解析为 OneBot 消息段；否则使用 `message` 作为纯文本回复。
 :::
+
+## 生命周期钩子 (v0.3)
+
+### PluginInitConfig
+
+初始化钩子接收的配置。
+
+```rust
+#[repr(C)]
+pub struct PluginInitConfig {
+    pub plugin_id: RString,    // 插件 ID
+    pub config_json: RString,  // 插件配置 JSON（从 config/plugins/<id>.toml 加载）
+    pub plugin_dir: RString,   // 插件二进制所在目录
+    pub data_dir: RString,     // 数据目录根路径
+}
+```
+
+### PluginInitResult
+
+初始化钩子的返回值。
+
+```rust
+#[repr(C)]
+pub struct PluginInitResult {
+    pub code: i32,                // 0 = 成功，非 0 = 失败
+    pub error_message: RString,   // 失败时的错误信息
+}
+```
+
+```rust
+/// 初始化成功
+PluginInitResult::ok() -> Self
+
+/// 初始化失败
+PluginInitResult::err(message: &str) -> Self
+```
+
+### 导出符号
+
+```rust
+/// 初始化（可选）— 插件加载后调用
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_init(config: PluginInitConfig) -> PluginInitResult
+
+/// 关闭（可选）— 插件卸载前调用
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_shutdown()
+```
 
 ## 导出函数签名
 
@@ -242,8 +342,9 @@ Rust 2024 Edition 要求写 `#[unsafe(no_mangle)]` 而不是旧版的 `#[no_mang
 
 ## 向后兼容
 
-v0.2 FFI 接口向后兼容 v0.1：
+v0.3 FFI 接口向后兼容 v0.1 和 v0.2：
 
 - v0.1 的 `qimen_demo_plugin_descriptor` 符号名仍然支持
 - v0.1 的单命令/单路由字段仍然可用
-- 框架会优先尝试 v0.2 符号 `qimen_plugin_descriptor`，找不到再尝试 v0.1
+- 框架会优先尝试 v0.2+ 符号 `qimen_plugin_descriptor`，找不到再尝试 v0.1
+- v0.2 的 `CommandDescriptorEntry`（无 `scope` 字段）会自动使用 `scope = "all"` 默认值

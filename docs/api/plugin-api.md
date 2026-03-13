@@ -287,9 +287,30 @@ pub struct CommandDefinition {
     pub category: &'static str,        // 分类（默认 "general"）
     pub hidden: bool,                  // 是否隐藏
     pub required_role: CommandRole,     // 权限要求
+    pub scope: CommandScope,           // 作用域（默认 All）
     pub filter: Option<MessageFilter>, // 消息过滤器
 }
 ```
+
+### CommandScope
+
+声明命令的生效范围，分发层自动过滤不匹配的环境。
+
+```rust
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CommandScope {
+    #[default]
+    All,      // 群聊和私聊均可触发
+    Group,    // 仅在群聊中触发
+    Private,  // 仅在私聊中触发
+}
+```
+
+| 变体 | 说明 |
+|------|------|
+| `All` (默认) | 群聊和私聊均可触发 |
+| `Group` | 仅在群聊中触发，私聊中静默忽略 |
+| `Private` | 仅在私聊中触发，群聊中静默忽略 |
 
 ### CommandRole
 

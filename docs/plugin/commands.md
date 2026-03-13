@@ -45,6 +45,7 @@ async fn my_greeting_function(&self) -> &str {
     examples = ["/echo hello"],  // 使用示例
     category = "tools",          // 分类（默认 "general"）
     role = "admin",              // 权限要求
+    scope = "group",             // 作用域（默认 "all"）
     hidden,                      // 不显示在 /help 中
 )]
 ```
@@ -57,6 +58,7 @@ async fn my_greeting_function(&self) -> &str {
 | `examples` | `[&str]` | `[]` | 使用示例（显示在 `/help` 中） |
 | `category` | `&str` | `"general"` | 命令分类 |
 | `role` | `&str` | 无限制 | `"admin"`（管理员）或 `"owner"`（所有者） |
+| `scope` | `&str` | `"all"` | 作用域：`"all"`（全部）、`"group"`（仅群聊）、`"private"`（仅私聊） |
 | `hidden` | flag | — | 隐藏命令，不在 `/help` 中显示 |
 
 ### 别名示例
@@ -94,6 +96,34 @@ async fn reload(&self) -> &str { "正在重载..." }
 | **Owner** | `owners = ["QQ号"]` | 所有命令 |
 | **Admin** | `admins = ["QQ号"]` 或群管理员 | `role = "admin"` 的命令 |
 | **Anyone** | 所有用户 | 无权限限制的命令 |
+:::
+
+### 作用域控制
+
+通过 `scope` 属性声明命令的生效范围，框架在分发时**自动过滤**，不匹配的环境下命令静默忽略：
+
+```rust
+// 默认：群聊 + 私聊都可用
+#[command("回复 pong")]
+async fn ping(&self) -> &str { "pong!" }
+
+// 仅群聊可用（私聊中发送 /group-only 不会触发）
+#[command("仅群聊命令", scope = "group")]
+async fn group_only(&self) -> &str { "这是群聊命令" }
+
+// 仅私聊可用
+#[command("仅私聊命令", scope = "private")]
+async fn private_only(&self) -> &str { "这是私聊命令" }
+```
+
+| `scope` 值 | 说明 |
+|------------|------|
+| `"all"` (默认) | 群聊和私聊均可触发 |
+| `"group"` | 仅在群聊中触发 |
+| `"private"` | 仅在私聊中触发 |
+
+::: tip 与手动检查的区别
+使用 `scope` 属性后，不匹配的命令**不会出现在 `/help` 列表中**（按环境过滤），且分发层直接跳过，无需在回调函数内部手动判断 `ctx.is_group()`。
 :::
 
 ## 方法签名
@@ -286,6 +316,18 @@ impl BasicModule {
             ))),
             Err(e) => CommandPluginSignal::Reply(Message::text(format!("查询失败: {e}"))),
         }
+    }
+
+    /// 仅群聊命令
+    #[command("仅群聊打招呼", scope = "group")]
+    async fn group_only(&self, ctx: &CommandPluginContext<'_>) -> String {
+        format!("群 {} 的朋友你好！", ctx.group_id())
+    }
+
+    /// 仅私聊命令
+    #[command("仅私聊悄悄话", scope = "private")]
+    async fn private_only(&self) -> &str {
+        "这是一条只在私聊中可见的消息~"
     }
 
     /// 终止插件链

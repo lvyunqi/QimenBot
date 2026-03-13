@@ -236,7 +236,18 @@
 | `category` | `String` | 命令分类 |
 | `hidden` | `bool` | 是否隐藏（不显示在帮助中） |
 | `required_role` | `CommandRole` | 所需权限等级 |
+| `scope` | `CommandScope` | 作用域（默认 `All`） |
 | `filter` | `MessageFilter` | 消息过滤器 |
+
+### CommandScope
+
+命令的作用域，声明命令在群聊/私聊中的可用性。
+
+| 变体 | 说明 |
+|------|------|
+| `All` (默认) | 群聊和私聊均可触发 |
+| `Group` | 仅在群聊中触发 |
+| `Private` | 仅在私聊中触发 |
 
 ### MessageFilter
 

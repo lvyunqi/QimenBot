@@ -53,9 +53,14 @@ export default defineConfig({
       ],
       '/plugin/': [
         {
-          text: '插件开发',
+          text: '开始',
           items: [
-            { text: '开发概览', link: '/plugin/overview' },
+            { text: '插件开发概览', link: '/plugin/overview' },
+          ]
+        },
+        {
+          text: '静态插件开发',
+          items: [
             { text: '命令开发', link: '/plugin/commands' },
             { text: '消息构建', link: '/plugin/messages' },
             { text: '事件处理', link: '/plugin/events' },
@@ -63,9 +68,9 @@ export default defineConfig({
           ]
         },
         {
-          text: '动态插件',
+          text: '动态插件开发',
           items: [
-            { text: '动态插件开发', link: '/plugin/dynamic' },
+            { text: '动态插件教程', link: '/plugin/dynamic' },
           ]
         }
       ],
