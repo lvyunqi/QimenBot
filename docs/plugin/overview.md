@@ -120,42 +120,129 @@ impl MyPlugin {
 
 ## 注册插件到框架
 
-### 第 1 步：创建 Cargo 包
+QimenBot 使用 `inventory` 机制实现**编译时自动注册**——`#[module]` 宏会在编译期间自动将你的插件注册到全局清单中，框架启动时通过 `inventory::iter` 发现所有已链接的插件。**你无需修改框架的任何源代码。**
 
-在 `plugins/` 目录下创建你的插件：
+整个流程只需 4 步：
+
+### 第 1 步：创建插件 Crate
+
+在 `plugins/` 目录下创建以 `qimen-plugin-` 为前缀的目录（workspace 使用 glob `plugins/qimen-plugin-*` 自动发现）：
+
+```bash
+cargo init plugins/qimen-plugin-myplugin --lib
+```
+
+编辑 `plugins/qimen-plugin-myplugin/Cargo.toml`：
 
 ```toml
-# plugins/my-plugin/Cargo.toml
 [package]
-name = "qimen-my-plugin"
+name = "qimen-plugin-myplugin"
 edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
-qimen-plugin-api.workspace = true
+qimen-plugin-api = { path = "../../crates/qimen-plugin-api" }
+qimen-plugin-derive = { path = "../../crates/qimen-plugin-derive" }
 async-trait.workspace = true
+tracing.workspace = true
 ```
 
-### 第 2 步：在 Official Host 中注册
-
-编辑 `crates/qimen-official-host/src/lib.rs`，添加你的模块：
+然后在 `plugins/qimen-plugin-myplugin/src/lib.rs` 中编写插件代码：
 
 ```rust
-// 在 register_plugin_modules 函数中
-if ids.contains("my-plugin") {
-    register_module::<my_plugin::MyPlugin>(&mut modules);
+use qimen_plugin_api::prelude::*;
+
+#[module(id = "my-plugin", name = "我的插件")]
+#[commands]
+impl MyPlugin {
+    #[command("回复 pong")]
+    async fn ping(&self) -> &str {
+        "pong!"
+    }
 }
 ```
+
+::: info 不需要手动编辑 workspace members
+根 `Cargo.toml` 中的 `members` 已配置为 `"plugins/qimen-plugin-*"`，只要你的目录名以 `qimen-plugin-` 为前缀，Cargo 就能自动发现。
+:::
+
+### 第 2 步：链接插件到主程序
+
+编辑 `apps/qimenbotd/Cargo.toml`，添加你的插件依赖：
+
+```toml
+[dependencies]
+# ... 其他依赖
+qimen-plugin-myplugin = { path = "../../plugins/qimen-plugin-myplugin" }
+```
+
+然后编辑 `apps/qimenbotd/src/main.rs`，添加两行代码确保链接器包含插件：
+
+```rust
+use qimen_error::Result;
+use qimen_official_host::run_official_host;
+
+// ↓ 第一行：强制链接器包含插件 crate
+extern crate qimen_plugin_myplugin;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // ↓ 第二行：引用插件的具体符号，防止链接器优化掉 inventory 注册项
+    std::hint::black_box(qimen_plugin_myplugin::MyPlugin::__QIMEN_MODULE_ID);
+
+    run_official_host("config/base.toml").await
+}
+```
+
+::: warning 为什么需要 `extern crate` 和 `black_box`？
+在 Windows (MSVC) 上，`use crate as _` 不足以让链接器保留只包含 `inventory` 注册信息的目标文件。必须使用 `extern crate` 并通过 `std::hint::black_box()` 引用一个具体符号（`__QIMEN_MODULE_ID`），链接器才会包含对应的目标文件，inventory 注册才能生效。
+
+在 Linux/macOS 上通常不需要 `black_box`，但为了**跨平台兼容**，建议始终添加。
+:::
 
 ### 第 3 步：在配置中启用
 
 ```toml
 # config/base.toml
 [official_host]
-plugin_modules = ["my-plugin"]  # ← 添加你的插件 ID
-
-[[bots]]
-enabled_modules = ["command", "my-plugin"]  # ← 在 Bot 上启用
+plugin_modules = ["my-plugin"]  # ← 添加你的插件 module id
 ```
+
+这里的 `"my-plugin"` 对应 `#[module(id = "my-plugin")]` 中声明的 id。
+
+::: tip Bot 级别的模块控制
+每个 Bot 实例可以通过 `enabled_modules` 选择性启用模块。如果留空，则使用 `official_host.builtin_modules` 中的全部内置模块。插件模块只要在 `plugin_modules` 中列出即可对所有 Bot 生效。
+:::
+
+### 第 4 步：编译运行
+
+```bash
+cargo run
+```
+
+启动时日志中会显示 inventory 发现的插件数量：
+
+```
+INFO inventory plugin modules discovered, count=1, modules=my-plugin
+```
+
+如果你的插件没有出现在日志中，检查：
+1. `apps/qimenbotd/Cargo.toml` 是否添加了依赖
+2. `main.rs` 中是否有 `extern crate` 和 `black_box` 两行
+3. 插件 crate 是否能通过 `cargo check -p qimen-plugin-myplugin` 编译通过
+
+### 新增插件速查清单
+
+| 步骤 | 要改的文件 | 做什么 |
+|:----:|-----------|--------|
+| 1 | `plugins/qimen-plugin-xxx/` | 创建插件 crate，用 `#[module]` + `#[commands]` |
+| 2 | `apps/qimenbotd/Cargo.toml` | 添加 `qimen-plugin-xxx = { path = "..." }` |
+| 3 | `apps/qimenbotd/src/main.rs` | 添加 `extern crate` + `black_box` |
+| 4 | `config/base.toml` | `plugin_modules` 中添加插件 id |
+
+**不需要修改 `qimen-official-host` 或框架中的任何其他代码。**
 
 ::: tip 不想重新编译？
 如果你希望修改插件后无需重新编译整个框架，可以考虑使用 [动态插件](/plugin/dynamic)。动态插件编译为独立的 `.so/.dll` 文件，通过 `/plugins reload` 热重载。
