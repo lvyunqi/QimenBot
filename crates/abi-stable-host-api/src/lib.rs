@@ -8,18 +8,21 @@
 //! - **0.1** — Initial version: single command per plugin, plain-text responses.
 //! - **0.2** — Multi-command support via `RVec<CommandDescriptorEntry>`,
 //!   rich-media responses via JSON segments, event context in requests.
+//! - **0.3** — Extended `CommandRequest` with sender nickname, message ID, and
+//!   timestamp. Added `ReplyBuilder` for fluent rich-media construction.
+//!   Added `PluginInitConfig` / `PluginInitResult` lifecycle hooks.
 
 use abi_stable::std_types::{RString, RVec};
 
 /// Current plugin API version. Dynamic plugins must declare the same version
 /// to be loaded by the host.
 pub fn expected_api_version() -> RString {
-    RString::from("0.2")
+    RString::from("0.3")
 }
 
-/// Also accept legacy 0.1 plugins for backward compatibility.
+/// Also accept legacy 0.1 / 0.2 plugins for backward compatibility.
 pub fn is_compatible_api_version(version: &str) -> bool {
-    version == "0.1" || version == "0.2"
+    version == "0.1" || version == "0.2" || version == "0.3"
 }
 
 // ─── Action constants ───────────────────────────────────────────────────
@@ -107,12 +110,162 @@ pub struct CommandRequest {
     pub group_id: RString,
     /// Raw OneBot event JSON (for advanced use).
     pub raw_event_json: RString,
+
+    // ── v0.3 fields ──
+    /// Sender display name / nickname.
+    pub sender_nickname: RString,
+    /// Message ID (if applicable).
+    pub message_id: RString,
+    /// Unix timestamp of the event (seconds since epoch). 0 if unavailable.
+    pub timestamp: i64,
 }
 
 /// Response from command callback.
 #[repr(C)]
 pub struct CommandResponse {
     pub action: DynamicActionResponse,
+}
+
+impl CommandResponse {
+    /// Create a simple text reply.
+    pub fn text(text: &str) -> Self {
+        Self {
+            action: DynamicActionResponse::text_reply(text),
+        }
+    }
+
+    /// Create a reply builder for rich-media responses.
+    pub fn builder() -> ReplyBuilder {
+        ReplyBuilder::new()
+    }
+
+    /// Create an ignore response.
+    pub fn ignore() -> Self {
+        Self {
+            action: DynamicActionResponse::ignore(),
+        }
+    }
+}
+
+/// Fluent builder for constructing rich-media command responses.
+///
+/// # Example
+/// ```
+/// let response = ReplyBuilder::new()
+///     .text("Hello, ")
+///     .at("12345")
+///     .face(1)
+///     .text("!")
+///     .build();
+/// ```
+pub struct ReplyBuilder {
+    segments: Vec<String>,
+}
+
+impl ReplyBuilder {
+    pub fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+        }
+    }
+
+    /// Add a text segment.
+    pub fn text(mut self, text: &str) -> Self {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+        self.segments.push(format!(
+            r#"{{"type":"text","data":{{"text":"{}"}}}}"#,
+            escaped
+        ));
+        self
+    }
+
+    /// Add an @mention segment.
+    pub fn at(mut self, user_id: &str) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"at","data":{{"qq":"{}"}}}}"#,
+            user_id
+        ));
+        self
+    }
+
+    /// Add an @all mention.
+    pub fn at_all(mut self) -> Self {
+        self.segments
+            .push(r#"{"type":"at","data":{"qq":"all"}}"#.to_string());
+        self
+    }
+
+    /// Add a QQ face emoji segment.
+    pub fn face(mut self, id: i32) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"face","data":{{"id":"{}"}}}}"#,
+            id
+        ));
+        self
+    }
+
+    /// Add an image segment by URL.
+    pub fn image_url(mut self, url: &str) -> Self {
+        let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
+        self.segments.push(format!(
+            r#"{{"type":"image","data":{{"file":"{}"}}}}"#,
+            escaped
+        ));
+        self
+    }
+
+    /// Add an image segment by base64 data.
+    pub fn image_base64(mut self, base64: &str) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"image","data":{{"file":"base64://{}"}}}}"#,
+            base64
+        ));
+        self
+    }
+
+    /// Add a record (voice) segment.
+    pub fn record(mut self, file: &str) -> Self {
+        let escaped = file.replace('\\', "\\\\").replace('"', "\\\"");
+        self.segments.push(format!(
+            r#"{{"type":"record","data":{{"file":"{}"}}}}"#,
+            escaped
+        ));
+        self
+    }
+
+    /// Add a reply (quote) segment referencing a message ID.
+    pub fn reply(mut self, message_id: &str) -> Self {
+        self.segments.push(format!(
+            r#"{{"type":"reply","data":{{"id":"{}"}}}}"#,
+            message_id
+        ));
+        self
+    }
+
+    /// Build into a CommandResponse with rich-media content.
+    pub fn build(self) -> CommandResponse {
+        let json = format!("[{}]", self.segments.join(","));
+        CommandResponse {
+            action: DynamicActionResponse::rich_reply(&json),
+        }
+    }
+
+    /// Build into a CommandResponse, but return only text if there's a single text segment.
+    /// Falls back to rich_reply for multi-segment or non-text content.
+    pub fn build_auto(self) -> CommandResponse {
+        self.build()
+    }
+}
+
+impl Default for ReplyBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Notice FFI types ───────────────────────────────────────────────────
@@ -150,6 +303,8 @@ pub struct CommandDescriptorEntry {
     pub category: RString,
     /// Required role: "" or "anyone" = anyone, "admin" = admin, "owner" = owner.
     pub required_role: RString,
+    /// Command scope: "" or "all" = all, "group" = group only, "private" = private only.
+    pub scope: RString,
 }
 
 // ─── Route descriptor entry (v0.2) ─────────────────────────────────────
@@ -203,7 +358,7 @@ impl PluginDescriptor {
         Self {
             plugin_id: RString::from(id),
             plugin_version: RString::from(version),
-            api_version: RString::from("0.2"),
+            api_version: RString::from("0.3"),
             command_name: RString::new(),
             command_description: RString::new(),
             notice_route: RString::new(),
@@ -228,6 +383,7 @@ impl PluginDescriptor {
             aliases: RString::new(),
             category: RString::new(),
             required_role: RString::new(),
+            scope: RString::new(),
         });
         self
     }
@@ -251,5 +407,47 @@ impl PluginDescriptor {
             callback_symbol: RString::from(callback_symbol),
         });
         self
+    }
+}
+
+// ─── Plugin lifecycle hooks (v0.3) ──────────────────────────────────────
+
+/// Configuration passed to plugin init hook.
+#[repr(C)]
+pub struct PluginInitConfig {
+    /// Plugin ID (same as in descriptor).
+    pub plugin_id: RString,
+    /// Plugin-specific configuration as JSON string.
+    /// Loaded from config/plugins/<plugin_id>.toml and serialized to JSON.
+    /// Empty string if no config file exists.
+    pub config_json: RString,
+    /// The directory where the plugin binary resides.
+    pub plugin_dir: RString,
+    /// The bot's data directory root.
+    pub data_dir: RString,
+}
+
+/// Result from plugin init hook.
+#[repr(C)]
+pub struct PluginInitResult {
+    /// 0 = success, non-zero = failure.
+    pub code: i32,
+    /// Error message if code != 0. Empty on success.
+    pub error_message: RString,
+}
+
+impl PluginInitResult {
+    pub fn ok() -> Self {
+        Self {
+            code: 0,
+            error_message: RString::new(),
+        }
+    }
+
+    pub fn err(message: &str) -> Self {
+        Self {
+            code: 1,
+            error_message: RString::from(message),
+        }
     }
 }

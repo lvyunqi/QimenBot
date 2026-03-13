@@ -372,6 +372,7 @@ struct CommandArgs {
     category: Option<String>,
     hidden: bool,
     role: Option<String>,
+    scope: Option<String>,
 }
 
 /// Custom parser for command attributes that supports both positional and named forms:
@@ -387,6 +388,7 @@ struct CommandAttrContent {
     category: Option<String>,
     hidden: bool,
     role: Option<String>,
+    scope: Option<String>,
 }
 
 impl Parse for CommandAttrContent {
@@ -400,6 +402,7 @@ impl Parse for CommandAttrContent {
             category: None,
             hidden: false,
             role: None,
+            scope: None,
         };
 
         // Try to parse a leading string literal (positional desc)
@@ -452,6 +455,11 @@ impl Parse for CommandAttrContent {
                     let lit: LitStr = input.parse()?;
                     result.role = Some(lit.value());
                 }
+                "scope" => {
+                    let _eq: Token![=] = input.parse()?;
+                    let lit: LitStr = input.parse()?;
+                    result.scope = Some(lit.value());
+                }
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -488,6 +496,7 @@ fn parse_command_attr(attr: &syn::Attribute, method_name: &str) -> syn::Result<C
         category: content.category,
         hidden: content.hidden,
         role: content.role,
+        scope: content.scope,
     })
 }
 
@@ -741,6 +750,16 @@ fn commands_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     quote! {}
                 };
 
+                let scope_expr = match cmd.args.scope.as_deref() {
+                    Some("group" | "Group") => {
+                        quote! { .scope(qimen_plugin_api::CommandScope::Group) }
+                    }
+                    Some("private" | "Private") => {
+                        quote! { .scope(qimen_plugin_api::CommandScope::Private) }
+                    }
+                    _ => quote! {},
+                };
+
                 quote! {
                     qimen_plugin_api::CommandDefinition::new(#name, #desc)
                         .aliases(&[#(#aliases),*])
@@ -748,6 +767,7 @@ fn commands_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         .category(#category)
                         #hidden_expr
                         #role_expr
+                        #scope_expr
                 }
             })
             .collect();

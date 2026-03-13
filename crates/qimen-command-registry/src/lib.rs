@@ -1,5 +1,5 @@
 use qimen_host_types::DynamicCommandDescriptor;
-use qimen_plugin_api::{CommandDefinition, CommandPlugin, CommandRole};
+use qimen_plugin_api::{CommandDefinition, CommandPlugin, CommandRole, CommandScope};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -62,6 +62,11 @@ impl CommandRegistry {
             "owner" => CommandRole::Owner,
             _ => CommandRole::Anyone,
         };
+        let scope = match descriptor.scope.as_str() {
+            "group" => CommandScope::Group,
+            "private" => CommandScope::Private,
+            _ => CommandScope::All,
+        };
         let category = if descriptor.category.is_empty() {
             "dynamic"
         } else {
@@ -84,6 +89,7 @@ impl CommandRegistry {
                 category,
                 hidden: false,
                 required_role: role,
+                scope,
                 filter: None,
             },
             plugin: None,
@@ -192,6 +198,7 @@ mod tests {
             category,
             hidden: false,
             required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
             filter: None,
         }
     }

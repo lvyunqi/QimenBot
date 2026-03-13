@@ -43,6 +43,7 @@ pub struct DynamicCommandEntry {
     pub aliases: Vec<String>,
     pub category: String,
     pub required_role: String,
+    pub scope: String,
 }
 
 /// A single event route registered by a dynamic plugin.
@@ -65,6 +66,7 @@ pub struct DynamicCommandDescriptor {
     pub aliases: Vec<String>,
     pub category: String,
     pub required_role: String,
+    pub scope: String,
 }
 
 #[derive(Debug, Clone)]

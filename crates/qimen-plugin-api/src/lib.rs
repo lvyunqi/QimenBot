@@ -1245,6 +1245,18 @@ pub struct PluginCompatibility {
     pub framework_max: &'static str,
 }
 
+/// Declares which chat scope a command is available in.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CommandScope {
+    /// Available in both group and private chats (default).
+    #[default]
+    All,
+    /// Only available in group chats.
+    Group,
+    /// Only available in private chats.
+    Private,
+}
+
 /// Declares a single command that a [`CommandPlugin`] handles.
 ///
 /// Includes the command name, aliases, usage examples, required permission
@@ -1258,6 +1270,7 @@ pub struct CommandDefinition {
     pub category: &'static str,
     pub hidden: bool,
     pub required_role: CommandRole,
+    pub scope: CommandScope,
     pub filter: Option<MessageFilter>,
 }
 
@@ -1272,6 +1285,7 @@ impl CommandDefinition {
             category: "general",
             hidden: false,
             required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
             filter: None,
         }
     }
@@ -1303,6 +1317,12 @@ impl CommandDefinition {
     /// Set the required permission role.
     pub const fn role(mut self, role: CommandRole) -> Self {
         self.required_role = role;
+        self
+    }
+
+    /// Set the command scope (group, private, or all).
+    pub const fn scope(mut self, scope: CommandScope) -> Self {
+        self.scope = scope;
         self
     }
 

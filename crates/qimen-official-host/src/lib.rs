@@ -293,6 +293,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
                     aliases,
                     category: if entry.category.is_empty() { "dynamic".to_string() } else { entry.category.to_string() },
                     required_role: entry.required_role.to_string(),
+                    scope: entry.scope.to_string(),
                 }
             }).collect()
         } else if !descriptor.command_name.is_empty() {
@@ -304,6 +305,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
                 aliases: Vec::new(),
                 category: "dynamic".to_string(),
                 required_role: String::new(),
+                scope: String::new(),
             }]
         } else {
             Vec::new()

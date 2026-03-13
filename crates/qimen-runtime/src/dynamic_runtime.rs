@@ -1,7 +1,7 @@
 use abi_stable::std_types::RString;
 use abi_stable_host_api::{
     CommandRequest, CommandResponse, DynamicActionResponse, NoticeRequest, NoticeResponse,
-    PluginDescriptor, is_compatible_api_version,
+    PluginDescriptor, PluginInitConfig, PluginInitResult, is_compatible_api_version,
     ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY,
 };
 use qimen_error::{QimenError, Result};
@@ -60,6 +60,9 @@ impl DynamicPluginRuntime {
         sender_id: &str,
         group_id: &str,
         raw_event_json: &str,
+        sender_nickname: &str,
+        message_id: &str,
+        timestamp: i64,
     ) -> Result<DynamicResponse> {
         self.evict_idle_libraries(Duration::from_secs(300));
         let path = descriptor.library_path.clone();
@@ -70,6 +73,8 @@ impl DynamicPluginRuntime {
         let sender = sender_id.to_string();
         let group = group_id.to_string();
         let raw_json = raw_event_json.to_string();
+        let nickname = sender_nickname.to_string();
+        let msg_id = message_id.to_string();
 
         self.with_library(&path, move |library| unsafe {
             let symbol: libloading::Symbol<
@@ -81,14 +86,41 @@ impl DynamicPluginRuntime {
                 ))
             })?;
 
-            let response = symbol(CommandRequest {
+            let request = CommandRequest {
                 args: RString::from(args_str),
                 command_name: RString::from(command_name),
                 sender_id: RString::from(sender),
                 group_id: RString::from(group),
                 raw_event_json: RString::from(raw_json),
-            });
-            Ok(map_action_response(response.action))
+                sender_nickname: RString::from(nickname),
+                message_id: RString::from(msg_id),
+                timestamp,
+            };
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(request)
+            }));
+
+            match result {
+                Ok(response) => Ok(map_action_response(response.action)),
+                Err(panic_info) => {
+                    let panic_msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    tracing::error!(
+                        callback = %callback,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic plugin callback panicked"
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic plugin callback '{}' panicked: {}",
+                        callback, panic_msg
+                    )))
+                }
+            }
         })
     }
 
@@ -98,7 +130,7 @@ impl DynamicPluginRuntime {
         descriptor: &DynamicCommandDescriptor,
         args: &[String],
     ) -> Result<DynamicResponse> {
-        self.execute_command(descriptor, args, "", "", "{}")
+        self.execute_command(descriptor, args, "", "", "{}", "", "", 0)
     }
 
     pub fn execute_notice(
@@ -165,13 +197,92 @@ impl DynamicPluginRuntime {
         }
     }
 
+    /// Call the optional `qimen_plugin_init` lifecycle hook for a loaded plugin.
+    /// Returns Ok(()) if the symbol doesn't exist (it's optional) or if init succeeds.
+    pub fn call_plugin_init(
+        &mut self,
+        library_path: &str,
+        plugin_id: &str,
+        config_json: &str,
+        plugin_dir: &str,
+        data_dir: &str,
+    ) -> Result<()> {
+        let plugin_id_owned = plugin_id.to_string();
+        let config_json_owned = config_json.to_string();
+        let plugin_dir_owned = plugin_dir.to_string();
+        let data_dir_owned = data_dir.to_string();
+        let path_for_error = library_path.to_string();
+
+        self.with_library(library_path, move |library| unsafe {
+            // Try to load the optional init symbol
+            let symbol: std::result::Result<
+                libloading::Symbol<unsafe extern "C" fn(PluginInitConfig) -> PluginInitResult>,
+                _,
+            > = library.get(b"qimen_plugin_init");
+
+            match symbol {
+                Ok(init_fn) => {
+                    let config = PluginInitConfig {
+                        plugin_id: RString::from(plugin_id_owned),
+                        config_json: RString::from(config_json_owned),
+                        plugin_dir: RString::from(plugin_dir_owned),
+                        data_dir: RString::from(data_dir_owned),
+                    };
+
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        init_fn(config)
+                    }));
+
+                    match result {
+                        Ok(init_result) => {
+                            if init_result.code != 0 {
+                                Err(QimenError::Runtime(format!(
+                                    "plugin '{}' init failed: {}",
+                                    path_for_error, init_result.error_message
+                                )))
+                            } else {
+                                Ok(())
+                            }
+                        }
+                        Err(_) => Err(QimenError::Runtime(format!(
+                            "plugin '{}' panicked during init",
+                            path_for_error
+                        ))),
+                    }
+                }
+                Err(_) => {
+                    // No init symbol — that's fine, it's optional.
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
+    pub fn call_plugin_shutdown(&mut self, library_path: &str) {
+        if let Some(entry) = self.libraries.get(library_path) {
+            unsafe {
+                if let Ok(symbol) = entry.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        symbol();
+                    }));
+                }
+            }
+        }
+    }
+
     /// Unload a specific library by path (for hot reload).
     pub fn unload_library(&mut self, path: &str) {
+        self.call_plugin_shutdown(path);
         self.libraries.remove(path);
     }
 
     /// Unload all libraries (for reload).
     pub fn unload_all(&mut self) {
+        let paths: Vec<String> = self.libraries.keys().cloned().collect();
+        for path in &paths {
+            self.call_plugin_shutdown(path);
+        }
         self.libraries.clear();
     }
 
@@ -198,11 +309,36 @@ impl DynamicPluginRuntime {
                     ))
                 })?;
 
-            let response = symbol(NoticeRequest {
+            let request = NoticeRequest {
                 route: RString::from(route),
                 raw_event_json: RString::from(raw_json),
-            });
-            Ok(map_action_response(response.action))
+            };
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(request)
+            }));
+
+            match result {
+                Ok(response) => Ok(map_action_response(response.action)),
+                Err(panic_info) => {
+                    let panic_msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    tracing::error!(
+                        callback = %callback_owned,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic plugin {} callback panicked",
+                        kind
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic plugin {} callback '{}' panicked: {}",
+                        kind, callback_owned, panic_msg
+                    )))
+                }
+            }
         })
     }
 
@@ -326,6 +462,25 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
+/// Load plugin-specific configuration from `config/plugins/<plugin_id>.toml`.
+/// Returns the config as a JSON string, or an empty string if the file doesn't exist.
+pub fn load_plugin_config(plugin_id: &str) -> String {
+    let config_path = format!("config/plugins/{}.toml", plugin_id);
+    match std::fs::read_to_string(&config_path) {
+        Ok(toml_str) => {
+            // Parse TOML and convert to JSON string
+            match toml_str.parse::<toml::Table>() {
+                Ok(table) => serde_json::to_string(&table).unwrap_or_default(),
+                Err(e) => {
+                    tracing::warn!(plugin_id = %plugin_id, error = %e, "failed to parse plugin config TOML");
+                    String::new()
+                }
+            }
+        }
+        Err(_) => String::new(), // No config file, that's fine
+    }
+}
+
 fn instant_to_epoch_ms(instant: Instant) -> u128 {
     let now_instant = Instant::now();
     let now_epoch = SystemTime::now()
@@ -391,7 +546,15 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
         let descriptor: PluginDescriptor = if let Ok(symbol) = library
             .get::<unsafe extern "C" fn() -> PluginDescriptor>(b"qimen_plugin_descriptor")
         {
-            symbol()
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol())) {
+                Ok(desc) => desc,
+                Err(_) => {
+                    return Err(QimenError::Module(format!(
+                        "plugin '{}' panicked during descriptor loading",
+                        path.display()
+                    )));
+                }
+            }
         } else {
             let symbol: libloading::Symbol<unsafe extern "C" fn() -> PluginDescriptor> = library
                 .get(b"qimen_demo_plugin_descriptor")
@@ -401,7 +564,15 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
                         path.display()
                     ))
                 })?;
-            symbol()
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol())) {
+                Ok(desc) => desc,
+                Err(_) => {
+                    return Err(QimenError::Module(format!(
+                        "plugin '{}' panicked during descriptor loading",
+                        path.display()
+                    )));
+                }
+            }
         };
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
@@ -441,6 +612,7 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
                             entry.category.to_string()
                         },
                         required_role: entry.required_role.to_string(),
+                        scope: entry.scope.to_string(),
                     }
                 })
                 .collect()
@@ -453,6 +625,7 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
                 aliases: Vec::new(),
                 category: "dynamic".to_string(),
                 required_role: String::new(),
+                scope: String::new(),
             }]
         } else {
             Vec::new()

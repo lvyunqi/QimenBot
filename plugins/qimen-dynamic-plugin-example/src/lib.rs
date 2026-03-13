@@ -1,155 +1,233 @@
-//! QimenBot dynamic plugin example (动态插件示例)
+//! QimenBot 动态插件完整示例（过程宏写法）
 //!
-//! This crate demonstrates the v0.2 FFI interface for building dynamic plugins
-//! that compile to `.so` / `.dll` / `.dylib` and are loaded at runtime.
+//! 本示例使用 `#[dynamic_plugin]` 过程宏声明插件，代码量比手动 FFI 大幅减少。
+//! 宏自动生成 `qimen_plugin_descriptor()` 和所有 `extern "C" fn` 导出。
 //!
-//! 本 crate 演示 v0.2 FFI 接口，用于构建编译为动态库（.so/.dll/.dylib）的插件，
-//! 在运行时由宿主程序加载。
-//!
-//! ## Build 编译
+//! ## 编译 / Build
 //!
 //! ```bash
-//! cargo build --release -p qimen-dynamic-plugin-example
+//! cd plugins/qimen-dynamic-plugin-example
+//! cargo build --release
 //! ```
 //!
-//! The resulting shared library will be in `target/release/`.
-//! 生成的动态库位于 `target/release/` 目录下。
+//! ## 安装 / Install
+//!
+//! ```bash
+//! cp target/release/libqimen_dynamic_plugin_example.{so,dylib,dll} ../../plugins/bin/
+//! ```
 
-use abi_stable::std_types::RString;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use abi_stable_host_api::{
-    CommandDescriptorEntry, CommandRequest, CommandResponse, DynamicActionResponse,
-    NoticeRequest, NoticeResponse, PluginDescriptor,
+    CommandRequest, CommandResponse, DynamicActionResponse, NoticeRequest, NoticeResponse,
+    PluginInitConfig, PluginInitResult,
 };
+use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-// ─── Plugin Descriptor 插件描述符 ────────────────────────────────────────────
+// ─── 全局状态 / Global State ─────────────────────────────────────────────────
 
-/// Entry point called by the host to discover plugin metadata.
-/// 宿主调用此函数以获取插件元数据（命令列表、事件路由等）。
-///
-/// This is the **only** required symbol. It returns a [`PluginDescriptor`]
-/// describing the plugin ID, supported commands, and event routes.
-///
-/// 这是唯一必须导出的符号，返回 [`PluginDescriptor`] 描述插件 ID、支持的命令和事件路由。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn qimen_plugin_descriptor() -> PluginDescriptor {
-    PluginDescriptor::new("dynamic-example", "0.1.0")
-        // ── Command: greet ──
-        // Greets the sender with an optional custom message.
-        // 向发送者打招呼，可附带自定义消息。
-        .add_command_full(CommandDescriptorEntry {
-            name: RString::from("greet"),
-            description: RString::from("Greet the sender / 向发送者打招呼"),
-            callback_symbol: RString::from("dynamic_example_greet"),
-            aliases: RString::from("hi,hello"),
-            category: RString::from("general"),
-            required_role: RString::new(), // anyone 任何人可用
-        })
-        // ── Command: time ──
-        // Returns the current Unix timestamp.
-        // 返回当前 Unix 时间戳。
-        .add_command(
-            "time",
-            "Show current Unix timestamp / 显示当前 Unix 时间戳",
-            "dynamic_example_time",
+/// 标记插件是否已初始化 / Whether the plugin has been initialized
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 插件定义（宏自动生成 descriptor + extern "C" fn）
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[dynamic_plugin(id = "dynamic-example", version = "0.1.0")]
+mod example {
+    use super::*;
+
+    // ── 生命周期钩子 ──────────────────────────────────────────────────────
+
+    /// 插件加载后由宿主调用。配置从 `config/plugins/dynamic-example.toml` 自动加载。
+    #[init]
+    fn on_init(config: PluginInitConfig) -> PluginInitResult {
+        let plugin_id = config.plugin_id.as_str();
+        let config_json = config.config_json.as_str();
+        let plugin_dir = config.plugin_dir.as_str();
+        let data_dir = config.data_dir.as_str();
+
+        eprintln!(
+            "[dynamic-example] init: id={}, config={}, plugin_dir={}, data_dir={}",
+            plugin_id,
+            if config_json.is_empty() { "<none>" } else { config_json },
+            plugin_dir,
+            data_dir,
+        );
+
+        INITIALIZED.store(true, Ordering::Relaxed);
+        PluginInitResult::ok()
+    }
+
+    /// 插件卸载前由宿主调用。
+    #[shutdown]
+    fn on_shutdown() {
+        eprintln!("[dynamic-example] shutdown");
+        INITIALIZED.store(false, Ordering::Relaxed);
+    }
+
+    // ── 命令回调 ──────────────────────────────────────────────────────────
+
+    /// 打招呼 — 演示 ReplyBuilder + sender_nickname + message_id 引用
+    #[command(name = "greet", description = "打招呼 / Greet the sender", aliases = "hi,hello,你好", category = "示例")]
+    fn greet(req: &CommandRequest) -> CommandResponse {
+        let sender = req.sender_id.as_str();
+        let nickname = req.sender_nickname.as_str();
+        let args = req.args.as_str().trim();
+
+        let display = if nickname.is_empty() { sender } else { nickname };
+
+        let greeting = if args.is_empty() {
+            format!(" 你好 {display}！欢迎使用 QimenBot 动态插件示例~")
+        } else {
+            format!(" {display} 说：{args}")
+        };
+
+        let mut builder = CommandResponse::builder();
+
+        let msg_id = req.message_id.as_str();
+        if !msg_id.is_empty() {
+            builder = builder.reply(msg_id);
+        }
+
+        builder
+            .at(sender)
+            .text(&greeting)
+            .face(1)
+            .build()
+    }
+
+    /// 显示时间 — 演示 CommandResponse::text() + timestamp 字段
+    #[command(name = "time", description = "显示时间 / Show current time", aliases = "时间", category = "示例")]
+    fn time(req: &CommandRequest) -> CommandResponse {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let event_ts = req.timestamp;
+
+        let msg = if event_ts > 0 {
+            let latency = now.saturating_sub(event_ts as u64);
+            format!(
+                "⏰ 时间信息\n\
+                 ├ 服务器时间: {now}\n\
+                 ├ 事件时间戳: {event_ts}\n\
+                 └ 消息延迟: {latency}s"
+            )
+        } else {
+            format!("⏰ 服务器时间: {now}")
+        };
+
+        CommandResponse::text(&msg)
+    }
+
+    /// 复读消息 — 演示参数解析 + 空参检查 + ReplyBuilder
+    #[command(name = "echo", description = "复读消息 / Echo back the message", aliases = "复读,say", category = "示例")]
+    fn echo(req: &CommandRequest) -> CommandResponse {
+        let args = req.args.as_str().trim();
+
+        if args.is_empty() {
+            return CommandResponse::text("用法：echo <内容>\nUsage: echo <content>");
+        }
+
+        let mut builder = CommandResponse::builder();
+
+        let msg_id = req.message_id.as_str();
+        if !msg_id.is_empty() {
+            builder = builder.reply(msg_id);
+        }
+
+        builder.text(args).build()
+    }
+
+    /// 请求详情（仅管理员） — 演示 CommandRequest 所有字段
+    #[command(name = "info", description = "显示请求详情 / Show request details", aliases = "debug,调试", category = "示例", role = "admin")]
+    fn info(req: &CommandRequest) -> CommandResponse {
+        let initialized = INITIALIZED.load(Ordering::Relaxed);
+
+        let info = format!(
+            "📋 Request Info\n\
+             ├ command_name: {}\n\
+             ├ args: {:?}\n\
+             ├ sender_id: {}\n\
+             ├ sender_nickname: {}\n\
+             ├ group_id: {}\n\
+             ├ message_id: {}\n\
+             ├ timestamp: {}\n\
+             ├ raw_event_json: {}B\n\
+             └ plugin_initialized: {}",
+            req.command_name.as_str(),
+            req.args.as_str(),
+            req.sender_id.as_str(),
+            if req.sender_nickname.is_empty() { "<empty>" } else { req.sender_nickname.as_str() },
+            if req.group_id.is_empty() { "<private>" } else { req.group_id.as_str() },
+            if req.message_id.is_empty() { "<none>" } else { req.message_id.as_str() },
+            req.timestamp,
+            req.raw_event_json.len(),
+            initialized,
+        );
+
+        CommandResponse::text(&info)
+    }
+
+    /// 仅群聊命令 — 演示 scope = "group"
+    #[command(name = "group-hello", description = "仅群聊打招呼 / Greet in group only", category = "示例", scope = "group")]
+    fn group_hello(req: &CommandRequest) -> CommandResponse {
+        let sender = req.sender_id.as_str();
+        CommandResponse::builder()
+            .at(sender)
+            .text(" 这是一条仅在群聊中可用的命令！/ This command only works in groups!")
+            .build()
+    }
+
+    /// 仅私聊命令 — 演示 scope = "private"
+    #[command(name = "secret", description = "仅私聊悄悄话 / Private whisper only", category = "示例", scope = "private")]
+    fn secret(_req: &CommandRequest) -> CommandResponse {
+        CommandResponse::text("🤫 这是一条仅在私聊中可用的秘密消息！/ This is a private-only secret!")
+    }
+
+    /// 帮助菜单 — 纯静态文本
+    #[command(name = "example-help", description = "示例插件帮助 / Example plugin help", aliases = "示例帮助", category = "示例")]
+    fn help(_req: &CommandRequest) -> CommandResponse {
+        CommandResponse::text(
+            "╭──── 示例插件 v0.1.0 ────╮\n\
+             │ greet [内容]    打招呼    │\n\
+             │ time            显示时间  │\n\
+             │ echo <内容>     复读消息  │\n\
+             │ info            请求详情  │\n\
+             │ example-help    本帮助    │\n\
+             ╰────────────────────────╯\n\
+             \n\
+             别名：hi / hello / 你好 / 时间 / 复读 / say / debug / 调试 / 示例帮助"
         )
-        // ── Notice route: poke events ──
-        // Handle both group and private poke notifications.
-        // 处理群聊和私聊的戳一戳通知。
-        .add_route("notice", "GroupPoke,PrivatePoke", "dynamic_example_on_poke")
-}
-
-// ─── Command Callbacks 命令回调 ──────────────────────────────────────────────
-
-/// Handle the `greet` command.
-/// 处理 `greet` 命令。
-///
-/// Demonstrates:
-/// - Reading `sender_id` from the request to personalise the greeting.
-///   从请求中读取 `sender_id` 以个性化问候。
-/// - Using `args` for an optional custom greeting message.
-///   使用 `args` 作为可选的自定义问候语。
-/// - Building a rich-media response with `segments_json` (text + face).
-///   通过 `segments_json` 构建富媒体响应（文本 + 表情）。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dynamic_example_greet(req: &CommandRequest) -> CommandResponse {
-    let sender = req.sender_id.as_str();
-    let args = req.args.as_str().trim();
-
-    // Build the greeting text.
-    // 构建问候文本。
-    let greeting = if args.is_empty() {
-        format!("Hello, [CQ:at,qq={sender}]! Welcome to QimenBot! 你好！欢迎使用 QimenBot！")
-    } else {
-        format!("[CQ:at,qq={sender}] {args}")
-    };
-
-    // Build rich-media segments: text + face(emoji id=1 is 😊 in OneBot11).
-    // 构建富媒体消息段：文本 + 表情（OneBot11 中 face id=1 对应经典 QQ 表情）。
-    let segments = serde_json::json!([
-        { "type": "text", "data": { "text": greeting } },
-        { "type": "face", "data": { "id": "1" } }
-    ]);
-
-    CommandResponse {
-        action: DynamicActionResponse::rich_reply(&segments.to_string()),
     }
-}
 
-/// Handle the `time` command.
-/// 处理 `time` 命令。
-///
-/// Returns the current Unix timestamp as a simple text reply.
-/// 以纯文本返回当前 Unix 时间戳。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dynamic_example_time(_req: &CommandRequest) -> CommandResponse {
-    // std::time is available in no_std-friendly fashion; no async runtime needed.
-    // 使用标准库获取时间，无需异步运行时。
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    // ── 事件路由 ──────────────────────────────────────────────────────────
 
-    CommandResponse {
-        action: DynamicActionResponse::text_reply(&format!(
-            "Current Unix timestamp / 当前 Unix 时间戳: {now}"
-        )),
-    }
-}
+    /// 戳一戳事件 — 演示 #[route] 事件路由
+    #[route(kind = "notice", events = "GroupPoke,PrivatePoke")]
+    fn on_poke(req: &NoticeRequest) -> NoticeResponse {
+        let raw: serde_json::Value = serde_json::from_str(req.raw_event_json.as_str())
+            .unwrap_or_default();
 
-// ─── Notice Callback 事件回调 ─────────────────────────────────────────────────
+        let target_id = raw.get("target_id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let sender_id = raw.get("user_id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let route = req.route.as_str();
 
-/// Handle poke notice events (GroupPoke / PrivatePoke).
-/// 处理戳一戳通知事件（群聊 / 私聊）。
-///
-/// Demonstrates:
-/// - Parsing `raw_event_json` to extract the poke target.
-///   解析 `raw_event_json` 以提取被戳目标。
-/// - Replying with rich content (text + face).
-///   使用富媒体内容回复（文本 + 表情）。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dynamic_example_on_poke(req: &NoticeRequest) -> NoticeResponse {
-    // Try to parse the raw event to find who was poked.
-    // 尝试解析原始事件以确定谁被戳了。
-    let target_id = serde_json::from_str::<serde_json::Value>(req.raw_event_json.as_str())
-        .ok()
-        .and_then(|v| v.get("target_id")?.as_i64())
-        .unwrap_or(0);
+        let text = format!(
+            "👆 戳一戳 [{route}]\n\
+             ├ 发起者: {sender_id}\n\
+             └ 目标: {target_id}"
+        );
 
-    let route = req.route.as_str();
+        let segments = serde_json::json!([
+            { "type": "text", "data": { "text": text } },
+            { "type": "face", "data": { "id": "181" } }
+        ]);
 
-    // Build a fun reply with text + face segment.
-    // 构建趣味回复：文本 + 表情。
-    let text = format!(
-        "Poke detected on route [{route}]! Target: {target_id} 🫵\n\
-         检测到戳一戳事件 [{route}]！目标: {target_id}"
-    );
-
-    let segments = serde_json::json!([
-        { "type": "text", "data": { "text": text } },
-        { "type": "face", "data": { "id": "181" } }
-    ]);
-
-    NoticeResponse {
-        action: DynamicActionResponse::rich_reply(&segments.to_string()),
+        NoticeResponse {
+            action: DynamicActionResponse::rich_reply(&segments.to_string()),
+        }
     }
 }

@@ -189,6 +189,26 @@ impl BasicModule {
         }
     }
 
+    // ── /group-only ──────────────────────────────────────────────────────
+    // 展示 scope = "group"：仅在群聊中可用，私聊静默忽略
+    // Demonstrates scope = "group": only available in group chats
+
+    #[command("Only works in group chats / 仅群聊可用",
+              examples = ["/group-only"], category = "examples", scope = "group")]
+    async fn group_only(&self) -> Message {
+        Message::text("This command only works in group chats! / 此命令仅在群聊中可用！")
+    }
+
+    // ── /private-only ───────────────────────────────────────────────────
+    // 展示 scope = "private"：仅在私聊中可用，群聊静默忽略
+    // Demonstrates scope = "private": only available in private chats
+
+    #[command("Only works in private chats / 仅私聊可用",
+              examples = ["/private-only"], category = "examples", scope = "private")]
+    async fn private_only(&self) -> Message {
+        Message::text("This command only works in private chats! / 此命令仅在私聊中可用！")
+    }
+
     // ── /stop ────────────────────────────────────────────────────────────
     // 展示 Block 信号：终止插件链，不再执行后续插件
     // Demonstrates Block signal: stops the plugin chain

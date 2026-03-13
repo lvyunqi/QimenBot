@@ -5,7 +5,7 @@ use qimen_message::Message;
 use qimen_mod_command::{CommandTrigger, strip_command_name_and_args};
 use qimen_plugin_api::{
     BuiltinCommandAction, CommandDefinition, CommandInvocation, CommandPlugin,
-    CommandPluginContext, CommandPluginSignal, CommandRole, RuntimeBotContext,
+    CommandPluginContext, CommandPluginSignal, CommandRole, CommandScope, RuntimeBotContext,
 };
 use qimen_protocol_core::NormalizedEvent;
 use std::collections::BTreeMap;
@@ -256,6 +256,12 @@ impl<'a> CommandDispatch<'a> {
                 )));
             }
 
+            match &entry.definition.scope {
+                CommandScope::Group if !self.event.is_group() => return None,
+                CommandScope::Private if !self.event.is_private() => return None,
+                _ => {}
+            }
+
             if let Some(filter) = &entry.definition.filter {
                 let result = crate::message_filter::filter_matches(filter, self.event);
                 if !result.matched {
@@ -443,6 +449,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "general",
             hidden: false,
             required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
             filter: None,
         },
         CommandDefinition {
@@ -453,6 +460,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "general",
             hidden: false,
             required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
             filter: None,
         },
         CommandDefinition {
@@ -463,6 +471,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "system",
             hidden: false,
             required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
             filter: None,
         },
         CommandDefinition {
@@ -473,6 +482,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "system",
             hidden: false,
             required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
             filter: None,
         },
         CommandDefinition {
@@ -489,6 +499,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "system",
             hidden: false,
             required_role: CommandRole::Admin,
+            scope: CommandScope::All,
             filter: None,
         },
         CommandDefinition {
@@ -499,6 +510,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "system",
             hidden: false,
             required_role: CommandRole::Admin,
+            scope: CommandScope::All,
             filter: None,
         },
         CommandDefinition {
@@ -509,6 +521,7 @@ fn builtin_command_definitions() -> Vec<CommandDefinition> {
             category: "system",
             hidden: false,
             required_role: CommandRole::Admin,
+            scope: CommandScope::All,
             filter: None,
         },
     ]
@@ -562,13 +575,19 @@ fn render_command_groups(entries: &[(CommandDefinition, String)]) -> Vec<String>
             } else {
                 definition.examples.join(" | ")
             };
+            let scope_line = match &definition.scope {
+                CommandScope::Group => "\n    scope: group",
+                CommandScope::Private => "\n    scope: private",
+                _ => "",
+            };
             lines.push(format!(
-                "  - /{}\n    desc: {}\n    source: {}\n    aliases: {}\n    role: {}\n    examples: {}",
+                "  - /{}\n    desc: {}\n    source: {}\n    aliases: {}\n    role: {}{}\n    examples: {}",
                 definition.name,
                 definition.description,
                 source,
                 aliases,
                 render_command_role(&definition.required_role),
+                scope_line,
                 examples
             ));
         }
@@ -593,8 +612,8 @@ mod tests {
     use qimen_message::Message;
     use qimen_plugin_api::{
         CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext,
-        CommandPluginSignal, CommandRole, OwnedTaskFuture, PluginCompatibility, PluginMetadata,
-        RuntimeBotContext, TaskHandle,
+        CommandPluginSignal, CommandRole, CommandScope, OwnedTaskFuture, PluginCompatibility,
+        PluginMetadata, RuntimeBotContext, TaskHandle,
     };
     use qimen_protocol_core::{
         ActionStatus, CapabilitySet, EventKind, NormalizedActionRequest, NormalizedActionResponse,
@@ -695,6 +714,7 @@ mod tests {
                 category: "examples",
                 hidden: false,
                 required_role: CommandRole::Anyone,
+                scope: CommandScope::All,
                 filter: None,
             }]
         }

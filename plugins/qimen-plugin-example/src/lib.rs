@@ -31,14 +31,16 @@ mod tests {
         assert_eq!(cmd_plugins.len(), 1);
 
         let commands = cmd_plugins[0].commands();
-        // ping, echo, whoami, group-info, ban, stop
-        assert_eq!(commands.len(), 6);
+        // ping, echo, whoami, group-info, ban, group-only, private-only, stop
+        assert_eq!(commands.len(), 8);
         assert_eq!(commands[0].name, "ping");
         assert_eq!(commands[1].name, "echo");
         assert_eq!(commands[2].name, "whoami");
         assert_eq!(commands[3].name, "group-info");
         assert_eq!(commands[4].name, "ban");
-        assert_eq!(commands[5].name, "stop");
+        assert_eq!(commands[5].name, "group-only");
+        assert_eq!(commands[6].name, "private-only");
+        assert_eq!(commands[7].name, "stop");
     }
 
     // ── MessageDemoModule tests ──────────────────────────────────────────

@@ -380,6 +380,7 @@ impl Runtime {
                         aliases: cmd.aliases.clone(),
                         category: cmd.category.clone(),
                         required_role: cmd.required_role.clone(),
+                        scope: cmd.scope.clone(),
                     });
                 }
             }
@@ -768,7 +769,15 @@ impl Runtime {
                 let sender_id = event.user_id().map(|id| id.to_string()).unwrap_or_default();
                 let group_id = event.group_id_i64().map(|id| id.to_string()).unwrap_or_default();
                 let raw_json = event.raw_json.to_string();
-                match runtime.execute_command(&descriptor, &args, &sender_id, &group_id, &raw_json)? {
+                let sender_nickname = event.sender_nickname().unwrap_or_default().to_string();
+                let message_id = event.raw_json.get("message_id")
+                    .and_then(|v| v.as_i64())
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                let timestamp = event.raw_json.get("time")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                match runtime.execute_command(&descriptor, &args, &sender_id, &group_id, &raw_json, &sender_nickname, &message_id, timestamp)? {
                     DynamicResponse::ReplyMessage(message) => Some(message),
                     DynamicResponse::Reply(message) => Some(Message::text(message)),
                     DynamicResponse::Ignore => None,
