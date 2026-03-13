@@ -18,8 +18,8 @@ qimen-mod-command = { path = "../qimen-mod-command" }
 qimen-mod-scheduler = { path = "../qimen-mod-scheduler" }
 qimen-observability = { path = "../qimen-observability" }
 qimen-plugin-api = { path = "../qimen-plugin-api" }
-qimen-plugin-example = { path = "../../plugins/qimen-plugin-example" }
 qimen-plugin-host = { path = "../qimen-plugin-host" }
+inventory.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true

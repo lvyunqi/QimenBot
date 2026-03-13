@@ -42,11 +42,10 @@ builtin_modules = ["command", "admin", "scheduler", "bridge"]
 # 启用的插件模块列表
 # 填写插件的 module id（即 #[module(id = "xxx")] 中的 id）
 # 示例插件的可用 id：
-#   "example-plugin"  — BasicModule 的别名（向后兼容）
 #   "example-basic"   — 基础命令示例（ping、echo、whoami、group-info、ban、stop）
 #   "example-message" — 消息构建示例（rich、parse、card、reply-quote、keyboard）
 #   "example-events"  — 事件处理示例（戳一戳、入群欢迎、撤回、好友请求、心跳）
-plugin_modules = ["example-plugin"]
+plugin_modules = ["example-basic", "douluo"]
 
 # 插件启用/禁用状态的持久化文件路径
 # 通过 /plugins 命令或管理 API 修改的状态会保存在这里

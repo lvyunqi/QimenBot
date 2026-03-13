@@ -13,3 +13,4 @@ qimen-plugin-derive = { path = "../qimen-plugin-derive" }
 qimen-protocol-core = { path = "../qimen-protocol-core" }
 serde.workspace = true
 serde_json.workspace = true
+inventory.workspace = true

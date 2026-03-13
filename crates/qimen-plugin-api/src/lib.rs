@@ -4,6 +4,7 @@
 //! [`CommandPlugin`] for text-command handlers, [`SystemPlugin`] for notice/request/meta
 //! event handlers, and [`Module`] for grouping plugins into loadable units.
 
+pub use inventory;
 use async_trait::async_trait;
 use qimen_error::Result;
 use qimen_message::Message;
@@ -1874,6 +1875,16 @@ pub trait Module: Send + Sync {
     }
 }
 
+/// Entry registered via `inventory` by the `#[module]` macro.
+///
+/// Each plugin crate submits one of these at link time so the official host
+/// can discover all compiled-in modules without manual match branches.
+pub struct ModuleEntry {
+    pub id: &'static str,
+    pub factory: fn() -> Box<dyn Module>,
+}
+inventory::collect!(ModuleEntry);
+
 /// Convenience re-exports for plugin development.
 ///
 /// Import everything you need for a typical plugin with a single `use`:
@@ -1884,7 +1895,7 @@ pub mod prelude {
     pub use crate::{
         CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext,
         CommandPluginSignal, CommandRole, IntoCommandSignal, IntoSystemSignal,
-        MessageEventInterceptor, Module, OneBotActionClient, PluginCompatibility, PluginMetadata,
+        MessageEventInterceptor, Module, ModuleEntry, OneBotActionClient, PluginCompatibility, PluginMetadata,
         RuntimeBotContext, SystemMetaRoute, SystemNoticeRoute, SystemPlugin, SystemPluginContext,
         SystemPluginSignal, SystemRequestRoute,
     };

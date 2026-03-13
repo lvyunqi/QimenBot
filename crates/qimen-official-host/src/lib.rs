@@ -12,7 +12,6 @@ use qimen_mod_command::CommandModule;
 use qimen_mod_scheduler::SchedulerModule;
 use qimen_observability::init;
 use qimen_plugin_api::Module;
-use qimen_plugin_example::{BasicModule, EventDemoModule, MessageDemoModule};
 use qimen_plugin_host::ModuleRegistry;
 use std::fs;
 use std::path::Path;
@@ -67,34 +66,32 @@ fn register_plugin_modules(
     plugin_state: &PluginState,
     modules: &mut ModuleRegistry,
 ) -> Result<()> {
-    for module in &config.official_host.plugin_modules {
-        if !plugin_state.is_enabled(module) {
-            tracing::info!(module = %module, "plugin disabled by persisted state, skipping");
+    let inventory_map: std::collections::HashMap<&str, &qimen_plugin_api::ModuleEntry> =
+        inventory::iter::<qimen_plugin_api::ModuleEntry>
+            .into_iter()
+            .map(|e| (e.id, e))
+            .collect();
+
+    tracing::info!(
+        count = inventory_map.len(),
+        modules = %inventory_map.keys().copied().collect::<Vec<_>>().join(", "),
+        "inventory plugin modules discovered"
+    );
+
+    for id in &config.official_host.plugin_modules {
+        if !plugin_state.is_enabled(id) {
+            tracing::info!(module = %id, "plugin disabled, skipping");
             continue;
         }
-
-        match module.as_str() {
-            "example-plugin" | "example-basic" => {
-                let plugin = BasicModule;
-                validate_module_compatibility(&plugin)?;
-                modules.register(Box::new(plugin));
+        match inventory_map.get(id.as_str()) {
+            Some(entry) => {
+                let module = (entry.factory)();
+                validate_module_compatibility(module.as_ref())?;
+                modules.register(module);
             }
-            "example-message" => {
-                let plugin = MessageDemoModule;
-                validate_module_compatibility(&plugin)?;
-                modules.register(Box::new(plugin));
-            }
-            "example-events" => {
-                let plugin = EventDemoModule;
-                validate_module_compatibility(&plugin)?;
-                modules.register(Box::new(plugin));
-            }
-            other => {
-                tracing::warn!(module = %other, "unknown plugin module configured, skipping")
-            }
+            None => tracing::warn!(module = %id, "plugin not found in inventory, skipping"),
         }
     }
-
     Ok(())
 }
 

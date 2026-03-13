@@ -3,6 +3,7 @@ members = [
   "apps/qimenbotd",
   "apps/qimenctl",
   "plugins/qimen-plugin-example",
+  "plugins/qimen-plugin-douluo",
   "crates/abi-stable-host-api",
   "crates/qimen-framework",
   "crates/qimen-host-types",
@@ -50,3 +51,6 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
+rand = "0.9"
+inventory = "0.3"

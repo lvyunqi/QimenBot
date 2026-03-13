@@ -351,6 +351,13 @@ fn gen_module_hidden_impl(struct_name: &Ident, args: &ModuleArgs) -> proc_macro2
                 vec![#(#interceptor_exprs),*]
             }
         }
+
+        qimen_plugin_api::inventory::submit! {
+            qimen_plugin_api::ModuleEntry {
+                id: #mod_id,
+                factory: || Box::new(#struct_name) as Box<dyn qimen_plugin_api::Module>,
+            }
+        }
     }
 }
 

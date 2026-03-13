@@ -9,3 +9,5 @@ version.workspace = true
 qimen-error = { path = "../../crates/qimen-error" }
 qimen-official-host = { path = "../../crates/qimen-official-host" }
 tokio.workspace = true
+qimen-plugin-example = { path = "../../plugins/qimen-plugin-example" }
+qimen-plugin-douluo = { path = "../../plugins/qimen-plugin-douluo" }
