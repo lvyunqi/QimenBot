@@ -65,14 +65,20 @@ pub struct CooldownInterceptor {
     last_message: Mutex<HashMap<String, Instant>>,
 }
 
+impl Default for CooldownInterceptor {
+    fn default() -> Self {
+        Self {
+            last_message: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
 impl CooldownInterceptor {
     /// 冷却时间（秒）/ cooldown duration in seconds
     const COOLDOWN_SECS: u64 = 3;
 
     pub fn new() -> Self {
-        Self {
-            last_message: Mutex::new(HashMap::new()),
-        }
+        Self::default()
     }
 }
 
@@ -89,11 +95,11 @@ impl MessageEventInterceptor for CooldownInterceptor {
         let now = Instant::now();
         let mut map = self.last_message.lock().unwrap();
 
-        if let Some(last) = map.get(&sender) {
-            if now.duration_since(*last).as_secs() < Self::COOLDOWN_SECS {
-                tracing::debug!(sender = sender.as_str(), "cooldown active, blocking / 冷却中，拦截");
-                return false; // 拦截过于频繁的消息 / block too-frequent messages
-            }
+        if let Some(last) = map.get(&sender)
+            && now.duration_since(*last).as_secs() < Self::COOLDOWN_SECS
+        {
+            tracing::debug!(sender = sender.as_str(), "cooldown active, blocking / 冷却中，拦截");
+            return false; // 拦截过于频繁的消息 / block too-frequent messages
         }
 
         map.insert(sender, now);

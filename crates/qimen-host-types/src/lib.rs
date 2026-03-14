@@ -136,10 +136,10 @@ impl PluginState {
 
     pub fn save_to_path(&self, path: &str) -> Result<()> {
         let target = Path::new(path);
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = target.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
         }
 
         if target.exists() {

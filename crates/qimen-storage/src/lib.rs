@@ -94,10 +94,10 @@ impl PluginStorage {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    keys.push(stem.to_string());
-                }
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                keys.push(stem.to_string());
             }
         }
 

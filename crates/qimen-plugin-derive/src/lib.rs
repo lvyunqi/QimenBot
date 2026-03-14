@@ -665,7 +665,7 @@ fn commands_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     .filter(|arg| matches!(arg, syn::FnArg::Typed(_)))
                     .collect();
                 let extra_params = params.len();
-                let first_param_is_ctx = params.first().map_or(false, |arg| {
+                let first_param_is_ctx = params.first().is_some_and(|arg| {
                     let tokens = quote! { #arg }.to_string();
                     tokens.contains("PluginContext")
                 });

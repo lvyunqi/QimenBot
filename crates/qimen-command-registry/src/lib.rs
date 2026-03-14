@@ -131,12 +131,12 @@ impl CommandRegistry {
                 // (有空格的情况已被 split_whitespace 正确处理)
                 // Only count as prefix match if rest doesn't start with whitespace
                 // (whitespace cases are already handled by split_whitespace)
-                if !rest.starts_with(char::is_whitespace) {
-                    if let Some(entry) = positions.first().and_then(|idx| self.entries.get(*idx)) {
-                        let key_len = key.len();
-                        if best.as_ref().is_none_or(|(_, _, prev_len)| key_len > *prev_len) {
-                            best = Some((entry, rest, key_len));
-                        }
+                if !rest.starts_with(char::is_whitespace)
+                    && let Some(entry) = positions.first().and_then(|idx| self.entries.get(*idx))
+                {
+                    let key_len = key.len();
+                    if best.as_ref().is_none_or(|(_, _, prev_len)| key_len > *prev_len) {
+                        best = Some((entry, rest, key_len));
                     }
                 }
             }
@@ -187,19 +187,19 @@ impl CommandRegistry {
             .collect::<Vec<_>>();
 
         for key in &keys {
-            if let Some(indices) = self.index.get(key) {
-                if !indices.is_empty() {
-                    let existing_sources = indices
-                        .iter()
-                        .filter_map(|index| self.entries.get(*index))
-                        .map(|existing| existing.source_label.clone())
-                        .collect::<Vec<_>>();
-                    self.diagnostics.push(CommandRegistryDiagnostic {
-                        key: key.clone(),
-                        incoming_source: entry.source_label.clone(),
-                        existing_sources,
-                    });
-                }
+            if let Some(indices) = self.index.get(key)
+                && !indices.is_empty()
+            {
+                let existing_sources = indices
+                    .iter()
+                    .filter_map(|index| self.entries.get(*index))
+                    .map(|existing| existing.source_label.clone())
+                    .collect::<Vec<_>>();
+                self.diagnostics.push(CommandRegistryDiagnostic {
+                    key: key.clone(),
+                    incoming_source: entry.source_label.clone(),
+                    existing_sources,
+                });
             }
         }
 

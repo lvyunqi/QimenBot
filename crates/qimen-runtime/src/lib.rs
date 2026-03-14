@@ -188,10 +188,10 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
 
         match result {
             Ok(Ok((allow, sends))) => {
-                if !sends.is_empty() {
-                    if let Ok(mut pending) = self.pending_sends.lock() {
-                        pending.extend(sends);
-                    }
+                if !sends.is_empty()
+                    && let Ok(mut pending) = self.pending_sends.lock()
+                {
+                    pending.extend(sends);
                 }
                 allow
             }
@@ -224,10 +224,10 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
 
         match result {
             Ok(Ok(sends)) => {
-                if !sends.is_empty() {
-                    if let Ok(mut pending) = self.pending_sends.lock() {
-                        pending.extend(sends);
-                    }
+                if !sends.is_empty()
+                    && let Ok(mut pending) = self.pending_sends.lock()
+                {
+                    pending.extend(sends);
                 }
             }
             Ok(Err(e)) => {
@@ -721,10 +721,10 @@ impl Runtime {
                 Ok(SessionEnd::PluginReload { reply_action }) => {
                     tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
                     // Send the reload reply before rebuilding
-                    if let Some(action) = reply_action {
-                        if let Err(err) = self.execute_action(bot, &adapter, &client, action).await {
-                            tracing::warn!(bot_id = %bot.id, error = %err, "failed to send reload reply");
-                        }
+                    if let Some(action) = reply_action
+                        && let Err(err) = self.execute_action(bot, &adapter, &client, action).await
+                    {
+                        tracing::warn!(bot_id = %bot.id, error = %err, "failed to send reload reply");
                     }
                     // Rebuild dispatchers from updated host_plugin_report
                     system_dispatcher = self.build_system_dispatcher();
@@ -754,6 +754,7 @@ impl Runtime {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_onebot11_session(
         &self,
         bot: &BotRuntimeInfo,
@@ -782,7 +783,7 @@ impl Runtime {
                     match maybe_event {
                         Some(text) => {
                             let signal = self
-                                .handle_onebot11_payload(bot, adapter, system_dispatcher, command_dispatcher, &command_help_text, client, &text, limiter)
+                                .handle_onebot11_payload(bot, adapter, system_dispatcher, command_dispatcher, command_help_text, client, &text, limiter)
                                 .await?;
 
                             let next_deadline = match signal {
@@ -807,6 +808,8 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::await_holding_lock)]
     async fn handle_onebot11_payload(
         &self,
         bot: &BotRuntimeInfo,
@@ -833,15 +836,15 @@ impl Runtime {
             return Ok(match signal {
                 OneBotSystemDispatchSignal::Continue(route) => {
                     let report_guard = self.host_plugin_report.read().unwrap();
-                    if let Some(report) = report_guard.as_ref() {
-                        if let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload)? {
-                            drop(report_guard);
-                            if !sends.is_empty() {
-                                self.process_send_actions(bot, adapter, client, sends).await?;
-                            }
-                            self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
-                                .await?;
+                    if let Some(report) = report_guard.as_ref()
+                        && let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload)?
+                    {
+                        drop(report_guard);
+                        if !sends.is_empty() {
+                            self.process_send_actions(bot, adapter, client, sends).await?;
                         }
+                        self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
+                            .await?;
                     }
                     SessionSignal::EventHandled
                 }

@@ -28,10 +28,10 @@ impl MessageDedup {
         let now = Instant::now();
 
         // Check if already seen and not expired
-        if let Some(timestamp) = seen.get(message_id) {
-            if now.duration_since(*timestamp) < self.ttl {
-                return false;
-            }
+        if let Some(timestamp) = seen.get(message_id)
+            && now.duration_since(*timestamp) < self.ttl
+        {
+            return false;
         }
 
         // Evict expired entries if we've hit the cap
@@ -40,14 +40,13 @@ impl MessageDedup {
         }
 
         // If still at capacity after cleanup, remove the oldest entry
-        if seen.len() >= self.max_entries {
-            if let Some(oldest_key) = seen
+        if seen.len() >= self.max_entries
+            && let Some(oldest_key) = seen
                 .iter()
                 .min_by_key(|(_, ts)| *ts)
                 .map(|(k, _)| k.clone())
-            {
-                seen.remove(&oldest_key);
-            }
+        {
+            seen.remove(&oldest_key);
         }
 
         seen.insert(message_id.to_string(), now);

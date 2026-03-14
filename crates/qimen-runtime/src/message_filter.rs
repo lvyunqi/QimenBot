@@ -33,22 +33,22 @@ pub fn filter_matches(filter: &MessageFilter, event: &NormalizedEvent) -> MatchR
         }
     }
 
-    if let Some(prefix) = &filter.starts_with {
-        if !plain_text.starts_with(prefix.as_str()) {
-            return finalize(filter, false, captures);
-        }
+    if let Some(prefix) = &filter.starts_with
+        && !plain_text.starts_with(prefix.as_str())
+    {
+        return finalize(filter, false, captures);
     }
 
-    if let Some(suffix) = &filter.ends_with {
-        if !plain_text.ends_with(suffix.as_str()) {
-            return finalize(filter, false, captures);
-        }
+    if let Some(suffix) = &filter.ends_with
+        && !plain_text.ends_with(suffix.as_str())
+    {
+        return finalize(filter, false, captures);
     }
 
-    if let Some(substr) = &filter.contains {
-        if !plain_text.contains(substr.as_str()) {
-            return finalize(filter, false, captures);
-        }
+    if let Some(substr) = &filter.contains
+        && !plain_text.contains(substr.as_str())
+    {
+        return finalize(filter, false, captures);
     }
 
     if !filter.groups.is_empty() {

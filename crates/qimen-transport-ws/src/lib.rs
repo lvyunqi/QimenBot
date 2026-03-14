@@ -396,7 +396,7 @@ async fn handle_reverse_connection(
         .find_map(|line| {
             let lower = line.to_lowercase();
             if lower.starts_with("sec-websocket-key:") {
-                Some(line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string())
+                Some(line.split_once(':').map(|x| x.1).unwrap_or("").trim().to_string())
             } else {
                 None
             }
@@ -484,7 +484,7 @@ fn sha1_digest(data: &[u8]) -> [u8; 20] {
         }
 
         let (mut a, mut b, mut c, mut d, mut e) = (h0, h1, h2, h3, h4);
-        for i in 0..80 {
+        for (i, &wi) in w.iter().enumerate() {
             let (f, k) = match i {
                 0..=19 => ((b & c) | ((!b) & d), 0x5A827999_u32),
                 20..=39 => (b ^ c ^ d, 0x6ED9EBA1_u32),
@@ -496,7 +496,7 @@ fn sha1_digest(data: &[u8]) -> [u8; 20] {
                 .wrapping_add(f)
                 .wrapping_add(e)
                 .wrapping_add(k)
-                .wrapping_add(w[i]);
+                .wrapping_add(wi);
             e = d;
             d = c;
             c = b.rotate_left(30);

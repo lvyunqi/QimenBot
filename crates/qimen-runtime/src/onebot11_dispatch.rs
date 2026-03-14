@@ -329,14 +329,13 @@ impl OneBotSystemDispatcher {
                 _ => None,
             };
 
-            if let Some(route_name) = route_name {
-                if self
+            if let Some(route_name) = route_name
+                && self
                     .dynamic_notice_routes
                     .iter()
                     .any(|(_, registered, _)| registered == route_name)
-                {
-                    return Some(OneBotSystemDispatchSignal::Continue(route.clone().into()));
-                }
+            {
+                return Some(OneBotSystemDispatchSignal::Continue(route.clone().into()));
             }
         }
 
@@ -348,14 +347,13 @@ impl OneBotSystemDispatcher {
                 _ => None,
             };
 
-            if let Some(route_name) = route_name {
-                if self
+            if let Some(route_name) = route_name
+                && self
                     .dynamic_request_routes
                     .iter()
                     .any(|(_, registered, _)| registered == route_name)
-                {
-                    return Some(OneBotSystemDispatchSignal::Continue(route.clone().into()));
-                }
+            {
+                return Some(OneBotSystemDispatchSignal::Continue(route.clone().into()));
             }
         }
 
@@ -368,14 +366,13 @@ impl OneBotSystemDispatcher {
                 _ => None,
             };
 
-            if let Some(route_name) = route_name {
-                if self
+            if let Some(route_name) = route_name
+                && self
                     .dynamic_meta_routes
                     .iter()
                     .any(|(_, registered, _)| registered == route_name)
-                {
-                    return Some(OneBotSystemDispatchSignal::Continue(route.clone().into()));
-                }
+            {
+                return Some(OneBotSystemDispatchSignal::Continue(route.clone().into()));
             }
         }
 

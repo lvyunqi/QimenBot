@@ -58,6 +58,7 @@ impl DynamicPluginRuntime {
     /// Execute a command callback with v0.2 context.
     /// Returns `(response, send_actions)` — the response from the callback plus
     /// any outbound messages queued via `BotApi` / `SendBuilder`.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_command(
         &mut self,
         descriptor: &DynamicCommandDescriptor,
