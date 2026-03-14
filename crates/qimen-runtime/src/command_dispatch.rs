@@ -249,7 +249,26 @@ impl<'a> CommandDispatch<'a> {
             return Some(signal);
         }
 
-        if let Some(entry) = self.dispatcher.registry.match_command(&parsed.name) {
+        // 先精确匹配；若失败且命令名无空格分隔参数，尝试前缀匹配
+        // Exact match first; if it fails and the name has no space-separated args,
+        // try prefix matching (e.g. "开始穿越夜夜-男" → command="开始穿越", args=["夜夜-男"])
+        let (matched_entry, parsed) = if let Some(entry) = self.dispatcher.registry.match_command(&parsed.name) {
+            (Some(entry), parsed)
+        } else if let Some((entry, rest)) = self.dispatcher.registry.prefix_match_command(&parsed.name) {
+            let mut new_args = vec![rest.to_string()];
+            new_args.extend(parsed.args);
+            let new_parsed = ParsedCommandInput {
+                trigger: parsed.trigger,
+                name: entry.definition.name.to_string(),
+                args: new_args,
+                source_text: parsed.source_text,
+            };
+            (Some(entry), new_parsed)
+        } else {
+            (None, parsed)
+        };
+
+        if let Some(entry) = matched_entry {
             if !role_allowed(&entry.definition.required_role, self.is_admin, self.is_owner) {
                 return Some(CommandDispatchSignal::Reply(Message::text(
                     "permission denied for this command",
