@@ -400,6 +400,65 @@ impl Runtime {
     }
 
     pub async fn boot(&self) -> Result<()> {
+        // Call plugin init for all dynamic plugins
+        {
+            let report_guard = self.host_plugin_report.read().unwrap();
+            if let Some(report) = report_guard.as_ref() {
+                let mut drt = self.dynamic_runtime.lock().unwrap();
+                for entry in &report.dynamic_plugins {
+                    // Load plugin config from config/plugins/<plugin_id>.toml
+                    let config_path = format!("config/plugins/{}.toml", entry.plugin_id);
+                    let config_json = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
+                        // Parse TOML → serde_json::Value → JSON string
+                        match toml_str.parse::<toml::Value>() {
+                            Ok(toml_val) => {
+                                let json_val = toml_to_json(&toml_val);
+                                serde_json::to_string(&json_val).unwrap_or_default()
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    plugin = %entry.plugin_id,
+                                    path = %config_path,
+                                    error = %e,
+                                    "failed to parse plugin config TOML"
+                                );
+                                String::new()
+                            }
+                        }
+                    } else {
+                        String::new()
+                    };
+
+                    let plugin_dir = std::path::Path::new(&entry.path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+
+                    match drt.call_plugin_init(
+                        &entry.path,
+                        &entry.plugin_id,
+                        &config_json,
+                        &plugin_dir,
+                        ".",
+                    ) {
+                        Ok(()) => {
+                            tracing::info!(
+                                plugin = %entry.plugin_id,
+                                "dynamic plugin init succeeded"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                plugin = %entry.plugin_id,
+                                error = %e,
+                                "dynamic plugin init failed"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Spawn periodic dedup cleanup task
         {
             let dedup = Arc::clone(&self.dedup);
@@ -1870,4 +1929,26 @@ fn render_plugin_section(entries: &[&command_dispatch::PluginStatusEntry]) -> Ve
             )
         })
         .collect()
+}
+
+/// Convert a TOML value to a serde_json::Value.
+fn toml_to_json(val: &toml::Value) -> serde_json::Value {
+    match val {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::Value::Number((*i).into()),
+        toml::Value::Float(f) => {
+            serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        toml::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(toml_to_json).collect())
+        }
+        toml::Value::Table(tbl) => {
+            let map = tbl.iter().map(|(k, v)| (k.clone(), toml_to_json(v))).collect();
+            serde_json::Value::Object(map)
+        }
+    }
 }
