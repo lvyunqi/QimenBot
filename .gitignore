@@ -4,6 +4,13 @@
 *.log
 .env
 
+# 插件运行时文件（配置、二进制、数据库）
+config/plugins/*.toml
+plugins/bin/
+*.db
+*.db-shm
+*.db-wal
+
 # 本地参考项目
 参考项目/
 

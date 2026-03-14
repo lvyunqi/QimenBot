@@ -361,47 +361,47 @@ mod tests {
     #[test]
     fn prefix_match_chinese_command_without_space() {
         let mut registry = CommandRegistry::new();
-        registry.add_builtin(make_definition("开始穿越", &["开始转生"], "game"));
+        registry.add_builtin(make_definition("创建角色", &["新建角色"], "game"));
 
         // 精确匹配仍然有效
-        assert!(registry.match_command("开始穿越").is_some());
+        assert!(registry.match_command("创建角色").is_some());
 
-        // 无空格时前缀匹配: "开始穿越夜夜-男" → command="开始穿越", rest="夜夜-男"
-        let result = registry.prefix_match_command("开始穿越夜夜-男");
+        // 无空格时前缀匹配: "创建角色小明-男" → command="创建角色", rest="小明-男"
+        let result = registry.prefix_match_command("创建角色小明-男");
         assert!(result.is_some());
         let (entry, rest) = result.unwrap();
-        assert_eq!(entry.definition.name, "开始穿越");
-        assert_eq!(rest, "夜夜-男");
+        assert_eq!(entry.definition.name, "创建角色");
+        assert_eq!(rest, "小明-男");
 
         // 别名也能前缀匹配
-        let result = registry.prefix_match_command("开始转生夜夜-女");
+        let result = registry.prefix_match_command("新建角色小红-女");
         assert!(result.is_some());
         let (entry, rest) = result.unwrap();
-        assert_eq!(entry.definition.name, "开始穿越");
-        assert_eq!(rest, "夜夜-女");
+        assert_eq!(entry.definition.name, "创建角色");
+        assert_eq!(rest, "小红-女");
     }
 
     #[test]
     fn prefix_match_prefers_longest() {
         let mut registry = CommandRegistry::new();
-        registry.add_builtin(make_definition("开始", &[], "game"));
-        registry.add_builtin(make_definition("开始穿越", &[], "game"));
+        registry.add_builtin(make_definition("创建", &[], "game"));
+        registry.add_builtin(make_definition("创建角色", &[], "game"));
 
-        // 应匹配最长的 "开始穿越" 而非 "开始"
-        let result = registry.prefix_match_command("开始穿越夜夜-男");
+        // 应匹配最长的 "创建角色" 而非 "创建"
+        let result = registry.prefix_match_command("创建角色小明-男");
         assert!(result.is_some());
         let (entry, rest) = result.unwrap();
-        assert_eq!(entry.definition.name, "开始穿越");
-        assert_eq!(rest, "夜夜-男");
+        assert_eq!(entry.definition.name, "创建角色");
+        assert_eq!(rest, "小明-男");
     }
 
     #[test]
     fn prefix_match_returns_none_for_exact() {
         let mut registry = CommandRegistry::new();
-        registry.add_builtin(make_definition("开始穿越", &[], "game"));
+        registry.add_builtin(make_definition("创建角色", &[], "game"));
 
         // 完全匹配时不应触发前缀匹配（长度相等）
-        assert!(registry.prefix_match_command("开始穿越").is_none());
+        assert!(registry.prefix_match_command("创建角色").is_none());
     }
 
     #[test]

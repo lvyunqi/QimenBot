@@ -251,7 +251,7 @@ impl<'a> CommandDispatch<'a> {
 
         // 先精确匹配；若失败且命令名无空格分隔参数，尝试前缀匹配
         // Exact match first; if it fails and the name has no space-separated args,
-        // try prefix matching (e.g. "开始穿越夜夜-男" → command="开始穿越", args=["夜夜-男"])
+        // try prefix matching (e.g. "创建角色小明-男" → command="创建角色", args=["小明-男"])
         let (matched_entry, parsed) = if let Some(entry) = self.dispatcher.registry.match_command(&parsed.name) {
             (Some(entry), parsed)
         } else if let Some((entry, rest)) = self.dispatcher.registry.prefix_match_command(&parsed.name) {

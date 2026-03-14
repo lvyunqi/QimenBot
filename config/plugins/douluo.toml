@@ -1,5 +1,0 @@
-# 斗罗大陆插件配置 / Douluo Plugin Configuration
-# 此文件会在插件 init 时以 JSON 格式传入
-
-[database]
-path = "douluo.db"
