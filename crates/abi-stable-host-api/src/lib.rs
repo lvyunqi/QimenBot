@@ -152,6 +152,7 @@ impl CommandResponse {
 ///
 /// # Example
 /// ```
+/// use abi_stable_host_api::ReplyBuilder;
 /// let response = ReplyBuilder::new()
 ///     .text("Hello, ")
 ///     .at("12345")
