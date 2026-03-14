@@ -1,5 +1,7 @@
 [package]
 name = "abi-stable-host-api"
+description = "ABI-stable FFI types for QimenBot dynamic plugins"
+repository = "https://github.com/lvyunqi/QimenBot"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
