@@ -45,8 +45,8 @@ crate-type = ["cdylib"]  # 编译为动态库
 [workspace]  # 独立于主工作空间
 
 [dependencies]
-abi-stable-host-api = { path = "../../crates/abi-stable-host-api" }
-qimen-dynamic-plugin-derive = { path = "../../crates/qimen-dynamic-plugin-derive" }
+abi-stable-host-api = "0.1"
+qimen-dynamic-plugin-derive = "0.1"
 abi_stable = "0.11"
 serde_json = "1"  # 可选，用于解析事件 JSON
 ```

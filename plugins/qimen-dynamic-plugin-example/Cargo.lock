@@ -4,7 +4,9 @@ version = 4
 
 [[package]]
 name = "abi-stable-host-api"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e64ffbe2176b7623247695b9a32cc0bc47178068ca5cc78ff8a132edd93b6c43"
 dependencies = [
  "abi_stable",
 ]
@@ -206,7 +208,9 @@ dependencies = [
 
 [[package]]
 name = "qimen-dynamic-plugin-derive"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51195069a2c0cd3abf58ebd424520c986d0e3f9ff28d0b416b9d121a83a8bba5"
 dependencies = [
  "proc-macro2",
  "quote",

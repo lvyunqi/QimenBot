@@ -149,10 +149,10 @@ rust-version = "1.89"
 crate-type = ["cdylib"]         # 编译为动态库
 
 [dependencies]
-abi-stable-host-api = { path = "../../crates/abi-stable-host-api" }
+abi-stable-host-api = "0.1"
 abi_stable = "0.11"
 serde_json = "1"
-qimen-dynamic-plugin-derive = { path = "../../crates/qimen-dynamic-plugin-derive" }
+qimen-dynamic-plugin-derive = "0.1"
 ```
 
 ## 手动 FFI 写法

@@ -29,7 +29,13 @@
 
 ## 使用过程宏简化开发
 
-在 `Cargo.toml` 中取消注释 `qimen-dynamic-plugin-derive` 依赖，然后：
+在 `Cargo.toml` 中取消注释 `qimen-dynamic-plugin-derive` 依赖：
+
+```toml
+qimen-dynamic-plugin-derive = "0.1"
+```
+
+然后：
 
 ```rust
 use qimen_dynamic_plugin_derive::dynamic_plugin;
