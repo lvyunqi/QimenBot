@@ -29,6 +29,7 @@ main()
     → 注册内置模块 (command, admin, scheduler, bridge)
     → 注册插件模块 (plugin_modules)
     → 扫描动态插件 (plugin_bin_dir)
+    → 调用动态插件 #[init] 钩子（TOML→JSON 配置传入）
     → 对每个 [[bots]] 配置:
         → 创建 Runtime 实例
         → 建立传输连接 (WebSocket / HTTP)
@@ -191,6 +192,28 @@ notice_type + sub_type → SystemNoticeRoute
 2. **符号查找** — 查找回调函数符号
 3. **安全调用** — 通过 `catch_unwind` 捕获 panic
 4. **熔断保护** — 失败计数和自动隔离
+
+### 生命周期钩子
+
+动态插件支持 `#[init]` 和 `#[shutdown]` 两个生命周期钩子：
+
+- **init** — `boot()` 时框架自动调用 `call_plugin_init()`，读取 `config/plugins/<plugin_id>.toml` 并将 TOML 转换为 JSON 后传入插件的 `#[init]` 函数。插件可在此阶段完成数据库连接、配置加载等初始化工作。
+- **shutdown** — 框架关闭时通过 `call_plugin_shutdown()` 通知插件清理资源（如关闭数据库连接、刷写缓存等）。
+
+```
+boot()
+  → 扫描 plugin_bin_dir, dlopen 所有 .so/.dll/.dylib
+  → 对每个插件:
+      → 读取 config/plugins/<plugin_id>.toml
+      → TOML → JSON 转换
+      → 调用 plugin_init(json_config)
+  → 继续启动 Bot 实例...
+
+shutdown()
+  → 对每个插件:
+      → 调用 plugin_shutdown()
+  → dlclose 卸载动态库
+```
 
 ### 热重载流程
 

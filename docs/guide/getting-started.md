@@ -28,6 +28,18 @@ QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与
 简单来说，OneBot 是一个**标准协议**。不同的 OneBot 实现（Lagrange、NapCat 等）负责登录 QQ、收发消息，然后按统一格式把消息转发给你的 Bot 程序。这样你只需要关心业务逻辑，不需要操心底层通信。
 :::
 
+## 获取 QimenBot
+
+### 方式一：下载预编译版本（推荐新手）
+
+前往 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载对应平台的压缩包，解压即可运行。
+
+支持平台：Linux x86_64、macOS x86_64/ARM64、Windows x86_64。
+
+下载后跳到 [第 3 步：修改配置](#第-3-步-修改配置) 继续。
+
+### 方式二：从源码编译
+
 ## 第 1 步：安装 Rust
 
 如果你还没有安装 Rust：
