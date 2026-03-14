@@ -17,7 +17,7 @@ use std::fs;
 use std::path::Path;
 
 const HOST_PLUGIN_API_VERSION: &str = "0.1";
-const HOST_FRAMEWORK_VERSION: &str = "0.1.0";
+const HOST_FRAMEWORK_VERSION: &str = "0.1.1";
 
 pub async fn run_official_host(config_path: &str) -> Result<()> {
     // First-start: auto-copy config template if config file is missing
