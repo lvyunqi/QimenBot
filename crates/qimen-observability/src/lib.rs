@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use qimen_error::{QimenError, Result};
 use tracing_subscriber::EnvFilter;
 
@@ -11,8 +13,10 @@ pub fn init(level: &str, json_logs: bool) -> Result<()> {
             .try_init()
             .map_err(|err| QimenError::Observability(err.to_string()))?;
     } else {
+        let use_ansi = std::io::stderr().is_terminal();
         tracing_subscriber::fmt()
             .with_env_filter(filter)
+            .with_ansi(use_ansi)
             .try_init()
             .map_err(|err| QimenError::Observability(err.to_string()))?;
     }

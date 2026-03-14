@@ -20,6 +20,33 @@ const HOST_PLUGIN_API_VERSION: &str = "0.1";
 const HOST_FRAMEWORK_VERSION: &str = "0.1.0";
 
 pub async fn run_official_host(config_path: &str) -> Result<()> {
+    // First-start: auto-copy config template if config file is missing
+    if !Path::new(config_path).exists() {
+        let example_path = format!("{}.example", config_path);
+        if Path::new(&example_path).exists() {
+            fs::copy(&example_path, config_path).map_err(|e| {
+                QimenError::Config(format!(
+                    "failed to copy '{}' to '{}': {}",
+                    example_path, config_path, e
+                ))
+            })?;
+            eprintln!(
+                "[QimenBot] Configuration file not found. \
+                 Copied '{}' -> '{}'.\n\
+                 Please edit '{}' with your settings and restart.",
+                example_path, config_path, config_path
+            );
+            std::process::exit(0);
+        } else {
+            eprintln!(
+                "[QimenBot] Configuration file '{}' not found.\n\
+                 Please create it (you can copy from '{}.example' if available) and restart.",
+                config_path, config_path
+            );
+            std::process::exit(1);
+        }
+    }
+
     let config = AppConfig::load_from_path(config_path)?;
     init(&config.observability.level, config.observability.json_logs)?;
 
