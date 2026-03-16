@@ -462,8 +462,11 @@ impl Runtime {
     pub async fn boot(&self) -> Result<()> {
         // Call plugin init for all dynamic plugins
         {
-            let report_guard = self.host_plugin_report.read().unwrap();
-            if let Some(report) = report_guard.as_ref() {
+            let report_clone = {
+                let report_guard = self.host_plugin_report.read().unwrap();
+                report_guard.clone()
+            };
+            if let Some(report) = report_clone.as_ref() {
                 // Use 2x timeout for init since initialization is typically slower
                 let init_timeout = self.dynamic_plugin_timeout * 2;
 
@@ -936,14 +939,14 @@ impl Runtime {
                         let report_guard = self.host_plugin_report.read().unwrap();
                         report_guard.clone()
                     };
-                    if let Some(report) = report_clone.as_ref() {
-                        if let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload).await? {
-                            if !sends.is_empty() {
-                                self.process_send_actions(bot, adapter, client, sends).await?;
-                            }
-                            self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
-                                .await?;
+                    if let Some(report) = report_clone.as_ref()
+                        && let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload).await?
+                    {
+                        if !sends.is_empty() {
+                            self.process_send_actions(bot, adapter, client, sends).await?;
                         }
+                        self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
+                            .await?;
                     }
                     SessionSignal::EventHandled
                 }

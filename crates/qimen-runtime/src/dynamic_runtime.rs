@@ -408,19 +408,19 @@ impl DynamicPluginRuntime {
     /// after `tokio::time::timeout` fires. Increments failures and may trip
     /// the circuit breaker.
     pub fn record_timeout(&mut self, path: &str) {
-        if let Some(handle) = self.libraries.get(path) {
-            if let Ok(mut entry) = handle.lock() {
-                entry.failures += 1;
-                let error_text = format!("FFI call timed out for '{}'", path);
-                entry.last_error = Some(error_text.clone());
-                entry.recent_errors.push_back(error_text);
-                while entry.recent_errors.len() > MAX_ERROR_HISTORY {
-                    entry.recent_errors.pop_front();
-                }
-                if entry.failures >= 3 {
-                    entry.tripped_until = Some(Instant::now() + Duration::from_secs(60));
-                    tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
-                }
+        if let Some(handle) = self.libraries.get(path)
+            && let Ok(mut entry) = handle.lock()
+        {
+            entry.failures += 1;
+            let error_text = format!("FFI call timed out for '{}'", path);
+            entry.last_error = Some(error_text.clone());
+            entry.recent_errors.push_back(error_text);
+            while entry.recent_errors.len() > MAX_ERROR_HISTORY {
+                entry.recent_errors.pop_front();
+            }
+            if entry.failures >= 3 {
+                entry.tripped_until = Some(Instant::now() + Duration::from_secs(60));
+                tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
             }
         }
     }
@@ -567,14 +567,14 @@ impl DynamicPluginRuntime {
 
     /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
     pub fn call_plugin_shutdown(&mut self, library_path: &str) {
-        if let Some(handle) = self.libraries.get(library_path) {
-            if let Ok(entry) = handle.lock() {
-                unsafe {
-                    if let Ok(symbol) = entry.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            symbol();
-                        }));
-                    }
+        if let Some(handle) = self.libraries.get(library_path)
+            && let Ok(entry) = handle.lock()
+        {
+            unsafe {
+                if let Ok(symbol) = entry.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        symbol();
+                    }));
                 }
             }
         }
