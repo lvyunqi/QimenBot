@@ -16,11 +16,12 @@ use qimen_host_types::{
 use qimen_message::Message;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_ERROR_HISTORY: usize = 10;
 
-struct LoadedLibrary {
+pub(crate) struct LoadedLibrary {
     library: libloading::Library,
     last_used: Instant,
     failures: u32,
@@ -29,9 +30,12 @@ struct LoadedLibrary {
     recent_errors: VecDeque<String>,
 }
 
+/// Handle to a per-library lock. Obtained from `DynamicPluginRuntime::get_library()`.
+pub(crate) type LibraryHandle = Arc<Mutex<LoadedLibrary>>;
+
 #[derive(Default)]
 pub struct DynamicPluginRuntime {
-    libraries: HashMap<String, LoadedLibrary>,
+    libraries: HashMap<String, LibraryHandle>,
 }
 
 /// Response from a dynamic plugin callback.
@@ -55,12 +59,24 @@ impl DynamicPluginRuntime {
         }
     }
 
-    /// Execute a command callback with v0.2 context.
-    /// Returns `(response, send_actions)` — the response from the callback plus
-    /// any outbound messages queued via `BotApi` / `SendBuilder`.
+    /// Obtain a per-library handle. Briefly borrows `&mut self` to ensure the
+    /// library is loaded and to run idle eviction, then returns an `Arc` clone.
+    /// The caller should drop the outer lock immediately after calling this.
+    pub(crate) fn get_library(&mut self, path: &str) -> Result<LibraryHandle> {
+        self.evict_idle_libraries(Duration::from_secs(300));
+        self.ensure_library(path)?;
+        self.libraries
+            .get(path)
+            .cloned()
+            .ok_or_else(|| QimenError::Runtime(format!("library '{}' missing after load", path)))
+    }
+
+    // ─── Static "on handle" methods ─────────────────────────────────────
+
+    /// Execute a command callback using a per-library handle (no `&mut self` needed).
     #[allow(clippy::too_many_arguments)]
-    pub fn execute_command(
-        &mut self,
+    pub(crate) fn execute_command_on_handle(
+        handle: &LibraryHandle,
         descriptor: &DynamicCommandDescriptor,
         args: &[String],
         sender_id: &str,
@@ -70,10 +86,8 @@ impl DynamicPluginRuntime {
         message_id: &str,
         timestamp: i64,
     ) -> Result<(DynamicResponse, Vec<SendAction>)> {
-        self.evict_idle_libraries(Duration::from_secs(300));
-        let path = descriptor.library_path.clone();
         let callback = descriptor.callback_symbol.clone();
-        let path_for_error = path.clone();
+        let path_for_error = descriptor.library_path.clone();
         let args_str = args.join(" ");
         let command_name = descriptor.command_name.clone();
         let sender = sender_id.to_string();
@@ -82,7 +96,7 @@ impl DynamicPluginRuntime {
         let nickname = sender_nickname.to_string();
         let msg_id = message_id.to_string();
 
-        self.with_library(&path, move |library| unsafe {
+        Self::with_handle(handle, &descriptor.library_path, move |library| unsafe {
             let symbol: libloading::Symbol<
                 unsafe extern "C" fn(CommandRequest) -> CommandResponse,
             > = library.get(callback.as_bytes()).map_err(|err| {
@@ -112,11 +126,7 @@ impl DynamicPluginRuntime {
             match result {
                 Ok(response) => Ok((map_action_response(response.action), sends)),
                 Err(panic_info) => {
-                    let panic_msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("unknown panic");
+                    let panic_msg = extract_panic_message(&panic_info);
                     tracing::error!(
                         callback = %callback,
                         path = %path_for_error,
@@ -132,83 +142,161 @@ impl DynamicPluginRuntime {
         })
     }
 
-    /// Legacy execute_command for backward compatibility (no context).
-    pub fn execute_command_legacy(
-        &mut self,
-        descriptor: &DynamicCommandDescriptor,
-        args: &[String],
-    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
-        self.execute_command(descriptor, args, "", "", "{}", "", "", 0)
-    }
-
-    pub fn execute_notice(
-        &mut self,
-        descriptor: &DynamicNoticeDescriptor,
+    /// Execute a route (notice/request/meta) callback using a per-library handle.
+    pub(crate) fn execute_route_on_handle(
+        handle: &LibraryHandle,
+        library_path: &str,
+        callback: &str,
+        route: String,
+        kind: &str,
         raw_event_json: &str,
     ) -> Result<(DynamicResponse, Vec<SendAction>)> {
-        self.execute_route_callback(
-            &descriptor.library_path,
-            &descriptor.callback_symbol,
-            descriptor.notice_route.clone(),
-            "notice",
-            raw_event_json,
-        )
+        let callback_owned = callback.to_string();
+        let path_for_error = library_path.to_string();
+        let raw_json = raw_event_json.to_string();
+        let kind_owned = kind.to_string();
+
+        Self::with_handle(handle, library_path, move |library| unsafe {
+            let symbol: libloading::Symbol<unsafe extern "C" fn(NoticeRequest) -> NoticeResponse> =
+                library.get(callback_owned.as_bytes()).map_err(|err| {
+                    QimenError::Runtime(format!(
+                        "failed to load dynamic {} callback '{}' from '{}': {err}",
+                        kind_owned, callback_owned, path_for_error
+                    ))
+                })?;
+
+            let request = NoticeRequest {
+                route: RString::from(route),
+                raw_event_json: RString::from(raw_json),
+            };
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(request)
+            }));
+
+            let sends = flush_sends_from_library(library);
+
+            match result {
+                Ok(response) => Ok((map_action_response(response.action), sends)),
+                Err(panic_info) => {
+                    let panic_msg = extract_panic_message(&panic_info);
+                    tracing::error!(
+                        callback = %callback_owned,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic plugin {} callback panicked",
+                        kind_owned
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic plugin {} callback '{}' panicked: {}",
+                        kind_owned, callback_owned, panic_msg
+                    )))
+                }
+            }
+        })
     }
 
-    pub fn execute_request(
-        &mut self,
-        descriptor: &DynamicRequestDescriptor,
-        raw_event_json: &str,
-    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
-        self.execute_route_callback(
-            &descriptor.library_path,
-            &descriptor.callback_symbol,
-            descriptor.request_route.clone(),
-            "request",
-            raw_event_json,
-        )
-    }
+    /// Execute a dynamic interceptor's pre_handle callback on a handle.
+    pub(crate) fn execute_pre_handle_on_handle(
+        handle: &LibraryHandle,
+        descriptor: &DynamicInterceptorDescriptor,
+        request: InterceptorRequest,
+    ) -> Result<(bool, Vec<SendAction>)> {
+        let symbol_name = descriptor.pre_handle_symbol.clone();
 
-    pub fn execute_meta(
-        &mut self,
-        descriptor: &DynamicMetaDescriptor,
-        raw_event_json: &str,
-    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
-        self.execute_route_callback(
-            &descriptor.library_path,
-            &descriptor.callback_symbol,
-            descriptor.meta_route.clone(),
-            "meta",
-            raw_event_json,
-        )
-    }
-
-    pub fn health_entries(&self) -> Vec<DynamicRuntimeHealthEntry> {
-        self.libraries
-            .iter()
-            .map(|(path, entry)| DynamicRuntimeHealthEntry {
-                path: path.clone(),
-                failures: entry.failures,
-                isolated_until_epoch_ms: entry.tripped_until.map(instant_to_epoch_ms),
-                last_error: entry.last_error.clone(),
-                recent_errors: entry.recent_errors.iter().cloned().collect(),
-            })
-            .collect()
-    }
-
-    pub fn clear_errors(&mut self) {
-        for entry in self.libraries.values_mut() {
-            entry.failures = 0;
-            entry.tripped_until = None;
-            entry.last_error = None;
-            entry.recent_errors.clear();
+        if symbol_name.is_empty() {
+            return Ok((true, Vec::new()));
         }
+
+        let path_for_error = descriptor.library_path.clone();
+
+        Self::with_handle(handle, &descriptor.library_path, move |library| unsafe {
+            let symbol: libloading::Symbol<
+                unsafe extern "C" fn(&InterceptorRequest) -> InterceptorResponse,
+            > = library.get(symbol_name.as_bytes()).map_err(|err| {
+                QimenError::Runtime(format!(
+                    "failed to load interceptor pre_handle '{}' from '{}': {err}",
+                    symbol_name, path_for_error
+                ))
+            })?;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(&request)
+            }));
+
+            let sends = flush_sends_from_library(library);
+
+            match result {
+                Ok(response) => Ok((response.allow != 0, sends)),
+                Err(panic_info) => {
+                    let panic_msg = extract_panic_message(&panic_info);
+                    tracing::error!(
+                        symbol = %symbol_name,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic interceptor pre_handle panicked"
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic interceptor pre_handle '{}' panicked: {}",
+                        symbol_name, panic_msg
+                    )))
+                }
+            }
+        })
     }
 
-    /// Call the optional `qimen_plugin_init` lifecycle hook for a loaded plugin.
-    /// Returns Ok(()) if the symbol doesn't exist (it's optional) or if init succeeds.
-    pub fn call_plugin_init(
-        &mut self,
+    /// Execute a dynamic interceptor's after_completion callback on a handle.
+    pub(crate) fn execute_after_completion_on_handle(
+        handle: &LibraryHandle,
+        descriptor: &DynamicInterceptorDescriptor,
+        request: InterceptorRequest,
+    ) -> Result<Vec<SendAction>> {
+        let symbol_name = descriptor.after_completion_symbol.clone();
+
+        if symbol_name.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let path_for_error = descriptor.library_path.clone();
+
+        Self::with_handle(handle, &descriptor.library_path, move |library| unsafe {
+            let symbol: libloading::Symbol<
+                unsafe extern "C" fn(&InterceptorRequest),
+            > = library.get(symbol_name.as_bytes()).map_err(|err| {
+                QimenError::Runtime(format!(
+                    "failed to load interceptor after_completion '{}' from '{}': {err}",
+                    symbol_name, path_for_error
+                ))
+            })?;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(&request)
+            }));
+
+            let sends = flush_sends_from_library(library);
+
+            match result {
+                Ok(()) => Ok(sends),
+                Err(panic_info) => {
+                    let panic_msg = extract_panic_message(&panic_info);
+                    tracing::error!(
+                        symbol = %symbol_name,
+                        path = %path_for_error,
+                        panic = %panic_msg,
+                        "dynamic interceptor after_completion panicked"
+                    );
+                    Err(QimenError::Runtime(format!(
+                        "dynamic interceptor after_completion '{}' panicked: {}",
+                        symbol_name, panic_msg
+                    )))
+                }
+            }
+        })
+    }
+
+    /// Execute plugin init on a handle (for boot-time init).
+    pub(crate) fn execute_init_on_handle(
+        handle: &LibraryHandle,
         library_path: &str,
         plugin_id: &str,
         config_json: &str,
@@ -221,8 +309,7 @@ impl DynamicPluginRuntime {
         let data_dir_owned = data_dir.to_string();
         let path_for_error = library_path.to_string();
 
-        self.with_library(library_path, move |library| unsafe {
-            // Try to load the optional init symbol
+        Self::with_handle(handle, library_path, move |library| unsafe {
             let symbol: std::result::Result<
                 libloading::Symbol<unsafe extern "C" fn(PluginInitConfig) -> PluginInitResult>,
                 _,
@@ -266,207 +353,21 @@ impl DynamicPluginRuntime {
         })
     }
 
-    /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
-    pub fn call_plugin_shutdown(&mut self, library_path: &str) {
-        if let Some(entry) = self.libraries.get(library_path) {
-            unsafe {
-                if let Ok(symbol) = entry.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        symbol();
-                    }));
-                }
-            }
-        }
-    }
+    // ─── Handle-based helper ────────────────────────────────────────────
 
-    /// Execute a dynamic interceptor's pre_handle callback.
-    /// Returns `(allow, send_actions)` — `true` to allow, `false` to block.
-    pub fn execute_pre_handle(
-        &mut self,
-        descriptor: &DynamicInterceptorDescriptor,
-        request: InterceptorRequest,
-    ) -> Result<(bool, Vec<SendAction>)> {
-        let path = descriptor.library_path.clone();
-        let symbol_name = descriptor.pre_handle_symbol.clone();
-
-        if symbol_name.is_empty() {
-            return Ok((true, Vec::new()));
-        }
-
-        let path_for_error = path.clone();
-
-        self.with_library(&path, move |library| unsafe {
-            let symbol: libloading::Symbol<
-                unsafe extern "C" fn(&InterceptorRequest) -> InterceptorResponse,
-            > = library.get(symbol_name.as_bytes()).map_err(|err| {
-                QimenError::Runtime(format!(
-                    "failed to load interceptor pre_handle '{}' from '{}': {err}",
-                    symbol_name, path_for_error
-                ))
-            })?;
-
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(&request)
-            }));
-
-            let sends = flush_sends_from_library(library);
-
-            match result {
-                Ok(response) => Ok((response.allow != 0, sends)),
-                Err(panic_info) => {
-                    let panic_msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("unknown panic");
-                    tracing::error!(
-                        symbol = %symbol_name,
-                        path = %path_for_error,
-                        panic = %panic_msg,
-                        "dynamic interceptor pre_handle panicked"
-                    );
-                    Err(QimenError::Runtime(format!(
-                        "dynamic interceptor pre_handle '{}' panicked: {}",
-                        symbol_name, panic_msg
-                    )))
-                }
-            }
-        })
-    }
-
-    /// Execute a dynamic interceptor's after_completion callback.
-    pub fn execute_after_completion(
-        &mut self,
-        descriptor: &DynamicInterceptorDescriptor,
-        request: InterceptorRequest,
-    ) -> Result<Vec<SendAction>> {
-        let path = descriptor.library_path.clone();
-        let symbol_name = descriptor.after_completion_symbol.clone();
-
-        if symbol_name.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let path_for_error = path.clone();
-
-        self.with_library(&path, move |library| unsafe {
-            let symbol: libloading::Symbol<
-                unsafe extern "C" fn(&InterceptorRequest),
-            > = library.get(symbol_name.as_bytes()).map_err(|err| {
-                QimenError::Runtime(format!(
-                    "failed to load interceptor after_completion '{}' from '{}': {err}",
-                    symbol_name, path_for_error
-                ))
-            })?;
-
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(&request)
-            }));
-
-            let sends = flush_sends_from_library(library);
-
-            match result {
-                Ok(()) => Ok(sends),
-                Err(panic_info) => {
-                    let panic_msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("unknown panic");
-                    tracing::error!(
-                        symbol = %symbol_name,
-                        path = %path_for_error,
-                        panic = %panic_msg,
-                        "dynamic interceptor after_completion panicked"
-                    );
-                    Err(QimenError::Runtime(format!(
-                        "dynamic interceptor after_completion '{}' panicked: {}",
-                        symbol_name, panic_msg
-                    )))
-                }
-            }
-        })
-    }
-
-    /// Unload a specific library by path (for hot reload).
-    pub fn unload_library(&mut self, path: &str) {
-        self.call_plugin_shutdown(path);
-        self.libraries.remove(path);
-    }
-
-    /// Unload all libraries (for reload).
-    pub fn unload_all(&mut self) {
-        let paths: Vec<String> = self.libraries.keys().cloned().collect();
-        for path in &paths {
-            self.call_plugin_shutdown(path);
-        }
-        self.libraries.clear();
-    }
-
-    fn execute_route_callback(
-        &mut self,
-        path: &str,
-        callback: &str,
-        route: String,
-        kind: &str,
-        raw_event_json: &str,
-    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
-        self.evict_idle_libraries(Duration::from_secs(300));
-        let path_owned = path.to_string();
-        let callback_owned = callback.to_string();
-        let path_for_error = path_owned.clone();
-        let raw_json = raw_event_json.to_string();
-
-        self.with_library(&path_owned, move |library| unsafe {
-            let symbol: libloading::Symbol<unsafe extern "C" fn(NoticeRequest) -> NoticeResponse> =
-                library.get(callback_owned.as_bytes()).map_err(|err| {
-                    QimenError::Runtime(format!(
-                        "failed to load dynamic {} callback '{}' from '{}': {err}",
-                        kind, callback_owned, path_for_error
-                    ))
-                })?;
-
-            let request = NoticeRequest {
-                route: RString::from(route),
-                raw_event_json: RString::from(raw_json),
-            };
-
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(request)
-            }));
-
-            let sends = flush_sends_from_library(library);
-
-            match result {
-                Ok(response) => Ok((map_action_response(response.action), sends)),
-                Err(panic_info) => {
-                    let panic_msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("unknown panic");
-                    tracing::error!(
-                        callback = %callback_owned,
-                        path = %path_for_error,
-                        panic = %panic_msg,
-                        "dynamic plugin {} callback panicked",
-                        kind
-                    );
-                    Err(QimenError::Runtime(format!(
-                        "dynamic plugin {} callback '{}' panicked: {}",
-                        kind, callback_owned, panic_msg
-                    )))
-                }
-            }
-        })
-    }
-
-    fn with_library<T, F>(&mut self, path: &str, operation: F) -> Result<T>
+    /// Lock a per-library handle, check circuit breaker, execute an operation,
+    /// and update failure/success counters.
+    fn with_handle<T, F>(handle: &LibraryHandle, path: &str, operation: F) -> Result<T>
     where
         F: FnOnce(&libloading::Library) -> Result<T>,
     {
-        let entry = self.ensure_library(path)?;
+        let mut entry = handle.lock().map_err(|_| {
+            QimenError::Runtime(format!(
+                "per-library lock poisoned for '{}'", path
+            ))
+        })?;
 
+        // Circuit breaker check
         if let Some(until) = entry.tripped_until {
             if Instant::now() < until {
                 return Err(QimenError::Runtime(format!(
@@ -501,7 +402,200 @@ impl DynamicPluginRuntime {
         }
     }
 
-    fn ensure_library(&mut self, path: &str) -> Result<&mut LoadedLibrary> {
+    // ─── Timeout recording ──────────────────────────────────────────────
+
+    /// Record a timeout for a specific plugin library. Called by the caller
+    /// after `tokio::time::timeout` fires. Increments failures and may trip
+    /// the circuit breaker.
+    pub fn record_timeout(&mut self, path: &str) {
+        if let Some(handle) = self.libraries.get(path) {
+            if let Ok(mut entry) = handle.lock() {
+                entry.failures += 1;
+                let error_text = format!("FFI call timed out for '{}'", path);
+                entry.last_error = Some(error_text.clone());
+                entry.recent_errors.push_back(error_text);
+                while entry.recent_errors.len() > MAX_ERROR_HISTORY {
+                    entry.recent_errors.pop_front();
+                }
+                if entry.failures >= 3 {
+                    entry.tripped_until = Some(Instant::now() + Duration::from_secs(60));
+                    tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
+                }
+            }
+        }
+    }
+
+    // ─── Legacy methods (still used internally) ─────────────────────────
+
+    /// Execute a command callback with v0.2 context.
+    /// Returns `(response, send_actions)` — the response from the callback plus
+    /// any outbound messages queued via `BotApi` / `SendBuilder`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_command(
+        &mut self,
+        descriptor: &DynamicCommandDescriptor,
+        args: &[String],
+        sender_id: &str,
+        group_id: &str,
+        raw_event_json: &str,
+        sender_nickname: &str,
+        message_id: &str,
+        timestamp: i64,
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
+        let handle = self.get_library(&descriptor.library_path)?;
+        Self::execute_command_on_handle(
+            &handle, descriptor, args, sender_id, group_id,
+            raw_event_json, sender_nickname, message_id, timestamp,
+        )
+    }
+
+    /// Legacy execute_command for backward compatibility (no context).
+    pub fn execute_command_legacy(
+        &mut self,
+        descriptor: &DynamicCommandDescriptor,
+        args: &[String],
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
+        self.execute_command(descriptor, args, "", "", "{}", "", "", 0)
+    }
+
+    pub fn execute_notice(
+        &mut self,
+        descriptor: &DynamicNoticeDescriptor,
+        raw_event_json: &str,
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
+        let handle = self.get_library(&descriptor.library_path)?;
+        Self::execute_route_on_handle(
+            &handle,
+            &descriptor.library_path,
+            &descriptor.callback_symbol,
+            descriptor.notice_route.clone(),
+            "notice",
+            raw_event_json,
+        )
+    }
+
+    pub fn execute_request(
+        &mut self,
+        descriptor: &DynamicRequestDescriptor,
+        raw_event_json: &str,
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
+        let handle = self.get_library(&descriptor.library_path)?;
+        Self::execute_route_on_handle(
+            &handle,
+            &descriptor.library_path,
+            &descriptor.callback_symbol,
+            descriptor.request_route.clone(),
+            "request",
+            raw_event_json,
+        )
+    }
+
+    pub fn execute_meta(
+        &mut self,
+        descriptor: &DynamicMetaDescriptor,
+        raw_event_json: &str,
+    ) -> Result<(DynamicResponse, Vec<SendAction>)> {
+        let handle = self.get_library(&descriptor.library_path)?;
+        Self::execute_route_on_handle(
+            &handle,
+            &descriptor.library_path,
+            &descriptor.callback_symbol,
+            descriptor.meta_route.clone(),
+            "meta",
+            raw_event_json,
+        )
+    }
+
+    pub fn execute_pre_handle(
+        &mut self,
+        descriptor: &DynamicInterceptorDescriptor,
+        request: InterceptorRequest,
+    ) -> Result<(bool, Vec<SendAction>)> {
+        let handle = self.get_library(&descriptor.library_path)?;
+        Self::execute_pre_handle_on_handle(&handle, descriptor, request)
+    }
+
+    pub fn execute_after_completion(
+        &mut self,
+        descriptor: &DynamicInterceptorDescriptor,
+        request: InterceptorRequest,
+    ) -> Result<Vec<SendAction>> {
+        let handle = self.get_library(&descriptor.library_path)?;
+        Self::execute_after_completion_on_handle(&handle, descriptor, request)
+    }
+
+    pub fn health_entries(&self) -> Vec<DynamicRuntimeHealthEntry> {
+        self.libraries
+            .iter()
+            .filter_map(|(path, handle)| {
+                let entry = handle.lock().ok()?;
+                Some(DynamicRuntimeHealthEntry {
+                    path: path.clone(),
+                    failures: entry.failures,
+                    isolated_until_epoch_ms: entry.tripped_until.map(instant_to_epoch_ms),
+                    last_error: entry.last_error.clone(),
+                    recent_errors: entry.recent_errors.iter().cloned().collect(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn clear_errors(&mut self) {
+        for handle in self.libraries.values() {
+            if let Ok(mut entry) = handle.lock() {
+                entry.failures = 0;
+                entry.tripped_until = None;
+                entry.last_error = None;
+                entry.recent_errors.clear();
+            }
+        }
+    }
+
+    /// Call the optional `qimen_plugin_init` lifecycle hook for a loaded plugin.
+    /// Returns Ok(()) if the symbol doesn't exist (it's optional) or if init succeeds.
+    pub fn call_plugin_init(
+        &mut self,
+        library_path: &str,
+        plugin_id: &str,
+        config_json: &str,
+        plugin_dir: &str,
+        data_dir: &str,
+    ) -> Result<()> {
+        let handle = self.get_library(library_path)?;
+        Self::execute_init_on_handle(&handle, library_path, plugin_id, config_json, plugin_dir, data_dir)
+    }
+
+    /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
+    pub fn call_plugin_shutdown(&mut self, library_path: &str) {
+        if let Some(handle) = self.libraries.get(library_path) {
+            if let Ok(entry) = handle.lock() {
+                unsafe {
+                    if let Ok(symbol) = entry.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            symbol();
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Unload a specific library by path (for hot reload).
+    pub fn unload_library(&mut self, path: &str) {
+        self.call_plugin_shutdown(path);
+        self.libraries.remove(path);
+    }
+
+    /// Unload all libraries (for reload).
+    pub fn unload_all(&mut self) {
+        let paths: Vec<String> = self.libraries.keys().cloned().collect();
+        for path in &paths {
+            self.call_plugin_shutdown(path);
+        }
+        self.libraries.clear();
+    }
+
+    fn ensure_library(&mut self, path: &str) -> Result<()> {
         if !self.libraries.contains_key(path) {
             let library = unsafe {
                 libloading::Library::new(path).map_err(|err| {
@@ -513,28 +607,38 @@ impl DynamicPluginRuntime {
             };
             self.libraries.insert(
                 path.to_string(),
-                LoadedLibrary {
+                Arc::new(Mutex::new(LoadedLibrary {
                     library,
                     last_used: Instant::now(),
                     failures: 0,
                     tripped_until: None,
                     last_error: None,
                     recent_errors: VecDeque::new(),
-                },
+                })),
             );
         }
-
-        self.libraries
-            .get_mut(path)
-            .ok_or_else(|| QimenError::Runtime(format!("library '{}' missing after load", path)))
+        Ok(())
     }
 
     fn evict_idle_libraries(&mut self, max_idle: Duration) {
         let now = Instant::now();
-        self.libraries.retain(|_, entry| {
-            now.duration_since(entry.last_used) <= max_idle || entry.tripped_until.is_some()
+        self.libraries.retain(|_, handle| {
+            if let Ok(entry) = handle.lock() {
+                now.duration_since(entry.last_used) <= max_idle || entry.tripped_until.is_some()
+            } else {
+                // Poisoned lock — remove it
+                false
+            }
         });
     }
+}
+
+fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> &str {
+    panic_info
+        .downcast_ref::<String>()
+        .map(|s| s.as_str())
+        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic")
 }
 
 /// Try to call the plugin's `qimen_plugin_flush_sends` symbol to drain any

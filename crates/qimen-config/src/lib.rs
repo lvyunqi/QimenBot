@@ -38,6 +38,9 @@ pub struct OfficialHostConfig {
     pub plugin_state_path: String,
     #[serde(default = "default_plugin_bin_dir")]
     pub plugin_bin_dir: String,
+    /// Timeout in seconds for dynamic plugin FFI calls (default: 30).
+    #[serde(default = "default_dynamic_plugin_timeout_secs")]
+    pub dynamic_plugin_timeout_secs: u64,
 }
 
 impl Default for OfficialHostConfig {
@@ -47,6 +50,7 @@ impl Default for OfficialHostConfig {
             plugin_modules: Vec::new(),
             plugin_state_path: default_plugin_state_path(),
             plugin_bin_dir: default_plugin_bin_dir(),
+            dynamic_plugin_timeout_secs: default_dynamic_plugin_timeout_secs(),
         }
     }
 }
@@ -161,6 +165,10 @@ fn default_plugin_state_path() -> String {
 
 fn default_plugin_bin_dir() -> String {
     "plugins/bin".to_string()
+}
+
+fn default_dynamic_plugin_timeout_secs() -> u64 {
+    30
 }
 
 fn expand_env_placeholders(input: &str) -> String {

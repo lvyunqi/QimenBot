@@ -21,8 +21,7 @@ use qimen_adapter_onebot11::OneBot11Adapter;
 use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
-    DynamicCommandDescriptor, DynamicInterceptorDescriptor, DynamicMetaDescriptor,
-    DynamicNoticeDescriptor, DynamicRequestDescriptor, HostPluginReport, load_plugin_state,
+    DynamicCommandDescriptor, DynamicInterceptorDescriptor, HostPluginReport, load_plugin_state,
 };
 use qimen_message::Message;
 use qimen_plugin_api::{
@@ -133,6 +132,8 @@ struct DynamicInterceptorAdapter {
     dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
     /// Shared buffer — same instance held by [`Runtime`] for draining.
     pending_sends: PendingSendBuffer,
+    /// Timeout for FFI calls.
+    timeout: Duration,
 }
 
 impl DynamicInterceptorAdapter {
@@ -177,17 +178,37 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
         let descriptor = self.descriptor.clone();
         let runtime = Arc::clone(&self.dynamic_runtime);
 
-        // Run the blocking FFI call on a blocking thread
-        let result = tokio::task::spawn_blocking(move || {
-            let mut rt = runtime.lock().map_err(|_| {
-                qimen_error::QimenError::Runtime("dynamic runtime lock poisoned".to_string())
-            })?;
-            rt.execute_pre_handle(&descriptor, request)
-        })
-        .await;
+        // Phase 1: briefly hold outer lock to get per-library handle
+        let lib_path = descriptor.library_path.clone();
+        let lib_handle = {
+            let mut rt = match runtime.lock() {
+                Ok(rt) => rt,
+                Err(_) => {
+                    tracing::warn!(plugin = %self.descriptor.plugin_id, "dynamic runtime lock poisoned, allowing");
+                    return true;
+                }
+            };
+            match rt.get_library(&lib_path) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "failed to get library handle, allowing");
+                    return true;
+                }
+            }
+        }; // outer lock released
+
+        // Phase 2: spawn_blocking + timeout
+        let timeout_dur = self.timeout;
+        let runtime_for_timeout = Arc::clone(&self.dynamic_runtime);
+        let result = tokio::time::timeout(
+            timeout_dur,
+            tokio::task::spawn_blocking(move || {
+                DynamicPluginRuntime::execute_pre_handle_on_handle(&lib_handle, &descriptor, request)
+            }),
+        ).await;
 
         match result {
-            Ok(Ok((allow, sends))) => {
+            Ok(Ok(Ok((allow, sends)))) => {
                 if !sends.is_empty()
                     && let Ok(mut pending) = self.pending_sends.lock()
                 {
@@ -195,12 +216,19 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
                 }
                 allow
             }
-            Ok(Err(e)) => {
+            Ok(Ok(Err(e))) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle failed, allowing");
                 true
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle task panicked, allowing");
+                true
+            }
+            Err(_) => {
+                tracing::warn!(plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle timed out, allowing");
+                if let Ok(mut rt) = runtime_for_timeout.lock() {
+                    rt.record_timeout(&lib_path);
+                }
                 true
             }
         }
@@ -214,27 +242,54 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
         let descriptor = self.descriptor.clone();
         let runtime = Arc::clone(&self.dynamic_runtime);
 
-        let result = tokio::task::spawn_blocking(move || {
-            let mut rt = runtime.lock().map_err(|_| {
-                qimen_error::QimenError::Runtime("dynamic runtime lock poisoned".to_string())
-            })?;
-            rt.execute_after_completion(&descriptor, request)
-        })
-        .await;
+        // Phase 1: briefly hold outer lock to get per-library handle
+        let lib_path = descriptor.library_path.clone();
+        let lib_handle = {
+            let mut rt = match runtime.lock() {
+                Ok(rt) => rt,
+                Err(_) => {
+                    tracing::warn!(plugin = %self.descriptor.plugin_id, "dynamic runtime lock poisoned");
+                    return;
+                }
+            };
+            match rt.get_library(&lib_path) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "failed to get library handle");
+                    return;
+                }
+            }
+        }; // outer lock released
+
+        // Phase 2: spawn_blocking + timeout
+        let timeout_dur = self.timeout;
+        let runtime_for_timeout = Arc::clone(&self.dynamic_runtime);
+        let result = tokio::time::timeout(
+            timeout_dur,
+            tokio::task::spawn_blocking(move || {
+                DynamicPluginRuntime::execute_after_completion_on_handle(&lib_handle, &descriptor, request)
+            }),
+        ).await;
 
         match result {
-            Ok(Ok(sends)) => {
+            Ok(Ok(Ok(sends))) => {
                 if !sends.is_empty()
                     && let Ok(mut pending) = self.pending_sends.lock()
                 {
                     pending.extend(sends);
                 }
             }
-            Ok(Err(e)) => {
+            Ok(Ok(Err(e))) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion failed");
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion task panicked");
+            }
+            Err(_) => {
+                tracing::warn!(plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion timed out");
+                if let Ok(mut rt) = runtime_for_timeout.lock() {
+                    rt.record_timeout(&lib_path);
+                }
             }
         }
     }
@@ -248,6 +303,8 @@ pub struct Runtime {
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
     dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
+    /// Timeout for dynamic plugin FFI calls.
+    dynamic_plugin_timeout: Duration,
     /// Static interceptors from compiled plugin bundles (preserved across rescan).
     static_interceptors: Vec<Arc<dyn qimen_plugin_api::MessageEventInterceptor>>,
     interceptor_chain: std::sync::RwLock<InterceptorChain>,
@@ -269,6 +326,7 @@ impl Default for Runtime {
             plugin_state_path: None,
             plugin_bin_dir: None,
             dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
+            dynamic_plugin_timeout: Duration::from_secs(30),
             static_interceptors: Vec::new(),
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
@@ -338,6 +396,7 @@ impl Runtime {
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
             dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
+            dynamic_plugin_timeout: Duration::from_secs(config.official_host.dynamic_plugin_timeout_secs),
             static_interceptors,
             interceptor_chain: std::sync::RwLock::new(interceptor_chain),
             rate_limiters,
@@ -387,6 +446,7 @@ impl Runtime {
                     descriptor,
                     dynamic_runtime: Arc::clone(&self.dynamic_runtime),
                     pending_sends: Arc::clone(&self.interceptor_pending_sends),
+                    timeout: self.dynamic_plugin_timeout,
                 });
                 chain.add(adapter);
             }
@@ -404,7 +464,9 @@ impl Runtime {
         {
             let report_guard = self.host_plugin_report.read().unwrap();
             if let Some(report) = report_guard.as_ref() {
-                let mut drt = self.dynamic_runtime.lock().unwrap();
+                // Use 2x timeout for init since initialization is typically slower
+                let init_timeout = self.dynamic_plugin_timeout * 2;
+
                 for entry in &report.dynamic_plugins {
                     // Load plugin config from config/plugins/<plugin_id>.toml
                     let config_path = format!("config/plugins/{}.toml", entry.plugin_id);
@@ -434,25 +496,60 @@ impl Runtime {
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_default();
 
-                    match drt.call_plugin_init(
-                        &entry.path,
-                        &entry.plugin_id,
-                        &config_json,
-                        &plugin_dir,
-                        ".",
-                    ) {
-                        Ok(()) => {
+                    // Phase 1: get per-library handle
+                    let lib_handle = {
+                        let mut drt = self.dynamic_runtime.lock().map_err(|_| {
+                            QimenError::Runtime("dynamic runtime lock poisoned".to_string())
+                        })?;
+                        drt.get_library(&entry.path)?
+                    }; // outer lock released
+
+                    // Phase 2: spawn_blocking + timeout for init
+                    let path = entry.path.clone();
+                    let plugin_id = entry.plugin_id.clone();
+                    let plugin_dir_clone = plugin_dir.clone();
+                    let config_json_clone = config_json.clone();
+
+                    let init_result = tokio::time::timeout(
+                        init_timeout,
+                        tokio::task::spawn_blocking(move || {
+                            DynamicPluginRuntime::execute_init_on_handle(
+                                &lib_handle, &path, &plugin_id,
+                                &config_json_clone, &plugin_dir_clone, ".",
+                            )
+                        }),
+                    ).await;
+
+                    match init_result {
+                        Ok(Ok(Ok(()))) => {
                             tracing::info!(
                                 plugin = %entry.plugin_id,
                                 "dynamic plugin init succeeded"
                             );
                         }
-                        Err(e) => {
+                        Ok(Ok(Err(e))) => {
                             tracing::error!(
                                 plugin = %entry.plugin_id,
                                 error = %e,
                                 "dynamic plugin init failed"
                             );
+                        }
+                        Ok(Err(join_err)) => {
+                            tracing::error!(
+                                plugin = %entry.plugin_id,
+                                error = %join_err,
+                                "dynamic plugin init task panicked"
+                            );
+                        }
+                        Err(_) => {
+                            tracing::error!(
+                                plugin = %entry.plugin_id,
+                                timeout_secs = init_timeout.as_secs(),
+                                "dynamic plugin init timed out"
+                            );
+                            if let Ok(mut drt) = self.dynamic_runtime.lock() {
+                                drt.record_timeout(&entry.path);
+                            }
                         }
                     }
                 }
@@ -835,16 +932,18 @@ impl Runtime {
         {
             return Ok(match signal {
                 OneBotSystemDispatchSignal::Continue(route) => {
-                    let report_guard = self.host_plugin_report.read().unwrap();
-                    if let Some(report) = report_guard.as_ref()
-                        && let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload)?
-                    {
-                        drop(report_guard);
-                        if !sends.is_empty() {
-                            self.process_send_actions(bot, adapter, client, sends).await?;
+                    let report_clone = {
+                        let report_guard = self.host_plugin_report.read().unwrap();
+                        report_guard.clone()
+                    };
+                    if let Some(report) = report_clone.as_ref() {
+                        if let Some((signal, sends)) = self.execute_dynamic_system_route(report, &route, &payload).await? {
+                            if !sends.is_empty() {
+                                self.process_send_actions(bot, adapter, client, sends).await?;
+                            }
+                            self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
+                                .await?;
                         }
-                        self.apply_dynamic_system_signal(bot, adapter, client, &payload, signal)
-                            .await?;
                     }
                     SessionSignal::EventHandled
                 }
@@ -1020,24 +1119,61 @@ impl Runtime {
                     tracing::debug!(plugin_id = %descriptor.plugin_id, "event blocked by plugin ACL");
                     None
                 } else {
-                let (dyn_response, sends) = {
+                // Phase 1: briefly hold outer lock to get per-library handle
+                let lib_path = descriptor.library_path.clone();
+                let lib_handle = {
                     let mut runtime = self.dynamic_runtime.lock().map_err(|_| {
                         QimenError::Runtime("dynamic runtime lock poisoned".to_string())
                     })?;
-                    let sender_id = event.user_id().map(|id| id.to_string()).unwrap_or_default();
-                    let group_id = event.group_id_i64().map(|id| id.to_string()).unwrap_or_default();
-                    let raw_json = event.raw_json.to_string();
-                    let sender_nickname = event.sender_nickname().unwrap_or_default().to_string();
-                    let message_id = event.raw_json.get("message_id")
-                        .and_then(|v| v.as_i64())
-                        .map(|id| id.to_string())
-                        .unwrap_or_default();
-                    let timestamp = event.raw_json.get("time")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    runtime.execute_command(&descriptor, &args, &sender_id, &group_id, &raw_json, &sender_nickname, &message_id, timestamp)?
+                    runtime.get_library(&lib_path)?
+                }; // outer lock released
+
+                // Phase 2: spawn_blocking + timeout
+                let sender_id = event.user_id().map(|id| id.to_string()).unwrap_or_default();
+                let group_id_str = event.group_id_i64().map(|id| id.to_string()).unwrap_or_default();
+                let raw_json = event.raw_json.to_string();
+                let sender_nickname = event.sender_nickname().unwrap_or_default().to_string();
+                let message_id_str = event.raw_json.get("message_id")
+                    .and_then(|v| v.as_i64())
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                let timestamp = event.raw_json.get("time")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let timeout_dur = self.dynamic_plugin_timeout;
+                let descriptor_clone = descriptor.clone();
+
+                let ffi_result = tokio::time::timeout(
+                    timeout_dur,
+                    tokio::task::spawn_blocking(move || {
+                        DynamicPluginRuntime::execute_command_on_handle(
+                            &lib_handle, &descriptor_clone, &args,
+                            &sender_id, &group_id_str, &raw_json,
+                            &sender_nickname, &message_id_str, timestamp,
+                        )
+                    }),
+                ).await;
+
+                let (dyn_response, sends) = match ffi_result {
+                    Ok(Ok(inner)) => inner?,
+                    Ok(Err(join_err)) => {
+                        return Err(QimenError::Runtime(format!(
+                            "dynamic plugin spawn_blocking panicked: {join_err}"
+                        )));
+                    }
+                    Err(_) => {
+                        // Timeout — record it for circuit breaker
+                        if let Ok(mut runtime) = self.dynamic_runtime.lock() {
+                            runtime.record_timeout(&lib_path);
+                        }
+                        return Err(QimenError::Runtime(format!(
+                            "dynamic plugin command timed out after {}s for '{}'",
+                            timeout_dur.as_secs(), descriptor.plugin_id
+                        )));
+                    }
                 };
-                // Process BotApi sends (lock already dropped)
+
+                // Process BotApi sends
                 if !sends.is_empty() {
                     self.process_send_actions(bot, adapter, client, sends).await?;
                 }
@@ -1435,19 +1571,16 @@ impl Runtime {
         }
     }
 
-    fn execute_dynamic_system_route(
+    async fn execute_dynamic_system_route(
         &self,
         report: &HostPluginReport,
         route: &onebot11_dispatch::OneBotSystemRoute,
         payload: &Value,
     ) -> Result<Option<(DynamicResponse, Vec<SendAction>)>> {
-        let mut runtime = self.dynamic_runtime.lock().map_err(|_| {
-            QimenError::Runtime("dynamic runtime lock poisoned".to_string())
-        })?;
-
         let raw_json = payload.to_string();
 
-        match route {
+        // Determine library_path, callback_symbol, route string, and kind
+        let (library_path, callback_symbol, route_str, kind) = match route {
             onebot11_dispatch::OneBotSystemRoute::Notice(notice) => {
                 let route_label = match notice {
                     onebot11_dispatch::NoticeRoute::GroupPoke => "GroupPoke",
@@ -1456,27 +1589,13 @@ impl Runtime {
                     onebot11_dispatch::NoticeRoute::NotifyHonor(_) => "NotifyHonor",
                     _ => return Ok(None),
                 };
-                // Search in v0.2 routes first, then legacy fields
                 if let Some((entry, route_entry)) = find_route_entry(report, "notice", route_label) {
-                    let descriptor = DynamicNoticeDescriptor {
-                        plugin_id: entry.plugin_id.clone(),
-                        notice_route: route_label.to_string(),
-                        callback_symbol: route_entry.callback_symbol.clone(),
-                        library_path: entry.path.clone(),
-                    };
-                    return Ok(Some(runtime.execute_notice(&descriptor, &raw_json)?));
-                }
-                // Legacy fallback
-                let Some(entry) = report.dynamic_plugins.iter().find(|entry| entry.notice_route == route_label) else {
+                    (entry.path.clone(), route_entry.callback_symbol.clone(), route_label.to_string(), "notice")
+                } else if let Some(entry) = report.dynamic_plugins.iter().find(|e| e.notice_route == route_label) {
+                    (entry.path.clone(), entry.notice_callback_symbol.clone(), entry.notice_route.clone(), "notice")
+                } else {
                     return Ok(None);
-                };
-                let descriptor = DynamicNoticeDescriptor {
-                    plugin_id: entry.plugin_id.clone(),
-                    notice_route: entry.notice_route.clone(),
-                    callback_symbol: entry.notice_callback_symbol.clone(),
-                    library_path: entry.path.clone(),
-                };
-                Ok(Some(runtime.execute_notice(&descriptor, &raw_json)?))
+                }
             }
             onebot11_dispatch::OneBotSystemRoute::Request(request) => {
                 let route_label = match request {
@@ -1486,24 +1605,12 @@ impl Runtime {
                     _ => return Ok(None),
                 };
                 if let Some((entry, route_entry)) = find_route_entry(report, "request", route_label) {
-                    let descriptor = DynamicRequestDescriptor {
-                        plugin_id: entry.plugin_id.clone(),
-                        request_route: route_label.to_string(),
-                        callback_symbol: route_entry.callback_symbol.clone(),
-                        library_path: entry.path.clone(),
-                    };
-                    return Ok(Some(runtime.execute_request(&descriptor, &raw_json)?));
-                }
-                let Some(entry) = report.dynamic_plugins.iter().find(|entry| entry.request_route == route_label) else {
+                    (entry.path.clone(), route_entry.callback_symbol.clone(), route_label.to_string(), "request")
+                } else if let Some(entry) = report.dynamic_plugins.iter().find(|e| e.request_route == route_label) {
+                    (entry.path.clone(), entry.request_callback_symbol.clone(), entry.request_route.clone(), "request")
+                } else {
                     return Ok(None);
-                };
-                let descriptor = DynamicRequestDescriptor {
-                    plugin_id: entry.plugin_id.clone(),
-                    request_route: entry.request_route.clone(),
-                    callback_symbol: entry.request_callback_symbol.clone(),
-                    library_path: entry.path.clone(),
-                };
-                Ok(Some(runtime.execute_request(&descriptor, &raw_json)?))
+                }
             }
             onebot11_dispatch::OneBotSystemRoute::Meta(meta) => {
                 let route_label = match meta {
@@ -1514,28 +1621,52 @@ impl Runtime {
                     _ => return Ok(None),
                 };
                 if let Some((entry, route_entry)) = find_route_entry(report, "meta", route_label) {
-                    let descriptor = DynamicMetaDescriptor {
-                        plugin_id: entry.plugin_id.clone(),
-                        meta_route: route_label.to_string(),
-                        callback_symbol: route_entry.callback_symbol.clone(),
-                        library_path: entry.path.clone(),
-                    };
-                    return Ok(Some(runtime.execute_meta(&descriptor, &raw_json)?));
-                }
-                let Some(entry) = report.dynamic_plugins.iter().find(|entry| entry.meta_route == route_label) else {
+                    (entry.path.clone(), route_entry.callback_symbol.clone(), route_label.to_string(), "meta")
+                } else if let Some(entry) = report.dynamic_plugins.iter().find(|e| e.meta_route == route_label) {
+                    (entry.path.clone(), entry.meta_callback_symbol.clone(), entry.meta_route.clone(), "meta")
+                } else {
                     return Ok(None);
-                };
-                let descriptor = DynamicMetaDescriptor {
-                    plugin_id: entry.plugin_id.clone(),
-                    meta_route: entry.meta_route.clone(),
-                    callback_symbol: entry.meta_callback_symbol.clone(),
-                    library_path: entry.path.clone(),
-                };
-                Ok(Some(runtime.execute_meta(&descriptor, &raw_json)?))
+                }
             }
             onebot11_dispatch::OneBotSystemRoute::MessageSent(_) => {
-                // message_sent events are not dispatched to dynamic plugins
-                Ok(None)
+                return Ok(None);
+            }
+        };
+
+        // Phase 1: briefly hold outer lock to get per-library handle
+        let lib_path = library_path.clone();
+        let lib_handle = {
+            let mut runtime = self.dynamic_runtime.lock().map_err(|_| {
+                QimenError::Runtime("dynamic runtime lock poisoned".to_string())
+            })?;
+            runtime.get_library(&lib_path)?
+        }; // outer lock released
+
+        // Phase 2: spawn_blocking + timeout
+        let timeout_dur = self.dynamic_plugin_timeout;
+        let ffi_result = tokio::time::timeout(
+            timeout_dur,
+            tokio::task::spawn_blocking(move || {
+                DynamicPluginRuntime::execute_route_on_handle(
+                    &lib_handle, &library_path, &callback_symbol,
+                    route_str, kind, &raw_json,
+                )
+            }),
+        ).await;
+
+        match ffi_result {
+            Ok(Ok(inner)) => Ok(Some(inner?)),
+            Ok(Err(join_err)) => Err(QimenError::Runtime(format!(
+                "dynamic plugin system route spawn_blocking panicked: {join_err}"
+            ))),
+            Err(_) => {
+                if let Ok(mut runtime) = self.dynamic_runtime.lock() {
+                    runtime.record_timeout(&lib_path);
+                }
+                Err(QimenError::Runtime(format!(
+                    "dynamic plugin system route timed out after {}s",
+                    timeout_dur.as_secs()
+                )))
             }
         }
     }
