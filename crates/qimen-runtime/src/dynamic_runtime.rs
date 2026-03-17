@@ -436,19 +436,19 @@ impl DynamicPluginRuntime {
     /// after `tokio::time::timeout` fires. Increments failures and may trip
     /// the circuit breaker.
     pub fn record_timeout(&mut self, path: &str) {
-        if let Some(handle) = self.libraries.get(path) {
-            if let Ok(mut meta) = handle.meta.lock() {
-                meta.failures += 1;
-                let error_text = format!("FFI call timed out for '{}'", path);
-                meta.last_error = Some(error_text.clone());
-                meta.recent_errors.push_back(error_text);
-                while meta.recent_errors.len() > MAX_ERROR_HISTORY {
-                    meta.recent_errors.pop_front();
-                }
-                if meta.failures >= 3 {
-                    meta.tripped_until = Some(Instant::now() + Duration::from_secs(60));
-                    tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
-                }
+        if let Some(handle) = self.libraries.get(path)
+            && let Ok(mut meta) = handle.meta.lock()
+        {
+            meta.failures += 1;
+            let error_text = format!("FFI call timed out for '{}'", path);
+            meta.last_error = Some(error_text.clone());
+            meta.recent_errors.push_back(error_text);
+            while meta.recent_errors.len() > MAX_ERROR_HISTORY {
+                meta.recent_errors.pop_front();
+            }
+            if meta.failures >= 3 {
+                meta.tripped_until = Some(Instant::now() + Duration::from_secs(60));
+                tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
             }
         }
     }
