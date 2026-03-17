@@ -21,8 +21,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_ERROR_HISTORY: usize = 10;
 
-pub(crate) struct LoadedLibrary {
-    library: libloading::Library,
+/// Mutable metadata for a loaded library (protected by its own Mutex).
+struct LibraryMeta {
     last_used: Instant,
     failures: u32,
     tripped_until: Option<Instant>,
@@ -30,8 +30,23 @@ pub(crate) struct LoadedLibrary {
     recent_errors: VecDeque<String>,
 }
 
-/// Handle to a per-library lock. Obtained from `DynamicPluginRuntime::get_library()`.
-pub(crate) type LibraryHandle = Arc<Mutex<LoadedLibrary>>;
+/// A loaded dynamic plugin library. The `library` field is immutable after
+/// creation and can be accessed concurrently from multiple threads.
+/// The `meta` field holds mutable counters behind its own Mutex.
+pub(crate) struct LoadedLibrary {
+    library: libloading::Library,
+    meta: Mutex<LibraryMeta>,
+}
+
+// SAFETY: `libloading::Library` is `Send` but not `Sync`. However, the only
+// operations we perform on it are `Library::get()` (which calls `dlsym` —
+// thread-safe on all platforms) and calling the resulting function pointers
+// (which are inherently thread-safe for well-behaved C ABI plugins).
+// The library is never unloaded while `Arc<LoadedLibrary>` references exist.
+unsafe impl Sync for LoadedLibrary {}
+
+/// Handle to a loaded library. Can be shared across threads.
+pub(crate) type LibraryHandle = Arc<LoadedLibrary>;
 
 #[derive(Default)]
 pub struct DynamicPluginRuntime {
@@ -355,51 +370,64 @@ impl DynamicPluginRuntime {
 
     // ─── Handle-based helper ────────────────────────────────────────────
 
-    /// Lock a per-library handle, check circuit breaker, execute an operation,
-    /// and update failure/success counters.
+    /// Check circuit breaker, execute an operation on the library, and update
+    /// failure/success counters. The library itself is NOT locked during the
+    /// FFI call — only the metadata Mutex is briefly locked before and after.
+    /// This allows concurrent FFI calls to the same library.
     fn with_handle<T, F>(handle: &LibraryHandle, path: &str, operation: F) -> Result<T>
     where
         F: FnOnce(&libloading::Library) -> Result<T>,
     {
-        let mut entry = handle.lock().map_err(|_| {
-            QimenError::Runtime(format!(
-                "per-library lock poisoned for '{}'", path
-            ))
-        })?;
+        // Phase 1: briefly lock metadata to check circuit breaker + update last_used
+        {
+            let mut meta = handle.meta.lock().map_err(|_| {
+                QimenError::Runtime(format!(
+                    "per-library meta lock poisoned for '{}'", path
+                ))
+            })?;
 
-        // Circuit breaker check
-        if let Some(until) = entry.tripped_until {
-            if Instant::now() < until {
-                return Err(QimenError::Runtime(format!(
-                    "dynamic plugin '{}' is temporarily isolated after repeated failures",
-                    path
-                )));
+            // Circuit breaker check
+            if let Some(until) = meta.tripped_until {
+                if Instant::now() < until {
+                    return Err(QimenError::Runtime(format!(
+                        "dynamic plugin '{}' is temporarily isolated after repeated failures",
+                        path
+                    )));
+                }
+                meta.tripped_until = None;
             }
-            entry.tripped_until = None;
-        }
 
-        entry.last_used = Instant::now();
+            meta.last_used = Instant::now();
+        } // meta lock released
 
-        match operation(&entry.library) {
-            Ok(value) => {
-                entry.failures = 0;
-                entry.last_error = None;
-                Ok(value)
+        // Phase 2: execute FFI — NO lock held, concurrent calls allowed
+        let result = operation(&handle.library);
+
+        // Phase 3: briefly lock metadata to update success/failure counters
+        match &result {
+            Ok(_) => {
+                if let Ok(mut meta) = handle.meta.lock() {
+                    meta.failures = 0;
+                    meta.last_error = None;
+                }
             }
             Err(err) => {
-                entry.failures += 1;
-                let error_text = err.to_string();
-                entry.last_error = Some(error_text.clone());
-                entry.recent_errors.push_back(error_text);
-                while entry.recent_errors.len() > MAX_ERROR_HISTORY {
-                    entry.recent_errors.pop_front();
+                if let Ok(mut meta) = handle.meta.lock() {
+                    meta.failures += 1;
+                    let error_text = err.to_string();
+                    meta.last_error = Some(error_text.clone());
+                    meta.recent_errors.push_back(error_text);
+                    while meta.recent_errors.len() > MAX_ERROR_HISTORY {
+                        meta.recent_errors.pop_front();
+                    }
+                    if meta.failures >= 3 {
+                        meta.tripped_until = Some(Instant::now() + Duration::from_secs(60));
+                    }
                 }
-                if entry.failures >= 3 {
-                    entry.tripped_until = Some(Instant::now() + Duration::from_secs(60));
-                }
-                Err(err)
             }
         }
+
+        result
     }
 
     // ─── Timeout recording ──────────────────────────────────────────────
@@ -408,19 +436,19 @@ impl DynamicPluginRuntime {
     /// after `tokio::time::timeout` fires. Increments failures and may trip
     /// the circuit breaker.
     pub fn record_timeout(&mut self, path: &str) {
-        if let Some(handle) = self.libraries.get(path)
-            && let Ok(mut entry) = handle.lock()
-        {
-            entry.failures += 1;
-            let error_text = format!("FFI call timed out for '{}'", path);
-            entry.last_error = Some(error_text.clone());
-            entry.recent_errors.push_back(error_text);
-            while entry.recent_errors.len() > MAX_ERROR_HISTORY {
-                entry.recent_errors.pop_front();
-            }
-            if entry.failures >= 3 {
-                entry.tripped_until = Some(Instant::now() + Duration::from_secs(60));
-                tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
+        if let Some(handle) = self.libraries.get(path) {
+            if let Ok(mut meta) = handle.meta.lock() {
+                meta.failures += 1;
+                let error_text = format!("FFI call timed out for '{}'", path);
+                meta.last_error = Some(error_text.clone());
+                meta.recent_errors.push_back(error_text);
+                while meta.recent_errors.len() > MAX_ERROR_HISTORY {
+                    meta.recent_errors.pop_front();
+                }
+                if meta.failures >= 3 {
+                    meta.tripped_until = Some(Instant::now() + Duration::from_secs(60));
+                    tracing::warn!(path = %path, "circuit breaker tripped after repeated timeouts");
+                }
             }
         }
     }
@@ -528,13 +556,13 @@ impl DynamicPluginRuntime {
         self.libraries
             .iter()
             .filter_map(|(path, handle)| {
-                let entry = handle.lock().ok()?;
+                let meta = handle.meta.try_lock().ok()?;
                 Some(DynamicRuntimeHealthEntry {
                     path: path.clone(),
-                    failures: entry.failures,
-                    isolated_until_epoch_ms: entry.tripped_until.map(instant_to_epoch_ms),
-                    last_error: entry.last_error.clone(),
-                    recent_errors: entry.recent_errors.iter().cloned().collect(),
+                    failures: meta.failures,
+                    isolated_until_epoch_ms: meta.tripped_until.map(instant_to_epoch_ms),
+                    last_error: meta.last_error.clone(),
+                    recent_errors: meta.recent_errors.iter().cloned().collect(),
                 })
             })
             .collect()
@@ -542,11 +570,11 @@ impl DynamicPluginRuntime {
 
     pub fn clear_errors(&mut self) {
         for handle in self.libraries.values() {
-            if let Ok(mut entry) = handle.lock() {
-                entry.failures = 0;
-                entry.tripped_until = None;
-                entry.last_error = None;
-                entry.recent_errors.clear();
+            if let Ok(mut meta) = handle.meta.try_lock() {
+                meta.failures = 0;
+                meta.tripped_until = None;
+                meta.last_error = None;
+                meta.recent_errors.clear();
             }
         }
     }
@@ -567,11 +595,9 @@ impl DynamicPluginRuntime {
 
     /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
     pub fn call_plugin_shutdown(&mut self, library_path: &str) {
-        if let Some(handle) = self.libraries.get(library_path)
-            && let Ok(entry) = handle.lock()
-        {
+        if let Some(handle) = self.libraries.get(library_path) {
             unsafe {
-                if let Ok(symbol) = entry.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
+                if let Ok(symbol) = handle.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         symbol();
                     }));
@@ -607,14 +633,16 @@ impl DynamicPluginRuntime {
             };
             self.libraries.insert(
                 path.to_string(),
-                Arc::new(Mutex::new(LoadedLibrary {
+                Arc::new(LoadedLibrary {
                     library,
-                    last_used: Instant::now(),
-                    failures: 0,
-                    tripped_until: None,
-                    last_error: None,
-                    recent_errors: VecDeque::new(),
-                })),
+                    meta: Mutex::new(LibraryMeta {
+                        last_used: Instant::now(),
+                        failures: 0,
+                        tripped_until: None,
+                        last_error: None,
+                        recent_errors: VecDeque::new(),
+                    }),
+                }),
             );
         }
         Ok(())
@@ -623,11 +651,18 @@ impl DynamicPluginRuntime {
     fn evict_idle_libraries(&mut self, max_idle: Duration) {
         let now = Instant::now();
         self.libraries.retain(|_, handle| {
-            if let Ok(entry) = handle.lock() {
-                now.duration_since(entry.last_used) <= max_idle || entry.tripped_until.is_some()
-            } else {
-                // Poisoned lock — remove it
-                false
+            match handle.meta.try_lock() {
+                Ok(meta) => {
+                    now.duration_since(meta.last_used) <= max_idle || meta.tripped_until.is_some()
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    // Meta lock is briefly held — library is active, keep it
+                    true
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    // Poisoned lock — remove it
+                    false
+                }
             }
         });
     }
