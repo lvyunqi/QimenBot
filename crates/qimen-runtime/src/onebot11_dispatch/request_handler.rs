@@ -31,61 +31,57 @@ impl OneBotSystemEventHandler for AutoApproveRequestHandler {
         route: &RequestRoute,
     ) -> Option<OneBotSystemDispatchSignal> {
         match route {
-            RequestRoute::Friend => {
-                if ctx.auto_approve_friend_requests {
-                    let decision = evaluate_friend_request(ctx);
-                    tracing::info!(
-                        bot_id = %ctx.bot_id,
-                        user_id = %field_string(ctx.payload, "user_id"),
-                        flag = %field_string(ctx.payload, "flag"),
-                        decision = %decision_label(&decision),
-                        "auto-approve handler evaluated friend request"
-                    );
-                    return match decision {
-                        RequestDecision::Approve { remark } => {
-                            Some(OneBotSystemDispatchSignal::AutoApproveFriend {
-                                flag: field_string(ctx.payload, "flag"),
-                                remark,
-                            })
-                        }
-                        RequestDecision::Reject { reason } => {
-                            Some(OneBotSystemDispatchSignal::AutoRejectFriend {
-                                flag: field_string(ctx.payload, "flag"),
-                                reason,
-                            })
-                        }
-                        RequestDecision::Ignore => None,
-                    };
-                }
+            RequestRoute::Friend if ctx.auto_approve_friend_requests => {
+                let decision = evaluate_friend_request(ctx);
+                tracing::info!(
+                    bot_id = %ctx.bot_id,
+                    user_id = %field_string(ctx.payload, "user_id"),
+                    flag = %field_string(ctx.payload, "flag"),
+                    decision = %decision_label(&decision),
+                    "auto-approve handler evaluated friend request"
+                );
+                return match decision {
+                    RequestDecision::Approve { remark } => {
+                        Some(OneBotSystemDispatchSignal::AutoApproveFriend {
+                            flag: field_string(ctx.payload, "flag"),
+                            remark,
+                        })
+                    }
+                    RequestDecision::Reject { reason } => {
+                        Some(OneBotSystemDispatchSignal::AutoRejectFriend {
+                            flag: field_string(ctx.payload, "flag"),
+                            reason,
+                        })
+                    }
+                    RequestDecision::Ignore => None,
+                };
             }
-            RequestRoute::GroupInvite => {
-                if ctx.auto_approve_group_invites {
-                    let decision = evaluate_group_invite(ctx);
-                    tracing::info!(
-                        bot_id = %ctx.bot_id,
-                        group_id = %field_string(ctx.payload, "group_id"),
-                        user_id = %field_string(ctx.payload, "user_id"),
-                        flag = %field_string(ctx.payload, "flag"),
-                        decision = %decision_label(&decision),
-                        "auto-approve handler evaluated group invite request"
-                    );
-                    return match decision {
-                        RequestDecision::Approve { .. } => {
-                            Some(OneBotSystemDispatchSignal::AutoApproveGroupInvite {
-                                flag: field_string(ctx.payload, "flag"),
-                                sub_type: "invite".to_string(),
-                            })
-                        }
-                        RequestDecision::Reject { reason } => {
-                            Some(OneBotSystemDispatchSignal::AutoRejectGroupInvite {
-                                flag: field_string(ctx.payload, "flag"),
-                                sub_type: "invite".to_string(),
-                                reason,
-                            })
-                        }
-                        RequestDecision::Ignore => None,
-                    };
-                }
+            RequestRoute::GroupInvite if ctx.auto_approve_group_invites => {
+                let decision = evaluate_group_invite(ctx);
+                tracing::info!(
+                    bot_id = %ctx.bot_id,
+                    group_id = %field_string(ctx.payload, "group_id"),
+                    user_id = %field_string(ctx.payload, "user_id"),
+                    flag = %field_string(ctx.payload, "flag"),
+                    decision = %decision_label(&decision),
+                    "auto-approve handler evaluated group invite request"
+                );
+                return match decision {
+                    RequestDecision::Approve { .. } => {
+                        Some(OneBotSystemDispatchSignal::AutoApproveGroupInvite {
+                            flag: field_string(ctx.payload, "flag"),
+                            sub_type: "invite".to_string(),
+                        })
+                    }
+                    RequestDecision::Reject { reason } => {
+                        Some(OneBotSystemDispatchSignal::AutoRejectGroupInvite {
+                            flag: field_string(ctx.payload, "flag"),
+                            sub_type: "invite".to_string(),
+                            reason,
+                        })
+                    }
+                    RequestDecision::Ignore => None,
+                };
             }
             _ => {}
         }
