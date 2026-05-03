@@ -104,34 +104,11 @@ Sync FFI plugin using `#[dynamic_plugin]` proc macro. Demonstrates:
 
 ## Reference Projects (`参考项目/`)
 
-### Douluo Game References (斗罗插件原始参考实现)
-
-These are the **original Java implementations** that the Rust `qimen-dynamic-plugin-douluo` is porting from. When implementing or fixing douluo plugin features, always cross-reference these for correct game mechanics.
-
-**`dldlol-Bot-v1/`** — v1 Java/Maven/SpringBoot + Shiro + MySQL
-- Registration command: **`开始穿越`** (format: `开始穿越 名字-性别`)
-- Currency: **可自定义**，存储在 `command` 表 JSON 中（如 `{"点券": "null", "联邦币": "null"}`），玩家钱包为 `user.money` JSON 字段
-- Key source: `src/main/java/com/mryunqi/qimenbot/Plugin/Register.java`（注册）, `Controller/Money.java`（货币）, `Controller/Battle.java`（战斗）
-- Battle command: `挑战 <魂兽名>`（非"猎杀"）, attack cooldown 7秒
-
-**`DouluoBot-v2/`** — v2 Java/Gradle/SpringBoot 3 + Shiro + SQLite + Liquibase
-- Registration command: **`开始穿越`** (alias: `开始转生`，format: `开始穿越 角色名-性别`)
-- Currency: **完全可自定义**，独立 `wallet` 表（`player_id` + `currency` 字符串 + `balance`），默认货币"金币"
-- Transfer format: `转账 [币种][@对方/QQ]-[金额]`
-- Has admin web dashboard (React), HTML-to-image rendering (Playwright)
-- Game config fully database-driven (`game_config` table with categories)
-- Key source: `src/main/java/com/mryunqi/douluobot/infrastructure/bot/command/handler/`
-
-**Douluo plugin vs reference discrepancies (current known issues):**
-- Rust plugin uses `注册` as command name → should be `开始穿越` (or alias)
-- Rust plugin hardcodes `gold`/`coin` currency → should support customizable currency names
-- Rust plugin uses `猎杀` for battle → v1 uses `挑战`, v2 also uses `挑战`
-
 ### Bot Framework References
 
 **`Kovi/`** — Rust OneBot V11 plugin framework. Reference for Rust bot architecture patterns.
 
-**`Shiro/`** — Kotlin/Java OneBot V11 framework (used by both douluo v1 and v2). Reference for dynamic plugin loading via JAR/ServiceLoader.
+**`Shiro/`** — Kotlin/Java OneBot V11 framework. Reference for dynamic plugin loading via JAR/ServiceLoader.
 
 **`onebot-11/`** — OneBot V11 protocol specification. Authoritative reference for API, events, and communication formats.
 
@@ -141,7 +118,7 @@ These are the **original Java implementations** that the Rust `qimen-dynamic-plu
 
 **CRITICAL**: The framework codebase (root workspace under `crates/`, `apps/`, `plugins/qimen-plugin-*`) must remain plugin-agnostic. Follow these rules strictly:
 
-1. **No plugin-specific content in framework code** — Test cases, comments, examples in `crates/` must use generic placeholders (e.g. `创建角色`, `echo`, `ping`), never reference any specific plugin (e.g. no `斗罗`, `douluo`, `开始穿越`, `猎杀`, `武魂` etc.)
+1. **No plugin-specific content in framework code** — Test cases, comments, examples in `crates/` must use generic placeholders (e.g. `create-role`, `echo`, `ping`), never reference any specific plugin, game mechanic, private command, or private asset name.
 2. **No plugin config files committed** — `config/plugins/*.toml` files are user-local plugin configs and must NOT be committed to git. Only `config/plugins/.gitkeep` should be tracked.
 3. **No plugin binaries committed** — `plugins/bin/` is for runtime-loaded `.so/.dll/.dylib` files and must NOT be tracked.
 4. **No plugin database files committed** — `*.db`, `*.db-shm`, `*.db-wal` must NOT be tracked.

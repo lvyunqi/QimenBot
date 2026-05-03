@@ -10,7 +10,6 @@ plugins/bin/
 *.db
 *.db-shm
 *.db-wal
-斗罗大陆图片/
 
 # 本地参考项目
 参考项目/

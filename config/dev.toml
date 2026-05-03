@@ -17,6 +17,6 @@ metrics_bind = "127.0.0.1:9090"
 
 [official_host]
 builtin_modules = ["command", "admin", "scheduler", "bridge"]
-plugin_modules = ["example-basic", "douluo"]
+plugin_modules = ["example-basic"]
 plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
