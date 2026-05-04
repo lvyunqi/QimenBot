@@ -1270,7 +1270,7 @@ fn markdown_segment_payload(segment: &Segment) -> Value {
 }
 
 fn keyboard_segment_payload(segment: &Segment) -> Value {
-    Value::Object(segment.data.clone())
+    normalize_keyboard_payload(&Value::Object(segment.data.clone()))
 }
 
 fn rich_object_segment_payload(segment: &Segment) -> Value {
@@ -1291,8 +1291,135 @@ fn normalize_markdown_payload(value: &Value) -> Value {
 fn normalize_keyboard_payload(value: &Value) -> Value {
     match value {
         Value::String(id) => json!({ "id": id }),
+        Value::Object(map) if map.contains_key("id") => value.clone(),
+        Value::Object(map) => match map.get("content") {
+            Some(content) => {
+                let mut normalized = map.clone();
+                normalized.insert(
+                    "content".to_string(),
+                    normalize_keyboard_content_payload(content),
+                );
+                Value::Object(normalized)
+            }
+            None if map.contains_key("rows") => {
+                json!({ "content": normalize_keyboard_content_payload(value) })
+            }
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
+}
+
+fn normalize_keyboard_content_payload(value: &Value) -> Value {
+    let Some(rows) = value.get("rows").and_then(Value::as_array) else {
+        return value.clone();
+    };
+
+    let rows = rows
+        .iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let Some(buttons) = row.get("buttons").and_then(Value::as_array) else {
+                return row.clone();
+            };
+            let buttons = buttons
+                .iter()
+                .enumerate()
+                .map(|(button_index, button)| {
+                    normalize_keyboard_button_payload(button, row_index, button_index)
+                })
+                .collect::<Vec<_>>();
+            let mut normalized = row.as_object().cloned().unwrap_or_default();
+            normalized.insert("buttons".to_string(), Value::Array(buttons));
+            Value::Object(normalized)
+        })
+        .collect::<Vec<_>>();
+
+    json!({ "rows": rows })
+}
+
+fn normalize_keyboard_button_payload(
+    value: &Value,
+    row_index: usize,
+    button_index: usize,
+) -> Value {
+    let Some(button) = value.as_object() else {
+        return value.clone();
+    };
+    if button.contains_key("render_data") && button.contains_key("action") {
+        return value.clone();
+    }
+
+    let label = button
+        .get("label")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let visited_label = button
+        .get("visited_label")
+        .and_then(Value::as_str)
+        .unwrap_or(label);
+    let style = button.get("style").and_then(Value::as_i64).unwrap_or(0);
+    let action_type = button
+        .get("action_type")
+        .and_then(Value::as_i64)
+        .unwrap_or(2);
+    let action_data = button
+        .get("action_data")
+        .and_then(value_to_action_string)
+        .unwrap_or_default();
+    let permission_type = button
+        .get("permission_type")
+        .and_then(Value::as_i64)
+        .unwrap_or(2);
+    let specified_role_ids = button
+        .get("specified_role_ids")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let specified_user_ids = button
+        .get("specified_user_ids")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+
+    let mut normalized = Map::new();
+    normalized.insert(
+        "id".to_string(),
+        button
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(|id| Value::String(id.to_string()))
+            .unwrap_or_else(|| Value::String(format!("{}-{}", row_index + 1, button_index + 1))),
+    );
+    normalized.insert(
+        "render_data".to_string(),
+        json!({
+            "label": label,
+            "visited_label": visited_label,
+            "style": style,
+        }),
+    );
+    normalized.insert(
+        "action".to_string(),
+        json!({
+            "type": action_type,
+            "permission": {
+                "type": permission_type,
+                "specify_role_ids": specified_role_ids,
+                "specify_user_ids": specified_user_ids,
+            },
+            "data": action_data,
+            "click_limit": 10,
+            "at_bot_show_channel_list": true,
+        }),
+    );
+    if let Some(tips) = button.get("unsupport_tips").and_then(Value::as_str) {
+        normalized.insert(
+            "unsupport_tips".to_string(),
+            Value::String(tips.to_string()),
+        );
+    }
+
+    Value::Object(normalized)
 }
 
 fn media_upload_from_segment(segment: &Segment) -> Option<EncodedMediaUpload> {
@@ -1621,6 +1748,86 @@ mod tests {
                 .map(Vec::len),
             Some(1)
         );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/id")
+                .and_then(Value::as_str),
+            Some("1-1")
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/render_data/label")
+                .and_then(Value::as_str),
+            Some("Help")
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/render_data/visited_label")
+                .and_then(Value::as_str),
+            Some("Help")
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/render_data/style")
+                .and_then(Value::as_i64),
+            Some(1)
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/action/type")
+                .and_then(Value::as_i64),
+            Some(2)
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/action/permission/type")
+                .and_then(Value::as_i64),
+            Some(2)
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/action/data")
+                .and_then(Value::as_str),
+            Some("/help")
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/action/click_limit")
+                .and_then(Value::as_i64),
+            Some(10)
+        );
+        assert_eq!(
+            packet
+                .payload
+                .pointer("/keyboard/content/rows/0/buttons/0/action/at_bot_show_channel_list")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn encode_template_keyboard_id_passes_through() {
+        let action = action(
+            "send_private_msg",
+            json!({
+                "openid": "user-openid",
+                "markdown": "# Title",
+                "keyboard": { "id": "62" },
+                "msg_id": "msg-1",
+            }),
+        );
+
+        let packet = QqBotAdapter.encode_action(&action).await.unwrap();
+
+        assert_eq!(packet.payload.get("keyboard"), Some(&json!({ "id": "62" })));
     }
 
     #[tokio::test]

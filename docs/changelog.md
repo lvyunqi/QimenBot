@@ -1,5 +1,14 @@
 # 更新日志
 
+## v0.1.4 (2026-05-04)
+
+### 修复
+
+- 修复官方 QQ Bot 自定义 Keyboard 的按钮结构，将 `KeyboardBuilder` 输出转换为官方 inline keyboard 需要的 `id`、`render_data`、`action` 嵌套 payload。
+- 保持模板 Keyboard ID 透传，继续支持官方后台创建的键盘模板。
+
+---
+
 ## v0.1.3 (2026-05-03)
 
 ### 官方 QQ Bot 适配预览
