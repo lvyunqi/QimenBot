@@ -140,11 +140,11 @@ pub struct CommandPluginContext<'a> {
 | 方法 | 返回类型 | 说明 |
 |------|---------|------|
 | `onebot_actions()` | `OneBotActionClient<'_>` | 获取 OneBot API 客户端 |
-| `sender_id()` | `&str` | 发送者 QQ 号 |
-| `sender_id_i64()` | `Option<i64>` | 发送者 QQ 号（数字） |
-| `chat_id()` | `&str` | 聊天 ID（群号或用户 ID） |
-| `group_id()` | `&str` | 群号（私聊返回空字符串） |
-| `group_id_i64()` | `Option<i64>` | 群号（私聊返回 `None`） |
+| `sender_id()` | `Option<&str>` | 发送者字符串 ID |
+| `sender_id_i64()` | `Option<i64>` | 发送者数字 ID，主要适用于 OneBot |
+| `chat_id()` | `Option<&str>` | 当前会话字符串 ID |
+| `group_id()` | `Option<&str>` | 群字符串 ID，非群消息返回 `None` |
+| `group_id_i64()` | `Option<i64>` | 数字群 ID，主要适用于 OneBot |
 | `is_group()` | `bool` | 是否群聊 |
 | `is_private()` | `bool` | 是否私聊 |
 | `plain_text()` | `String` | 消息纯文本 |

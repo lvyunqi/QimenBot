@@ -65,6 +65,7 @@ export default defineConfig({
           items: [
             { text: '命令开发', link: '/plugin/commands' },
             { text: '消息构建', link: '/plugin/messages' },
+            { text: '官方 QQ Bot 适配', link: '/plugin/qq-official' },
             { text: '事件处理', link: '/plugin/events' },
             { text: '拦截器', link: '/plugin/interceptors' },
           ]

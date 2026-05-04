@@ -164,7 +164,7 @@ async fn echo(&self, args: Vec<String>) -> String {
 ```rust
 #[command("查看身份")]
 async fn whoami(&self, ctx: &CommandPluginContext<'_>) -> String {
-    let sender = ctx.sender_id();
+    let sender = ctx.sender_id().unwrap_or("unknown");
     let scope = if ctx.is_group() { "群聊" } else { "私聊" };
     format!("你的 ID: {sender}，当前环境: {scope}")
 }
@@ -207,8 +207,8 @@ async fn cmd(&self, args: Vec<String>, ctx: &CommandPluginContext<'_>)
 
 | 方法 | 返回类型 | 说明 |
 |------|---------|------|
-| `ctx.sender_id()` | `&str` | 发送者 QQ 号 |
-| `ctx.sender_id_i64()` | `Option<i64>` | 发送者 QQ 号（数字） |
+| `ctx.sender_id()` | `Option<&str>` | 发送者 ID。OneBot 下通常是 QQ 号，官方 QQ Bot 下是 openid 或频道用户 ID |
+| `ctx.sender_id_i64()` | `Option<i64>` | 发送者数字 ID。主要适用于 OneBot |
 | `ctx.event.sender_nickname()` | `Option<&str>` | 发送者昵称 |
 | `ctx.event.sender_role()` | `Option<&str>` | 群角色：`"owner"` / `"admin"` / `"member"` |
 | `ctx.event.sender_card()` | `Option<&str>` | 群名片 |
@@ -219,9 +219,15 @@ async fn cmd(&self, args: Vec<String>, ctx: &CommandPluginContext<'_>)
 |------|---------|------|
 | `ctx.is_group()` | `bool` | 是否在群聊中 |
 | `ctx.is_private()` | `bool` | 是否在私聊中 |
-| `ctx.group_id()` | `&str` | 群号（私聊返回空字符串） |
-| `ctx.group_id_i64()` | `Option<i64>` | 群号（私聊返回 None） |
-| `ctx.chat_id()` | `&str` | 聊天 ID（群号或用户 ID） |
+| `ctx.group_id()` | `Option<&str>` | 群 ID。OneBot 下通常是群号，官方 QQ Bot 下是 `group_openid` |
+| `ctx.group_id_i64()` | `Option<i64>` | 数字群 ID。主要适用于 OneBot |
+| `ctx.chat_id()` | `Option<&str>` | 当前会话 ID，适合跨协议使用 |
+
+::: tip 兼容官方 QQ Bot
+如果插件要兼容官方 QQ Bot，优先使用 `sender_id()`、`chat_id()`、`group_id()` 这类字符串方法。官方 QQ Bot 不会直接提供传统 QQ 号，`sender_id_i64()` 和 `group_id_i64()` 很可能是 `None`。
+
+更多说明见 [官方 QQ Bot 插件适配](/plugin/qq-official)。
+:::
 
 ### 消息内容
 
@@ -229,7 +235,8 @@ async fn cmd(&self, args: Vec<String>, ctx: &CommandPluginContext<'_>)
 |------|---------|------|
 | `ctx.plain_text()` | `String` | 消息纯文本（去掉图片、@等） |
 | `ctx.message()` | `&Message` | 完整消息对象（包含所有段） |
-| `ctx.event.message_id()` | `Option<i64>` | 消息 ID |
+| `ctx.event.message_id()` | `Option<i64>` | 数字消息 ID，主要适用于 OneBot |
+| `ctx.event.message_id_str()` | `Option<String>` | 字符串消息 ID，适合跨协议使用 |
 | `ctx.event.is_at_self()` | `bool` | 用户是否 @了 Bot |
 
 ### 调用 API
@@ -296,7 +303,7 @@ impl BasicModule {
     /// 使用上下文查询身份
     #[command("查看身份信息")]
     async fn whoami(&self, ctx: &CommandPluginContext<'_>) -> String {
-        let sender = ctx.sender_id();
+        let sender = ctx.sender_id().unwrap_or("unknown");
         let nickname = ctx.event.sender_nickname().unwrap_or("未知");
         let scope = if ctx.is_group() { "群聊" } else { "私聊" };
         format!("ID: {sender}\n昵称: {nickname}\n环境: {scope}")
@@ -321,7 +328,8 @@ impl BasicModule {
     /// 仅群聊命令
     #[command("仅群聊打招呼", scope = "group")]
     async fn group_only(&self, ctx: &CommandPluginContext<'_>) -> String {
-        format!("群 {} 的朋友你好！", ctx.group_id())
+        let group = ctx.group_id().unwrap_or("unknown");
+        format!("群 {group} 的朋友你好！")
     }
 
     /// 仅私聊命令

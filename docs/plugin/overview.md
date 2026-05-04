@@ -114,6 +114,7 @@ impl MyPlugin {
 |------|----------|------|
 | [处理命令](/plugin/commands) | `#[command]` | 响应 `/ping`、`/echo` 等用户命令 |
 | [构建消息](/plugin/messages) | `MessageBuilder` | 发送文本、图片、@、表情、按钮等 |
+| [适配官方 QQ Bot](/plugin/qq-official) | 字符串 ID / 通用回复 | 让插件同时兼容 OneBot 11 和官方 QQ Bot |
 | [处理事件](/plugin/events) | `#[notice]` `#[request]` `#[meta]` | 处理戳一戳、入群、好友申请等 |
 | [拦截消息](/plugin/interceptors) | `MessageEventInterceptor` | 在命令处理前后插入自定义逻辑 |
 | [调用 API](/api/onebot-client) | `ctx.onebot_actions()` | 调用 40+ 个 OneBot API（发消息、踢人、禁言等） |

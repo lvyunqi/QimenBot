@@ -84,16 +84,17 @@ impl MyPlugin {
 
 | 方法 | 返回类型 | 说明 |
 |------|---------|------|
-| `sender_id()` | `Option<&str>` | 发送者 QQ 号 |
-| `sender_id_i64()` | `Option<i64>` | 发送者 QQ 号（数字） |
+| `sender_id()` | `Option<&str>` | 发送者字符串 ID。OneBot 下通常是 QQ 号，官方 QQ Bot 下是 openid 或频道用户 ID |
+| `sender_id_i64()` | `Option<i64>` | 发送者数字 ID，主要适用于 OneBot |
 | `sender_nickname()` | `Option<&str>` | 发送者昵称 |
 | `sender_role()` | `Option<&str>` | 群角色：`"owner"` / `"admin"` / `"member"` |
-| `chat_id()` | `Option<&str>` | 聊天 ID（群号或用户 ID） |
-| `group_id()` | `Option<&str>` | 群号（私聊为 None） |
+| `chat_id()` | `Option<&str>` | 当前会话字符串 ID |
+| `group_id()` | `Option<&str>` | 群字符串 ID，非群消息为 None |
 | `is_group()` | `bool` | 是否群聊 |
 | `is_private()` | `bool` | 是否私聊 |
 | `plain_text()` | `String` | 消息纯文本 |
-| `message_id()` | `Option<i64>` | 消息 ID |
+| `message_id()` | `Option<i64>` | 数字消息 ID，主要适用于 OneBot |
+| `message_id_str()` | `Option<String>` | 字符串消息 ID，适合跨协议使用 |
 | `is_at_self()` | `bool` | 是否 @了 Bot |
 | `is_group_admin_or_owner()` | `bool` | 发送者是否为管理员或群主 |
 

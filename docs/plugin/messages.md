@@ -158,9 +158,15 @@ Message::builder()
 |------|------|------|
 | `.xml(data)` | `impl Into<String>` | XML 消息 |
 | `.json_msg(data)` | `impl Into<String>` | JSON 消息 |
-| `.markdown(content)` | `impl Into<String>` | Markdown（部分平台支持） |
-| `.keyboard(kb)` | `Keyboard` | 交互按钮 |
+| `.markdown(content)` | `impl Into<String>` | Markdown。官方 QQ Bot 支持，具体效果取决于场景和权限 |
+| `.keyboard(kb)` | `Keyboard` | 交互按钮。常用于官方 QQ Bot Markdown 消息 |
 | `.segment(segment)` | `Segment` | 添加任意自定义段 |
+
+::: tip 官方 QQ Bot 富文本
+官方 QQ Bot 下可以用 Markdown、Keyboard、Ark、Embed 和媒体消息。新手建议先从 `.markdown()` 和 `.keyboard()` 开始，能满足大多数菜单、帮助、按钮场景。
+
+完整插件写法见 [官方 QQ Bot 插件适配](/plugin/qq-official)。
+:::
 
 ### 构建
 
@@ -274,10 +280,12 @@ Keyboard 功能依赖具体的 OneBot 实现和聊天平台。不是所有平台
 ```rust
 #[command("富媒体消息演示")]
 async fn rich(&self, ctx: &CommandPluginContext<'_>) -> Message {
+    let sender = ctx.sender_id().unwrap_or("unknown");
+
     Message::builder()
         .text("这是一条富媒体消息：\n")
         .text("  @你: ")
-        .at(ctx.sender_id())
+        .at(sender)
         .text("\n  表情: ")
         .face("1")
         .face("2")
