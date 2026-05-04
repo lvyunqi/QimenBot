@@ -2,8 +2,9 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
+    Ident, ItemMod, LitStr, Token,
     parse::{Parse, ParseStream},
-    parse_macro_input, Ident, ItemMod, LitStr, Token,
+    parse_macro_input,
 };
 
 // ─── Plugin-level args ──────────────────────────────────────────────────
@@ -27,9 +28,7 @@ impl Parse for PluginArgs {
             match key.to_string().as_str() {
                 "id" => id = Some(value.value()),
                 "version" => version = Some(value.value()),
-                other => {
-                    return Err(syn::Error::new(key.span(), format!("unknown key: {other}")))
-                }
+                other => return Err(syn::Error::new(key.span(), format!("unknown key: {other}"))),
             }
 
             if !input.is_empty() {
@@ -77,9 +76,7 @@ impl Parse for CommandArgs {
                 "category" => category = value.value(),
                 "role" => role = value.value(),
                 "scope" => scope = value.value(),
-                other => {
-                    return Err(syn::Error::new(key.span(), format!("unknown key: {other}")))
-                }
+                other => return Err(syn::Error::new(key.span(), format!("unknown key: {other}"))),
             }
 
             if !input.is_empty() {
@@ -119,9 +116,7 @@ impl Parse for RouteArgs {
             match key.to_string().as_str() {
                 "kind" => kind = Some(value.value()),
                 "events" => events = Some(value.value()),
-                other => {
-                    return Err(syn::Error::new(key.span(), format!("unknown key: {other}")))
-                }
+                other => return Err(syn::Error::new(key.span(), format!("unknown key: {other}"))),
             }
 
             if !input.is_empty() {
@@ -304,7 +299,8 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
                 }
                 // Check for #[after_completion]
                 else if has_bare_attr(&func.attrs, "after_completion") {
-                    func.attrs.retain(|a| !a.path().is_ident("after_completion"));
+                    func.attrs
+                        .retain(|a| !a.path().is_ident("after_completion"));
                     let fn_name = func.sig.ident.to_string();
 
                     if after_completion_fn.is_some() {

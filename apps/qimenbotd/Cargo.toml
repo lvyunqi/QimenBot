@@ -6,6 +6,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+dotenvy = "0.15"
 qimen-error = { path = "../../crates/qimen-error" }
 qimen-official-host = { path = "../../crates/qimen-official-host" }
 tokio.workspace = true

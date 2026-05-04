@@ -134,11 +134,14 @@ impl OneBot11ForwardWsClient {
             }
             WsScheme::Wss => {
                 let connector = build_tls_connector()?;
-                let domain = rustls::pki_types::ServerName::try_from(host.clone())
-                    .map_err(|err| QimenError::Transport(format!("invalid TLS server name: {err}")))?;
-                let tls_stream = connector.connect(domain, tcp).await.map_err(|err| {
-                    QimenError::Transport(format!("TLS handshake failed: {err}"))
-                })?;
+                let domain =
+                    rustls::pki_types::ServerName::try_from(host.clone()).map_err(|err| {
+                        QimenError::Transport(format!("invalid TLS server name: {err}"))
+                    })?;
+                let tls_stream = connector
+                    .connect(domain, tcp)
+                    .await
+                    .map_err(|err| QimenError::Transport(format!("TLS handshake failed: {err}")))?;
                 let (reader, writer) = tokio::io::split(tls_stream);
                 SplitStream::Tls { reader, writer }
             }
@@ -163,7 +166,10 @@ impl OneBot11ForwardWsClient {
         request.push_str("\r\n");
 
         match split {
-            SplitStream::Plain { mut reader, mut writer } => {
+            SplitStream::Plain {
+                mut reader,
+                mut writer,
+            } => {
                 writer.write_all(request.as_bytes()).await?;
 
                 let mut response_buf = vec![0_u8; 4096];
@@ -179,7 +185,8 @@ impl OneBot11ForwardWsClient {
 
                 let dyn_writer: DynWriter = Box::new(writer);
                 let writer = Arc::new(Mutex::new(dyn_writer));
-                let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<String>>::new()));
+                let pending =
+                    Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<String>>::new()));
                 let (event_tx, event_rx) = mpsc::channel(128);
 
                 let reader_task = {
@@ -190,9 +197,17 @@ impl OneBot11ForwardWsClient {
                     })
                 };
 
-                Ok(Self { writer, pending, event_rx, reader_task })
+                Ok(Self {
+                    writer,
+                    pending,
+                    event_rx,
+                    reader_task,
+                })
             }
-            SplitStream::Tls { mut reader, mut writer } => {
+            SplitStream::Tls {
+                mut reader,
+                mut writer,
+            } => {
                 writer.write_all(request.as_bytes()).await?;
 
                 let mut response_buf = vec![0_u8; 4096];
@@ -208,7 +223,8 @@ impl OneBot11ForwardWsClient {
 
                 let dyn_writer: DynWriter = Box::new(writer);
                 let writer = Arc::new(Mutex::new(dyn_writer));
-                let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<String>>::new()));
+                let pending =
+                    Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<String>>::new()));
                 let (event_tx, event_rx) = mpsc::channel(128);
 
                 let reader_task = {
@@ -219,7 +235,12 @@ impl OneBot11ForwardWsClient {
                     })
                 };
 
-                Ok(Self { writer, pending, event_rx, reader_task })
+                Ok(Self {
+                    writer,
+                    pending,
+                    event_rx,
+                    reader_task,
+                })
             }
         }
     }
@@ -396,7 +417,13 @@ async fn handle_reverse_connection(
         .find_map(|line| {
             let lower = line.to_lowercase();
             if lower.starts_with("sec-websocket-key:") {
-                Some(line.split_once(':').map(|x| x.1).unwrap_or("").trim().to_string())
+                Some(
+                    line.split_once(':')
+                        .map(|x| x.1)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                )
             } else {
                 None
             }

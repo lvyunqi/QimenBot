@@ -19,6 +19,7 @@ pub type ProtocolResult<T> = std::result::Result<T, QimenError>;
 pub enum ProtocolId {
     OneBot11,
     OneBot12,
+    QqOfficial,
     Satori,
     Custom(String),
 }
@@ -29,6 +30,7 @@ pub enum TransportMode {
     WsReverse,
     HttpApi,
     HttpPost,
+    Gateway,
     Webhook,
     Custom(String),
 }
@@ -113,9 +115,7 @@ impl NormalizedEvent {
 
     /// Sender display name from `actor.display_name`.
     pub fn sender_nickname(&self) -> Option<&str> {
-        self.actor
-            .as_ref()
-            .and_then(|a| a.display_name.as_deref())
+        self.actor.as_ref().and_then(|a| a.display_name.as_deref())
     }
 
     // ── Chat context ──
@@ -160,6 +160,11 @@ impl NormalizedEvent {
         self.raw_json.get("message_id").and_then(|v| v.as_i64())
     }
 
+    /// `raw_json["message_id"]` as a lossless `String`.
+    pub fn message_id_str(&self) -> Option<String> {
+        self.raw_json.get("message_id").map(value_to_lossless_id)
+    }
+
     /// `raw_json["self_id"]` as `i64`.
     pub fn self_id(&self) -> Option<i64> {
         self.raw_json.get("self_id").and_then(|v| v.as_i64())
@@ -177,9 +182,7 @@ impl NormalizedEvent {
 
     /// `raw_json["message_type"]` as `&str` (e.g. `"private"`, `"group"`).
     pub fn message_type(&self) -> Option<&str> {
-        self.raw_json
-            .get("message_type")
-            .and_then(|v| v.as_str())
+        self.raw_json.get("message_type").and_then(|v| v.as_str())
     }
 
     /// `raw_json["post_type"]` as `&str` (e.g. `"message"`, `"notice"`, `"request"`, `"meta_event"`).
@@ -194,18 +197,14 @@ impl NormalizedEvent {
 
     /// `raw_json["request_type"]` as `&str` (e.g. `"friend"`, `"group"`).
     pub fn request_type(&self) -> Option<&str> {
-        self.raw_json
-            .get("request_type")
-            .and_then(|v| v.as_str())
+        self.raw_json.get("request_type").and_then(|v| v.as_str())
     }
 
     // ── Sender detail fields (from raw_json.sender) ──
 
     /// Generic accessor for `raw_json["sender"][field]`.
     pub fn sender_field(&self, field: &str) -> Option<&Value> {
-        self.raw_json
-            .get("sender")
-            .and_then(|s| s.get(field))
+        self.raw_json.get("sender").and_then(|s| s.get(field))
     }
 
     /// Sender role in group: `"owner"` / `"admin"` / `"member"`.
@@ -281,9 +280,7 @@ impl NormalizedEvent {
             return false;
         };
         let sid_str = sid.to_string();
-        self.message
-            .as_ref()
-            .is_some_and(|m| m.has_at(&sid_str))
+        self.message.as_ref().is_some_and(|m| m.has_at(&sid_str))
     }
 
     /// Whether the sender is a group admin or owner (based on `raw_json["sender"]["role"]`).
@@ -484,6 +481,7 @@ mod tests {
         assert_eq!(evt.user_id(), Some(12345));
         assert_eq!(evt.group_id_i64(), Some(67890));
         assert_eq!(evt.message_id(), Some(999));
+        assert_eq!(evt.message_id_str(), Some("999".to_string()));
         assert_eq!(evt.self_id(), Some(10001));
         assert_eq!(evt.self_id_str(), Some("10001".to_string()));
         assert_eq!(evt.sub_type(), Some("normal"));
@@ -553,6 +551,13 @@ mod tests {
         assert_eq!(evt.self_id_str(), Some("bot123".to_string()));
         // as_i64 returns None for string value
         assert_eq!(evt.self_id(), None);
+    }
+
+    #[test]
+    fn test_message_id_str_from_string_value() {
+        let evt = make_event(json!({"message_id": "qqbot-msg-1"}));
+        assert_eq!(evt.message_id(), None);
+        assert_eq!(evt.message_id_str(), Some("qqbot-msg-1".to_string()));
     }
 
     #[test]

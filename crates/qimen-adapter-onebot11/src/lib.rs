@@ -39,26 +39,39 @@ impl ProtocolAdapter for OneBot11Adapter {
     }
 
     async fn decode_event(&self, packet: IncomingPacket) -> Result<NormalizedEvent> {
-        let actor = packet.payload.get("user_id").map(|user_id| qimen_protocol_core::ActorRef {
-            id: value_to_lossless_id(user_id),
-            display_name: packet
-                .payload
-                .get("sender")
-                .and_then(Value::as_object)
-                .and_then(|sender| sender.get("nickname"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-        });
+        let actor = packet
+            .payload
+            .get("user_id")
+            .map(|user_id| qimen_protocol_core::ActorRef {
+                id: value_to_lossless_id(user_id),
+                display_name: packet
+                    .payload
+                    .get("sender")
+                    .and_then(Value::as_object)
+                    .and_then(|sender| sender.get("nickname"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            });
 
         let chat = match packet.payload.get("message_type").and_then(Value::as_str) {
-            Some("private") => packet.payload.get("user_id").map(|user_id| qimen_protocol_core::ChatRef {
-                id: value_to_lossless_id(user_id),
-                kind: "private".to_string(),
-            }),
-            Some("group") => packet.payload.get("group_id").map(|group_id| qimen_protocol_core::ChatRef {
-                id: value_to_lossless_id(group_id),
-                kind: "group".to_string(),
-            }),
+            Some("private") => {
+                packet
+                    .payload
+                    .get("user_id")
+                    .map(|user_id| qimen_protocol_core::ChatRef {
+                        id: value_to_lossless_id(user_id),
+                        kind: "private".to_string(),
+                    })
+            }
+            Some("group") => {
+                packet
+                    .payload
+                    .get("group_id")
+                    .map(|group_id| qimen_protocol_core::ChatRef {
+                        id: value_to_lossless_id(group_id),
+                        kind: "group".to_string(),
+                    })
+            }
             Some(other) => Some(qimen_protocol_core::ChatRef {
                 id: packet
                     .payload
@@ -85,7 +98,10 @@ impl ProtocolAdapter for OneBot11Adapter {
             other => EventKind::Internal(other.to_string()),
         };
 
-        let message = packet.payload.get("message").map(Message::from_onebot_value);
+        let message = packet
+            .payload
+            .get("message")
+            .map(Message::from_onebot_value);
 
         let extensions = packet
             .payload
@@ -214,11 +230,12 @@ fn is_core_onebot_field(key: &str) -> bool {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qimen_protocol_core::{EventKind, IncomingPacket, ProtocolAdapter, ProtocolId, TransportMode};
+    use qimen_protocol_core::{
+        EventKind, IncomingPacket, ProtocolAdapter, ProtocolId, TransportMode,
+    };
 
     fn make_packet(payload: Value) -> IncomingPacket {
         IncomingPacket {

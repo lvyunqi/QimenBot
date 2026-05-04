@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::policy::render_notice_template;
 use super::{
     NoticeRoute, OneBotSystemDispatchSignal, OneBotSystemEventHandler, SystemEventContext,
     field_string, nested_field_string,
 };
-use super::policy::render_notice_template;
 
 pub struct LoggingNoticeHandler;
 

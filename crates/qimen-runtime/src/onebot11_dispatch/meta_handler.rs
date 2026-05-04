@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{
-    MetaRoute, OneBotSystemDispatchSignal, OneBotSystemEventHandler, SystemEventContext,
-};
+use super::{MetaRoute, OneBotSystemDispatchSignal, OneBotSystemEventHandler, SystemEventContext};
 
 pub struct LoggingMetaHandler;
 

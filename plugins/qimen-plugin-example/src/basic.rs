@@ -6,9 +6,12 @@
 use qimen_message::Segment;
 use qimen_plugin_api::prelude::*;
 
-#[module(id = "example-basic", version = "0.1.0",
-         name = "Basic Commands / 基础命令",
-         description = "Basic command examples / 基础命令示例")]
+#[module(
+    id = "example-basic",
+    version = "0.1.0",
+    name = "Basic Commands / 基础命令",
+    description = "Basic command examples / 基础命令示例"
+)]
 #[commands]
 impl BasicModule {
     // ── /ping ────────────────────────────────────────────────────────────
@@ -173,19 +176,16 @@ impl BasicModule {
             }
         };
 
-        let duration: i64 = args
-            .get(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(60); // 默认 60 秒 / default 60 seconds
+        let duration: i64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(60); // 默认 60 秒 / default 60 seconds
 
         let actions = ctx.onebot_actions();
         match actions.set_group_ban(group_id, user_id, duration).await {
             Ok(()) => CommandPluginSignal::Reply(Message::text(format!(
                 "Banned user {user_id} for {duration}s / 已禁言用户 {user_id} {duration}秒"
             ))),
-            Err(e) => CommandPluginSignal::Reply(Message::text(format!(
-                "Ban failed / 禁言失败: {e}"
-            ))),
+            Err(e) => {
+                CommandPluginSignal::Reply(Message::text(format!("Ban failed / 禁言失败: {e}")))
+            }
         }
     }
 
@@ -218,8 +218,6 @@ impl BasicModule {
     async fn stop(&self) -> CommandPluginSignal {
         // Block 会发送回复并阻止后续插件处理此命令
         // Block sends a reply and prevents subsequent plugins from handling this command
-        CommandPluginSignal::Block(Message::text(
-            "Plugin chain stopped here / 插件链在此终止",
-        ))
+        CommandPluginSignal::Block(Message::text("Plugin chain stopped here / 插件链在此终止"))
     }
 }

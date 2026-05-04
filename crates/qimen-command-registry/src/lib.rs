@@ -75,7 +75,9 @@ impl CommandRegistry {
         let aliases: &'static [&'static str] = if descriptor.aliases.is_empty() {
             &[]
         } else {
-            let leaked: Vec<&'static str> = descriptor.aliases.iter()
+            let leaked: Vec<&'static str> = descriptor
+                .aliases
+                .iter()
                 .map(|a| &*Box::leak(a.clone().into_boxed_str()))
                 .collect();
             Box::leak(leaked.into_boxed_slice())
@@ -121,7 +123,10 @@ impl CommandRegistry {
     /// 优先匹配最长的命令名，避免短命令误匹配长输入。
     /// Prefers the longest matching command name to avoid short commands
     /// accidentally matching longer input.
-    pub fn prefix_match_command<'a>(&self, input: &'a str) -> Option<(&CommandRegistryEntry, &'a str)> {
+    pub fn prefix_match_command<'a>(
+        &self,
+        input: &'a str,
+    ) -> Option<(&CommandRegistryEntry, &'a str)> {
         let mut best: Option<(&CommandRegistryEntry, &'a str, usize)> = None;
 
         for (key, positions) in &self.index {
@@ -135,7 +140,10 @@ impl CommandRegistry {
                     && let Some(entry) = positions.first().and_then(|idx| self.entries.get(*idx))
                 {
                     let key_len = key.len();
-                    if best.as_ref().is_none_or(|(_, _, prev_len)| key_len > *prev_len) {
+                    if best
+                        .as_ref()
+                        .is_none_or(|(_, _, prev_len)| key_len > *prev_len)
+                    {
                         best = Some((entry, rest, key_len));
                     }
                 }

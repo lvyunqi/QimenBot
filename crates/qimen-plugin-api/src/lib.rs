@@ -4,8 +4,8 @@
 //! [`CommandPlugin`] for text-command handlers, [`SystemPlugin`] for notice/request/meta
 //! event handlers, and [`Module`] for grouping plugins into loadable units.
 
-pub use inventory;
 use async_trait::async_trait;
+pub use inventory;
 use qimen_error::Result;
 use qimen_message::Message;
 use qimen_protocol_core::{
@@ -43,8 +43,11 @@ pub trait RuntimeBotContext: Send + Sync {
     /// Send a normalized action request and await the response.
     async fn send_action(&self, req: NormalizedActionRequest) -> Result<NormalizedActionResponse>;
     /// Convenience method: reply to an event with a message.
-    async fn reply(&self, event: &NormalizedEvent, message: Message)
-        -> Result<NormalizedActionResponse>;
+    async fn reply(
+        &self,
+        event: &NormalizedEvent,
+        message: Message,
+    ) -> Result<NormalizedActionResponse>;
     /// Spawn a long-running background task on the runtime's task pool.
     fn spawn_owned(&self, name: &str, fut: OwnedTaskFuture) -> TaskHandle;
 }
@@ -73,7 +76,9 @@ impl<'a> OneBotActionClient<'a> {
 
     /// Get the bot's own login info (user_id and nickname).
     pub async fn get_login_info(&self) -> Result<LoginInfoResponse> {
-        let response = self.send_onebot_action("get_login_info", Value::Object(Default::default())).await?;
+        let response = self
+            .send_onebot_action("get_login_info", Value::Object(Default::default()))
+            .await?;
         parse_action_data(response)
     }
 
@@ -119,7 +124,9 @@ impl<'a> OneBotActionClient<'a> {
 
     /// Get the list of groups the bot has joined.
     pub async fn get_group_list(&self) -> Result<Vec<GroupInfoResponse>> {
-        let response = self.send_onebot_action("get_group_list", Value::Object(Default::default())).await?;
+        let response = self
+            .send_onebot_action("get_group_list", Value::Object(Default::default()))
+            .await?;
         parse_action_data(response)
     }
 
@@ -144,7 +151,10 @@ impl<'a> OneBotActionClient<'a> {
     }
 
     /// Get the member list for a group.
-    pub async fn get_group_member_list(&self, group_id: i64) -> Result<Vec<GroupMemberInfoResponse>> {
+    pub async fn get_group_member_list(
+        &self,
+        group_id: i64,
+    ) -> Result<Vec<GroupMemberInfoResponse>> {
         let response = self
             .send_onebot_action(
                 "get_group_member_list",
@@ -159,7 +169,11 @@ impl<'a> OneBotActionClient<'a> {
     // ── Message actions ──
 
     /// Send a private (direct) message to a user.
-    pub async fn send_private_msg(&self, user_id: i64, message: Message) -> Result<SendMsgResponse> {
+    pub async fn send_private_msg(
+        &self,
+        user_id: i64,
+        message: Message,
+    ) -> Result<SendMsgResponse> {
         let response = self
             .send_onebot_action(
                 "send_private_msg",
@@ -208,10 +222,7 @@ impl<'a> OneBotActionClient<'a> {
 
     pub async fn get_forward_msg(&self, id: impl Into<String>) -> Result<GetForwardMsgResponse> {
         let response = self
-            .send_onebot_action(
-                "get_forward_msg",
-                serde_json::json!({ "id": id.into() }),
-            )
+            .send_onebot_action("get_forward_msg", serde_json::json!({ "id": id.into() }))
             .await?;
         parse_action_data(response)
     }
@@ -250,12 +261,7 @@ impl<'a> OneBotActionClient<'a> {
         ensure_action_ok(&response)
     }
 
-    pub async fn set_group_ban(
-        &self,
-        group_id: i64,
-        user_id: i64,
-        duration: i64,
-    ) -> Result<()> {
+    pub async fn set_group_ban(&self, group_id: i64, user_id: i64, duration: i64) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "set_group_ban",
@@ -301,12 +307,7 @@ impl<'a> OneBotActionClient<'a> {
         ensure_action_ok(&response)
     }
 
-    pub async fn set_group_admin(
-        &self,
-        group_id: i64,
-        user_id: i64,
-        enable: bool,
-    ) -> Result<()> {
+    pub async fn set_group_admin(&self, group_id: i64, user_id: i64, enable: bool) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "set_group_admin",
@@ -320,12 +321,7 @@ impl<'a> OneBotActionClient<'a> {
         ensure_action_ok(&response)
     }
 
-    pub async fn set_group_card(
-        &self,
-        group_id: i64,
-        user_id: i64,
-        card: &str,
-    ) -> Result<()> {
+    pub async fn set_group_card(&self, group_id: i64, user_id: i64, card: &str) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "set_group_card",
@@ -481,11 +477,7 @@ impl<'a> OneBotActionClient<'a> {
         parse_action_data(response)
     }
 
-    pub async fn get_group_honor_info(
-        &self,
-        group_id: i64,
-        honor_type: &str,
-    ) -> Result<Value> {
+    pub async fn get_group_honor_info(&self, group_id: i64, honor_type: &str) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "get_group_honor_info",
@@ -673,18 +665,11 @@ impl<'a> OneBotActionClient<'a> {
         if let Some(folder) = folder {
             params["folder"] = serde_json::json!(folder);
         }
-        let response = self
-            .send_onebot_action("upload_group_file", params)
-            .await?;
+        let response = self.send_onebot_action("upload_group_file", params).await?;
         ensure_action_ok(&response)
     }
 
-    pub async fn upload_private_file(
-        &self,
-        user_id: i64,
-        file: &str,
-        name: &str,
-    ) -> Result<()> {
+    pub async fn upload_private_file(&self, user_id: i64, file: &str, name: &str) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "upload_private_file",
@@ -711,11 +696,7 @@ impl<'a> OneBotActionClient<'a> {
         Ok(response.data)
     }
 
-    pub async fn get_group_files_by_folder(
-        &self,
-        group_id: i64,
-        folder_id: &str,
-    ) -> Result<Value> {
+    pub async fn get_group_files_by_folder(&self, group_id: i64, folder_id: &str) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "get_group_files_by_folder",
@@ -749,11 +730,7 @@ impl<'a> OneBotActionClient<'a> {
         Ok(response.data)
     }
 
-    pub async fn create_group_file_folder(
-        &self,
-        group_id: i64,
-        name: &str,
-    ) -> Result<()> {
+    pub async fn create_group_file_folder(&self, group_id: i64, name: &str) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "create_group_file_folder",
@@ -766,11 +743,7 @@ impl<'a> OneBotActionClient<'a> {
         ensure_action_ok(&response)
     }
 
-    pub async fn delete_group_folder(
-        &self,
-        group_id: i64,
-        folder_id: &str,
-    ) -> Result<()> {
+    pub async fn delete_group_folder(&self, group_id: i64, folder_id: &str) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "delete_group_folder",
@@ -783,12 +756,7 @@ impl<'a> OneBotActionClient<'a> {
         ensure_action_ok(&response)
     }
 
-    pub async fn delete_group_file(
-        &self,
-        group_id: i64,
-        file_id: &str,
-        busid: i32,
-    ) -> Result<()> {
+    pub async fn delete_group_file(&self, group_id: i64, file_id: &str, busid: i32) -> Result<()> {
         let response = self
             .send_onebot_action(
                 "delete_group_file",
@@ -804,11 +772,7 @@ impl<'a> OneBotActionClient<'a> {
 
     // ── Forward messages ──
 
-    pub async fn send_group_forward_msg(
-        &self,
-        group_id: i64,
-        messages: Value,
-    ) -> Result<Value> {
+    pub async fn send_group_forward_msg(&self, group_id: i64, messages: Value) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "send_group_forward_msg",
@@ -822,11 +786,7 @@ impl<'a> OneBotActionClient<'a> {
         Ok(response.data)
     }
 
-    pub async fn send_private_forward_msg(
-        &self,
-        user_id: i64,
-        messages: Value,
-    ) -> Result<Value> {
+    pub async fn send_private_forward_msg(&self, user_id: i64, messages: Value) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "send_private_forward_msg",
@@ -870,11 +830,7 @@ impl<'a> OneBotActionClient<'a> {
         Ok(response.data)
     }
 
-    pub async fn get_guild_channel_list(
-        &self,
-        guild_id: &str,
-        no_cache: bool,
-    ) -> Result<Value> {
+    pub async fn get_guild_channel_list(&self, guild_id: &str, no_cache: bool) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "get_guild_channel_list",
@@ -888,11 +844,7 @@ impl<'a> OneBotActionClient<'a> {
         Ok(response.data)
     }
 
-    pub async fn get_guild_member_list(
-        &self,
-        guild_id: &str,
-        next_token: &str,
-    ) -> Result<Value> {
+    pub async fn get_guild_member_list(&self, guild_id: &str, next_token: &str) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "get_guild_member_list",
@@ -906,11 +858,7 @@ impl<'a> OneBotActionClient<'a> {
         Ok(response.data)
     }
 
-    pub async fn get_guild_member_profile(
-        &self,
-        guild_id: &str,
-        user_id: &str,
-    ) -> Result<Value> {
+    pub async fn get_guild_member_profile(&self, guild_id: &str, user_id: &str) -> Result<Value> {
         let response = self
             .send_onebot_action(
                 "get_guild_member_profile",
@@ -1093,7 +1041,11 @@ impl<'a> OneBotActionClient<'a> {
 
     /// Send a custom/arbitrary OneBot action. This is a passthrough for actions
     /// not covered by the built-in methods (e.g., implementation-specific extensions).
-    pub async fn custom_action(&self, action: &str, params: serde_json::Value) -> Result<NormalizedActionResponse> {
+    pub async fn custom_action(
+        &self,
+        action: &str,
+        params: serde_json::Value,
+    ) -> Result<NormalizedActionResponse> {
         self.send_onebot_action(action, params).await
     }
 
@@ -1539,9 +1491,7 @@ impl IntoCommandSignal for &str {
     }
 }
 
-impl<T: IntoCommandSignal, E: std::fmt::Display> IntoCommandSignal
-    for std::result::Result<T, E>
-{
+impl<T: IntoCommandSignal, E: std::fmt::Display> IntoCommandSignal for std::result::Result<T, E> {
     fn into_signal(self) -> CommandPluginSignal {
         match self {
             Ok(v) => v.into_signal(),
@@ -1582,9 +1532,7 @@ impl IntoSystemSignal for &str {
     }
 }
 
-impl<T: IntoSystemSignal, E: std::fmt::Display> IntoSystemSignal
-    for std::result::Result<T, E>
-{
+impl<T: IntoSystemSignal, E: std::fmt::Display> IntoSystemSignal for std::result::Result<T, E> {
     fn into_signal(self) -> SystemPluginSignal {
         match self {
             Ok(v) => v.into_signal(),
@@ -1915,16 +1863,16 @@ pub mod prelude {
     pub use crate::{
         CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext,
         CommandPluginSignal, CommandRole, IntoCommandSignal, IntoSystemSignal,
-        MessageEventInterceptor, Module, ModuleEntry, OneBotActionClient, PluginCompatibility, PluginMetadata,
-        RuntimeBotContext, SystemMetaRoute, SystemNoticeRoute, SystemPlugin, SystemPluginContext,
-        SystemPluginSignal, SystemRequestRoute,
+        MessageEventInterceptor, Module, ModuleEntry, OneBotActionClient, PluginCompatibility,
+        PluginMetadata, RuntimeBotContext, SystemMetaRoute, SystemNoticeRoute, SystemPlugin,
+        SystemPluginContext, SystemPluginSignal, SystemRequestRoute,
     };
     pub use async_trait::async_trait;
     pub use qimen_error::Result;
     pub use qimen_message::Message;
+    pub use qimen_plugin_derive::{commands, module, qimen_commands, qimen_module, system};
     pub use qimen_protocol_core::{
         NormalizedEvent, qq_avatar_url, qq_group_avatar_url, value_to_lossless_id,
     };
-    pub use qimen_plugin_derive::{commands, module, qimen_commands, qimen_module, system};
     pub use std::sync::Arc;
 }

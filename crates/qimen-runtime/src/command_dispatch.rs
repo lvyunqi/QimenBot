@@ -178,9 +178,10 @@ impl CommandDispatcher {
                 continue;
             }
 
-            if let Some(health_entry) = health.iter().find(|item| {
-                entry.callback_symbol.is_some() && item.path.contains(&entry.id)
-            }) {
+            if let Some(health_entry) = health
+                .iter()
+                .find(|item| entry.callback_symbol.is_some() && item.path.contains(&entry.id))
+            {
                 let health_text = format!(
                     "health: failures={} isolated_until={}",
                     health_entry.failures,
@@ -252,24 +253,31 @@ impl<'a> CommandDispatch<'a> {
         // 先精确匹配；若失败且命令名无空格分隔参数，尝试前缀匹配
         // Exact match first; if it fails and the name has no space-separated args,
         // try prefix matching (e.g. "创建角色小明-男" → command="创建角色", args=["小明-男"])
-        let (matched_entry, parsed) = if let Some(entry) = self.dispatcher.registry.match_command(&parsed.name) {
-            (Some(entry), parsed)
-        } else if let Some((entry, rest)) = self.dispatcher.registry.prefix_match_command(&parsed.name) {
-            let mut new_args = vec![rest.to_string()];
-            new_args.extend(parsed.args);
-            let new_parsed = ParsedCommandInput {
-                trigger: parsed.trigger,
-                name: entry.definition.name.to_string(),
-                args: new_args,
-                source_text: parsed.source_text,
+        let (matched_entry, parsed) =
+            if let Some(entry) = self.dispatcher.registry.match_command(&parsed.name) {
+                (Some(entry), parsed)
+            } else if let Some((entry, rest)) =
+                self.dispatcher.registry.prefix_match_command(&parsed.name)
+            {
+                let mut new_args = vec![rest.to_string()];
+                new_args.extend(parsed.args);
+                let new_parsed = ParsedCommandInput {
+                    trigger: parsed.trigger,
+                    name: entry.definition.name.to_string(),
+                    args: new_args,
+                    source_text: parsed.source_text,
+                };
+                (Some(entry), new_parsed)
+            } else {
+                (None, parsed)
             };
-            (Some(entry), new_parsed)
-        } else {
-            (None, parsed)
-        };
 
         if let Some(entry) = matched_entry {
-            if !role_allowed(&entry.definition.required_role, self.is_admin, self.is_owner) {
+            if !role_allowed(
+                &entry.definition.required_role,
+                self.is_admin,
+                self.is_owner,
+            ) {
                 return Some(CommandDispatchSignal::Reply(Message::text(
                     "permission denied for this command",
                 )));
@@ -313,15 +321,24 @@ impl<'a> CommandDispatch<'a> {
                 if let Some(signal) = plugin.on_command(&plugin_ctx, &invocation).await {
                     match signal {
                         CommandPluginSignal::Reply(message) => {
-                            tracing::info!(plugin = plugin.metadata().id, "command plugin produced reply");
+                            tracing::info!(
+                                plugin = plugin.metadata().id,
+                                "command plugin produced reply"
+                            );
                             return Some(CommandDispatchSignal::Reply(message));
                         }
                         CommandPluginSignal::Block(message) => {
-                            tracing::info!(plugin = plugin.metadata().id, "command plugin blocked chain with reply");
+                            tracing::info!(
+                                plugin = plugin.metadata().id,
+                                "command plugin blocked chain with reply"
+                            );
                             return Some(CommandDispatchSignal::Reply(message));
                         }
                         CommandPluginSignal::Ignore => {
-                            tracing::info!(plugin = plugin.metadata().id, "command plugin blocked chain silently");
+                            tracing::info!(
+                                plugin = plugin.metadata().id,
+                                "command plugin blocked chain silently"
+                            );
                             return None;
                         }
                         CommandPluginSignal::Continue => {}
@@ -435,7 +452,9 @@ fn dispatch_registry_action(source_text: &str) -> CommandDispatchSignal {
     let mut parts = normalized.split_whitespace();
     let _root = parts.next();
     match parts.next() {
-        Some("conflicts") => CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryConflicts),
+        Some("conflicts") => {
+            CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryConflicts)
+        }
         _ => CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryReport),
     }
 }
@@ -556,7 +575,8 @@ pub fn render_help_text(registry_entries: &[(CommandDefinition, String)]) -> Str
             builtin.push((definition.clone(), source.clone()));
         } else if source.starts_with("static-plugin:") {
             static_plugins.push((definition.clone(), source.clone()));
-        } else if source.starts_with("dynamic-descriptor:") || source.starts_with("dynamic-plugin:") {
+        } else if source.starts_with("dynamic-descriptor:") || source.starts_with("dynamic-plugin:")
+        {
             dynamic_descriptors.push((definition.clone(), source.clone()));
         }
     }
@@ -625,7 +645,7 @@ fn render_command_role(role: &CommandRole) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandDispatchSignal, CommandDispatcher, CommandHandler, CommandContext};
+    use super::{CommandContext, CommandDispatchSignal, CommandDispatcher, CommandHandler};
     use async_trait::async_trait;
     use qimen_error::{QimenError, Result};
     use qimen_message::Message;
@@ -658,11 +678,20 @@ mod tests {
             CAPABILITIES.get_or_init(CapabilitySet::default)
         }
 
-        async fn send_action(&self, _req: NormalizedActionRequest) -> Result<NormalizedActionResponse> {
-            Err(QimenError::Runtime("test runtime does not send actions".to_string()))
+        async fn send_action(
+            &self,
+            _req: NormalizedActionRequest,
+        ) -> Result<NormalizedActionResponse> {
+            Err(QimenError::Runtime(
+                "test runtime does not send actions".to_string(),
+            ))
         }
 
-        async fn reply(&self, _event: &NormalizedEvent, _message: Message) -> Result<NormalizedActionResponse> {
+        async fn reply(
+            &self,
+            _event: &NormalizedEvent,
+            _message: Message,
+        ) -> Result<NormalizedActionResponse> {
             Ok(NormalizedActionResponse {
                 protocol: ProtocolId::OneBot11,
                 bot_instance: "qq-main".to_string(),
@@ -782,7 +811,10 @@ mod tests {
         dispatcher.register_handler(Arc::new(CustomHandler));
 
         let event = sample_event("ping");
-        let signal = dispatcher.dispatch("qq-main", &event, &TEST_RUNTIME).execute().await;
+        let signal = dispatcher
+            .dispatch("qq-main", &event, &TEST_RUNTIME)
+            .execute()
+            .await;
 
         match signal {
             Some(CommandDispatchSignal::Reply(message)) => {
@@ -799,7 +831,10 @@ mod tests {
         dispatcher.register_plugin(Arc::new(PluginEcho));
 
         let event = sample_event("status");
-        let signal = dispatcher.dispatch("qq-main", &event, &TEST_RUNTIME).execute().await;
+        let signal = dispatcher
+            .dispatch("qq-main", &event, &TEST_RUNTIME)
+            .execute()
+            .await;
 
         match signal {
             Some(CommandDispatchSignal::Reply(message)) => {

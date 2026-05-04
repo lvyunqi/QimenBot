@@ -186,10 +186,7 @@ mod tests {
         let parsed = parse_cq_string(&cq);
         assert_eq!(parsed.segments.len(), 1);
         assert_eq!(
-            parsed.segments[0]
-                .data
-                .get("data")
-                .and_then(Value::as_str),
+            parsed.segments[0].data.get("data").and_then(Value::as_str),
             Some("a,b")
         );
     }

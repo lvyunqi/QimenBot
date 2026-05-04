@@ -17,6 +17,21 @@ metrics_bind = "127.0.0.1:9090"
 
 [official_host]
 builtin_modules = ["command", "admin", "scheduler", "bridge"]
-plugin_modules = ["example-basic"]
+plugin_modules = ["example-basic", "example-message"]
 plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
+
+[[bots]]
+id = "qq-official"
+protocol = "qq-official"
+transport = "gateway"
+enabled = true
+
+appid = "${QQBOT_APPID}"
+secret = "${QQBOT_SECRET}"
+sandbox = false
+intents = ["public_messages", "public_guild_messages", "direct_message"]
+
+enabled_modules = ["command", "admin", "scheduler"]
+owners = []
+admins = []

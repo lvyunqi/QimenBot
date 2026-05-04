@@ -64,6 +64,12 @@ pub struct BotConfig {
     pub bind: Option<String>,
     pub path: Option<String>,
     pub access_token: Option<String>,
+    pub appid: Option<String>,
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub intents: Vec<String>,
+    #[serde(default)]
+    pub sandbox: bool,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -140,10 +146,64 @@ impl AppConfig {
                     bot.id
                 )));
             }
+            if bot.protocol == "qq-official" {
+                if bot.appid.as_deref().is_none_or(str::is_empty) {
+                    return Err(QimenError::Config(format!(
+                        "bot '{}' with protocol qq-official must declare appid",
+                        bot.id
+                    )));
+                }
+                if bot.secret.as_deref().is_none_or(str::is_empty) {
+                    return Err(QimenError::Config(format!(
+                        "bot '{}' with protocol qq-official must declare secret",
+                        bot.id
+                    )));
+                }
+                if bot.transport != "gateway" {
+                    return Err(QimenError::Config(format!(
+                        "bot '{}' with protocol qq-official must use transport gateway",
+                        bot.id
+                    )));
+                }
+                qq_official_intents_value(&bot.intents)?;
+            }
         }
 
         Ok(())
     }
+}
+
+pub fn qq_official_intents_value(intents: &[String]) -> Result<u64> {
+    let mut value = 0_u64;
+    for intent in intents {
+        value |= qq_official_intent_bit(intent)?;
+    }
+    Ok(value)
+}
+
+pub fn qq_official_intent_bit(intent: &str) -> Result<u64> {
+    let bit = match intent {
+        "guilds" => 1_u64 << 0,
+        "guild_members" => 1_u64 << 1,
+        "guild_messages" => 1_u64 << 9,
+        "guild_message_reactions" => 1_u64 << 10,
+        "direct_message" => 1_u64 << 12,
+        "open_forum_event" => 1_u64 << 18,
+        "audio_or_live_channel_member" => 1_u64 << 19,
+        "public_messages" => 1_u64 << 25,
+        "interaction" => 1_u64 << 26,
+        "message_audit" => 1_u64 << 27,
+        "forums" => 1_u64 << 28,
+        "audio_action" => 1_u64 << 29,
+        "public_guild_messages" => 1_u64 << 30,
+        other => {
+            return Err(QimenError::Config(format!(
+                "unknown qq-official intent '{}'",
+                other
+            )));
+        }
+    };
+    Ok(bit)
 }
 
 fn default_true() -> bool {
@@ -328,7 +388,10 @@ transport = "ws-forward"
             config.official_host.builtin_modules,
             vec!["command", "admin", "scheduler", "bridge"]
         );
-        assert_eq!(config.official_host.plugin_state_path, "config/plugin-state.toml");
+        assert_eq!(
+            config.official_host.plugin_state_path,
+            "config/plugin-state.toml"
+        );
         assert_eq!(config.official_host.plugin_bin_dir, "plugins/bin");
     }
 
@@ -396,16 +459,22 @@ transport = "ws-forward"
 
     #[test]
     fn expand_env_replaces_placeholder() {
-        unsafe { std::env::set_var("QIMEN_TEST_VAR", "replaced_value"); }
+        unsafe {
+            std::env::set_var("QIMEN_TEST_VAR", "replaced_value");
+        }
         let input = "key = \"${QIMEN_TEST_VAR}\"";
         let output = expand_env_placeholders(input);
         assert_eq!(output, "key = \"replaced_value\"");
-        unsafe { std::env::remove_var("QIMEN_TEST_VAR"); }
+        unsafe {
+            std::env::remove_var("QIMEN_TEST_VAR");
+        }
     }
 
     #[test]
     fn expand_env_missing_var_becomes_empty() {
-        unsafe { std::env::remove_var("QIMEN_NONEXISTENT_VAR_XYZ"); }
+        unsafe {
+            std::env::remove_var("QIMEN_NONEXISTENT_VAR_XYZ");
+        }
         let input = "value = \"${QIMEN_NONEXISTENT_VAR_XYZ}\"";
         let output = expand_env_placeholders(input);
         assert_eq!(output, "value = \"\"");
@@ -438,5 +507,110 @@ transport = "ws-forward"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert!(config.bots[0].enabled);
+    }
+
+    #[test]
+    fn parse_qq_official_bot_config() {
+        let toml_str = r#"
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "qq-official"
+protocol = "qq-official"
+transport = "gateway"
+appid = "1024"
+secret = "secret"
+intents = ["public_messages", "public_guild_messages", "direct_message"]
+sandbox = true
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.bots[0].appid.as_deref(), Some("1024"));
+        assert_eq!(config.bots[0].secret.as_deref(), Some("secret"));
+        assert_eq!(
+            qq_official_intents_value(&config.bots[0].intents).unwrap(),
+            (1_u64 << 25) | (1_u64 << 30) | (1_u64 << 12)
+        );
+        assert!(config.bots[0].sandbox);
+    }
+
+    #[test]
+    fn validate_rejects_qq_official_without_appid() {
+        let toml_str = r#"
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "qq-official"
+protocol = "qq-official"
+transport = "gateway"
+secret = "secret"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_qq_official_non_gateway_transport() {
+        let toml_str = r#"
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "qq-official"
+protocol = "qq-official"
+transport = "ws-forward"
+appid = "1024"
+secret = "secret"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_qq_official_intent() {
+        let toml_str = r#"
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "qq-official"
+protocol = "qq-official"
+transport = "gateway"
+appid = "1024"
+secret = "secret"
+intents = ["public_messages", "bad_intent"]
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.validate().is_err());
     }
 }

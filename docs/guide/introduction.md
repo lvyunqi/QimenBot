@@ -2,7 +2,7 @@
 
 ## 什么是 QimenBot？
 
-QimenBot 是一个用 **Rust** 编写的模块化、可扩展的聊天机器人框架。它基于 [OneBot](https://github.com/botuniverse/onebot-11) 协议，可以对接 QQ、微信等多种聊天平台。
+QimenBot 是一个用 **Rust** 编写的模块化、可扩展的聊天机器人框架。它通过协议适配器对接 OneBot 11 和官方 QQ Bot，并保留 OneBot 12、Satori 等后续扩展空间。
 
 与传统的 Bot 框架不同，QimenBot 将**可复用的框架层**与**参考 Host 实现**分离——你既可以直接部署官方 Host，也可以基于框架层构建自己的 Bot 平台。
 
@@ -84,6 +84,7 @@ QimenBot 支持两种插件开发方式：
 | 协议 | 状态 | 传输模式 |
 |------|------|----------|
 | OneBot 11 | ✅ 生产就绪 | WS 正向、WS 反向、HTTP API、HTTP POST |
+| 官方 QQ Bot | 🧪 预览 | Gateway + OpenAPI |
 | OneBot 12 | 🔲 计划中 | — |
 | Satori | 🔲 计划中 | — |
 

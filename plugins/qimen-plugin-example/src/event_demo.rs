@@ -5,9 +5,12 @@
 
 use qimen_plugin_api::prelude::*;
 
-#[module(id = "example-events", version = "0.1.0",
-         name = "Event Demo / 事件演示",
-         description = "System event handling examples / 系统事件处理示例")]
+#[module(
+    id = "example-events",
+    version = "0.1.0",
+    name = "Event Demo / 事件演示",
+    description = "System event handling examples / 系统事件处理示例"
+)]
 #[commands]
 impl EventDemoModule {
     // ── Poke 戳一戳 ──────────────────────────────────────────────────────
@@ -25,9 +28,7 @@ impl EventDemoModule {
         };
 
         if is_self {
-            SystemPluginSignal::Reply(Message::text(
-                "Don't poke me! / 别戳我！",
-            ))
+            SystemPluginSignal::Reply(Message::text("Don't poke me! / 别戳我！"))
         } else {
             SystemPluginSignal::Continue
         }
@@ -39,10 +40,14 @@ impl EventDemoModule {
 
     #[notice(GroupIncreaseApprove, GroupIncreaseInvite)]
     async fn on_member_join(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal {
-        let user_id = ctx.event.get("user_id")
+        let user_id = ctx
+            .event
+            .get("user_id")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        let group_id = ctx.event.get("group_id")
+        let group_id = ctx
+            .event
+            .get("group_id")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
@@ -69,13 +74,19 @@ impl EventDemoModule {
 
     #[notice(GroupRecall)]
     async fn on_recall(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal {
-        let operator = ctx.event.get("operator_id")
+        let operator = ctx
+            .event
+            .get("operator_id")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        let user = ctx.event.get("user_id")
+        let user = ctx
+            .event
+            .get("user_id")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        let msg_id = ctx.event.get("message_id")
+        let msg_id = ctx
+            .event
+            .get("message_id")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
@@ -97,11 +108,15 @@ impl EventDemoModule {
 
     #[request(Friend)]
     async fn on_friend_request(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal {
-        let flag = ctx.event.get("flag")
+        let flag = ctx
+            .event
+            .get("flag")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let comment = ctx.event.get("comment")
+        let comment = ctx
+            .event
+            .get("comment")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
@@ -123,11 +138,15 @@ impl EventDemoModule {
 
     #[request(GroupInvite)]
     async fn on_group_invite(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal {
-        let flag = ctx.event.get("flag")
+        let flag = ctx
+            .event
+            .get("flag")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let sub_type = ctx.event.get("sub_type")
+        let sub_type = ctx
+            .event
+            .get("sub_type")
             .and_then(|v| v.as_str())
             .unwrap_or("invite")
             .to_string();
@@ -138,10 +157,7 @@ impl EventDemoModule {
             "Auto-approving group invite / 自动同意群邀请"
         );
 
-        SystemPluginSignal::ApproveGroupInvite {
-            flag,
-            sub_type,
-        }
+        SystemPluginSignal::ApproveGroupInvite { flag, sub_type }
     }
 
     // ── 心跳事件 / Heartbeat event ───────────────────────────────────────
@@ -150,14 +166,13 @@ impl EventDemoModule {
 
     #[meta(Heartbeat)]
     async fn on_heartbeat(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal {
-        let interval = ctx.event.get("interval")
+        let interval = ctx
+            .event
+            .get("interval")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
-        tracing::trace!(
-            interval,
-            "Heartbeat received / 收到心跳"
-        );
+        tracing::trace!(interval, "Heartbeat received / 收到心跳");
 
         SystemPluginSignal::Continue
     }

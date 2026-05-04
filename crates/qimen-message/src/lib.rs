@@ -164,9 +164,9 @@ impl Message {
 
     /// Check if message contains an @all segment
     pub fn has_at_all(&self) -> bool {
-        self.segments.iter().any(|s| {
-            s.kind == "at" && s.data.get("qq").and_then(|v| v.as_str()) == Some("all")
-        })
+        self.segments
+            .iter()
+            .any(|s| s.kind == "at" && s.data.get("qq").and_then(|v| v.as_str()) == Some("all"))
     }
 
     /// Check if message contains an image segment
@@ -210,9 +210,9 @@ impl Message {
 
     /// Whether the message @-mentions a specific user ID.
     pub fn has_at(&self, user_id: &str) -> bool {
-        self.segments.iter().any(|s| {
-            s.kind == "at" && s.data.get("qq").and_then(|v| v.as_str()) == Some(user_id)
-        })
+        self.segments
+            .iter()
+            .any(|s| s.kind == "at" && s.data.get("qq").and_then(|v| v.as_str()) == Some(user_id))
     }
 
     /// All image URLs in the message (prefers `data["url"]`, falls back to `data["file"]`).
@@ -379,7 +379,8 @@ impl MessageBuilder {
         nickname: impl Into<String>,
         content: Message,
     ) -> Self {
-        self.segments.push(Segment::node(user_id, nickname, content));
+        self.segments
+            .push(Segment::node(user_id, nickname, content));
         self
     }
 
@@ -431,7 +432,8 @@ impl MessageBuilder {
 
     /// Image with custom attributes (cache, proxy)
     pub fn image_with_opts(mut self, file: impl Into<String>, cache: bool, proxy: bool) -> Self {
-        self.segments.push(Segment::image_with_opts(file, cache, proxy));
+        self.segments
+            .push(Segment::image_with_opts(file, cache, proxy));
         self
     }
 
@@ -632,11 +634,7 @@ impl Segment {
         segment
     }
 
-    pub fn node(
-        user_id: impl Into<String>,
-        nickname: impl Into<String>,
-        content: Message,
-    ) -> Self {
+    pub fn node(user_id: impl Into<String>, nickname: impl Into<String>, content: Message) -> Self {
         let mut segment = Self::new("node");
         segment
             .data

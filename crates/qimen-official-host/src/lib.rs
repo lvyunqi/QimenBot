@@ -53,7 +53,8 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
     tracing::info!("starting qimen official host");
 
     let plugin_state = load_plugin_state(&config.official_host.plugin_state_path)?;
-    let dynamic_descriptors = scan_dynamic_plugin_descriptors(&config.official_host.plugin_bin_dir)?;
+    let dynamic_descriptors =
+        scan_dynamic_plugin_descriptors(&config.official_host.plugin_bin_dir)?;
     let dynamic_descriptors: Vec<_> = dynamic_descriptors
         .into_iter()
         .filter(|d| plugin_state.is_enabled(&d.plugin_id))
@@ -68,7 +69,8 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
 
     let plugins = modules.collect_plugins();
 
-    let runtime = Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report);
+    let runtime =
+        Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report);
     runtime.boot().await?;
     tracing::info!(bots = runtime.bots().len(), "official host booted");
     Ok(())
@@ -208,8 +210,16 @@ fn print_host_startup_report(report: &HostPluginReport) {
     }
 
     for descriptor in &report.dynamic_plugins {
-        let command_names: Vec<&str> = descriptor.commands.iter().map(|c| c.name.as_str()).collect();
-        let route_names: Vec<String> = descriptor.routes.iter().map(|r| format!("{}:{}", r.kind, r.route)).collect();
+        let command_names: Vec<&str> = descriptor
+            .commands
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        let route_names: Vec<String> = descriptor
+            .routes
+            .iter()
+            .map(|r| format!("{}:{}", r.kind, r.route))
+            .collect();
         tracing::info!(
             path = %descriptor.path,
             plugin = %descriptor.plugin_id,
@@ -280,53 +290,72 @@ fn is_dynamic_library_path(path: &Path) -> bool {
 
 fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
     unsafe {
-        let library = libloading::Library::new(path)
-            .map_err(|err| QimenError::Module(format!("failed to load library '{}': {err}", path.display())))?;
+        let library = libloading::Library::new(path).map_err(|err| {
+            QimenError::Module(format!(
+                "failed to load library '{}': {err}",
+                path.display()
+            ))
+        })?;
 
         // Try v0.2 symbol name first, then fallback to v0.1 legacy name
-        let descriptor: PluginDescriptor = if let Ok(symbol) = library
-            .get::<unsafe extern "C" fn() -> PluginDescriptor>(b"qimen_plugin_descriptor")
+        let descriptor: PluginDescriptor = if let Ok(symbol) =
+            library.get::<unsafe extern "C" fn() -> PluginDescriptor>(b"qimen_plugin_descriptor")
         {
             symbol()
         } else {
             let symbol: libloading::Symbol<unsafe extern "C" fn() -> PluginDescriptor> = library
                 .get(b"qimen_demo_plugin_descriptor")
-                .map_err(|err| QimenError::Module(format!(
-                    "failed to load descriptor symbol '{}': {err}",
-                    path.display()
-                )))?;
+                .map_err(|err| {
+                    QimenError::Module(format!(
+                        "failed to load descriptor symbol '{}': {err}",
+                        path.display()
+                    ))
+                })?;
             symbol()
         };
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
                 "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2 or 0.3)",
-                descriptor.plugin_id,
-                descriptor.api_version,
+                descriptor.plugin_id, descriptor.api_version,
             )));
         }
 
-        let is_v2_plus = descriptor.api_version.as_str() == "0.2"
-            || descriptor.api_version.as_str() == "0.3";
+        let is_v2_plus =
+            descriptor.api_version.as_str() == "0.2" || descriptor.api_version.as_str() == "0.3";
 
         // Parse v0.2+ multi-command entries
         let commands: Vec<DynamicCommandEntry> = if is_v2_plus && !descriptor.commands.is_empty() {
-            descriptor.commands.iter().map(|entry| {
-                let aliases = if entry.aliases.is_empty() {
-                    Vec::new()
-                } else {
-                    entry.aliases.as_str().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
-                };
-                DynamicCommandEntry {
-                    name: entry.name.to_string(),
-                    description: entry.description.to_string(),
-                    callback_symbol: entry.callback_symbol.to_string(),
-                    aliases,
-                    category: if entry.category.is_empty() { "dynamic".to_string() } else { entry.category.to_string() },
-                    required_role: entry.required_role.to_string(),
-                    scope: entry.scope.to_string(),
-                }
-            }).collect()
+            descriptor
+                .commands
+                .iter()
+                .map(|entry| {
+                    let aliases = if entry.aliases.is_empty() {
+                        Vec::new()
+                    } else {
+                        entry
+                            .aliases
+                            .as_str()
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    };
+                    DynamicCommandEntry {
+                        name: entry.name.to_string(),
+                        description: entry.description.to_string(),
+                        callback_symbol: entry.callback_symbol.to_string(),
+                        aliases,
+                        category: if entry.category.is_empty() {
+                            "dynamic".to_string()
+                        } else {
+                            entry.category.to_string()
+                        },
+                        required_role: entry.required_role.to_string(),
+                        scope: entry.scope.to_string(),
+                    }
+                })
+                .collect()
         } else if !descriptor.command_name.is_empty() {
             // Legacy v0.1: single command
             vec![DynamicCommandEntry {
@@ -344,11 +373,15 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
 
         // Parse v0.2+ multi-route entries
         let routes: Vec<DynamicRouteEntry> = if is_v2_plus && !descriptor.routes.is_empty() {
-            descriptor.routes.iter().map(|entry| DynamicRouteEntry {
-                kind: entry.kind.to_string(),
-                route: entry.route.to_string(),
-                callback_symbol: entry.callback_symbol.to_string(),
-            }).collect()
+            descriptor
+                .routes
+                .iter()
+                .map(|entry| DynamicRouteEntry {
+                    kind: entry.kind.to_string(),
+                    route: entry.route.to_string(),
+                    callback_symbol: entry.callback_symbol.to_string(),
+                })
+                .collect()
         } else {
             // Legacy v0.1: build routes from individual fields
             let mut routes = Vec::new();

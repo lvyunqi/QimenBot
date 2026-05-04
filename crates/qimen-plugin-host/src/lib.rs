@@ -43,8 +43,12 @@ struct PluginCollector {
 impl PluginRegistrar for PluginCollector {
     fn register(&mut self, registration: PluginRegistration) {
         let _module_id = registration.module_id;
-        self.bundle.command_plugins.extend(registration.command_plugins);
-        self.bundle.system_plugins.extend(registration.system_plugins);
+        self.bundle
+            .command_plugins
+            .extend(registration.command_plugins);
+        self.bundle
+            .system_plugins
+            .extend(registration.system_plugins);
         self.bundle.interceptors.extend(registration.interceptors);
     }
 }

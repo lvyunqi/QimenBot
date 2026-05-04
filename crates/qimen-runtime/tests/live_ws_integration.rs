@@ -18,11 +18,8 @@ async fn receive_and_decode_live_events() {
         .expect("failed to connect to ws://127.0.0.1:3001");
 
     // Wait for first event (likely heartbeat)
-    let timeout = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.next_event(),
-    )
-    .await;
+    let timeout =
+        tokio::time::timeout(std::time::Duration::from_secs(10), client.next_event()).await;
 
     match timeout {
         Ok(Some(raw_json)) => {
@@ -52,11 +49,7 @@ async fn receive_and_decode_live_events() {
             assert_eq!(event.protocol, ProtocolId::OneBot11);
 
             // Heartbeat events from OneBot11 have post_type "meta_event"
-            if parsed
-                .get("post_type")
-                .and_then(serde_json::Value::as_str)
-                == Some("meta_event")
-            {
+            if parsed.get("post_type").and_then(serde_json::Value::as_str) == Some("meta_event") {
                 assert_eq!(event.kind, EventKind::Meta);
             }
         }

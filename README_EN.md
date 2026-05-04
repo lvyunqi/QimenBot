@@ -9,6 +9,7 @@ _✨ High-performance multi-protocol bot framework built with Rust ✨_
 [![License](https://img.shields.io/github/license/lvyunqi/QimenBot?style=flat-square)](https://github.com/lvyunqi/QimenBot/blob/main/LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024_Edition-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![OneBot 11](https://img.shields.io/badge/OneBot-11-black?style=flat-square)](https://github.com/botuniverse/onebot-11)
+[![QQ Official](https://img.shields.io/badge/QQ_Official-Bot-blue?style=flat-square)](docs/guide/qq-official-quickstart.md)
 
 [简体中文](README.md) | **English** | [日本語](README_JA.md)
 
@@ -20,8 +21,8 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 
 ## Features
 
-- **Multi-protocol** — OneBot 11 (production-ready), OneBot 12 / Satori (extension points reserved)
-- **Multiple transports** — Forward WebSocket, Reverse WebSocket, HTTP API, HTTP POST
+- **Multi-protocol** — OneBot 11 (production-ready), Official QQ Bot (preview), OneBot 12 / Satori (extension points reserved)
+- **Multiple transports** — Forward WebSocket, Reverse WebSocket, HTTP API, HTTP POST, Official Gateway + OpenAPI
 - **Declarative plugin development** — Write a full plugin in ~7 lines with `#[module]` / `#[commands]` / `#[notice]` macros
 - **Interceptor chain** — `pre_handle` / `after_completion` hooks for blacklists, permission checks, shortcut rewriting, etc.
 - **Flexible command system** — Aliases, examples, categories, role requirements, message filters, auto-generated `/help`
@@ -30,6 +31,7 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 - **Dynamic plugins** — Load ABI-stable shared libraries via `dlopen` at runtime
 - **Request automation** — Auto-approve/reject friend & group requests with whitelist/blacklist/keyword filters
 - **Comprehensive OneBot 11 API** — 40+ wrapped operations: messaging, group admin, files, guilds, reactions, and more
+- **Official QQ Bot integration** — QQ group mentions, C2C private chats, guild channel mentions, DMS, and Markdown / Keyboard messages
 
 ## Architecture
 
@@ -46,7 +48,8 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 │   protocol-core · transport-core · command-registry    │
 ├─────────────────────────────────────────────────────┤
 │                  Adapters & Transports                  │
-│   adapter-onebot11 · transport-ws · transport-http     │
+│   adapter-onebot11 · adapter-qqbot                     │
+│   transport-ws · transport-http · transport-qqbot      │
 ├─────────────────────────────────────────────────────┤
 │                  Built-in Modules                       │
 │   mod-command · mod-admin · mod-scheduler · mod-bridge  │
@@ -59,6 +62,8 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 
 - Rust 1.89+ (2024 Edition)
 - An OneBot 11 implementation (e.g., [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core), [NapCat](https://github.com/NapNeko/NapCatQQ), etc.)
+
+For Official QQ Bot, you do not need a OneBot implementation. See [Official QQ Bot integration](docs/guide/qq-official-quickstart.md).
 
 ### Build & Run
 
@@ -202,8 +207,10 @@ QimenBot/
 │   ├── qimen-runtime/       # Event dispatch, plugin orchestration, interceptors
 │   ├── qimen-message/       # Message model (Segment, MessageBuilder)
 │   ├── qimen-adapter-onebot11/ # OneBot 11 adapter
+│   ├── qimen-adapter-qqbot/ # Official QQ Bot adapter
 │   ├── qimen-transport-ws/  # WebSocket transport (TLS, auto-reconnect)
 │   ├── qimen-transport-http/# HTTP transport
+│   ├── qimen-transport-qqbot/# Official QQ Bot Gateway/OpenAPI
 │   ├── qimen-mod-command/   # Command detection & matching
 │   ├── qimen-mod-admin/     # Permission management
 │   ├── qimen-mod-scheduler/ # Cron-based task scheduling
@@ -221,6 +228,7 @@ QimenBot/
 | Protocol | Status | Transports |
 |----------|--------|-----------|
 | OneBot 11 | ✅ Production-ready | WS Forward, WS Reverse, HTTP API, HTTP POST |
+| Official QQ Bot | 🧪 Preview | Gateway + OpenAPI |
 | OneBot 12 | 🔲 Planned | — |
 | Satori | 🔲 Planned | — |
 

@@ -130,7 +130,7 @@ pub struct GroupBanNotice {
     pub user_id: i64,
     #[serde(default)]
     pub operator_id: Option<i64>,
-    pub duration: i64, // 0 = lift ban
+    pub duration: i64,    // 0 = lift ban
     pub sub_type: String, // "ban" or "lift_ban"
     pub time: i64,
 }

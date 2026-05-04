@@ -52,13 +52,22 @@ mod tests {
         assert_eq!(cmd_plugins.len(), 1);
 
         let commands = cmd_plugins[0].commands();
-        // rich, parse, card, reply-quote, keyboard
-        assert_eq!(commands.len(), 5);
+        // rich, parse, card, reply-quote, keyboard,
+        // qq-md, qq-md-template, qq-keyboard, qq-keyboard-template,
+        // qq-ark, qq-embed, qq-media
+        assert_eq!(commands.len(), 12);
         assert_eq!(commands[0].name, "rich");
         assert_eq!(commands[1].name, "parse");
         assert_eq!(commands[2].name, "card");
         assert_eq!(commands[3].name, "reply-quote");
         assert_eq!(commands[4].name, "keyboard");
+        assert_eq!(commands[5].name, "qq-md");
+        assert_eq!(commands[6].name, "qq-md-template");
+        assert_eq!(commands[7].name, "qq-keyboard");
+        assert_eq!(commands[8].name, "qq-keyboard-template");
+        assert_eq!(commands[9].name, "qq-ark");
+        assert_eq!(commands[10].name, "qq-embed");
+        assert_eq!(commands[11].name, "qq-media");
     }
 
     // ── EventDemoModule tests ────────────────────────────────────────────

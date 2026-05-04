@@ -134,7 +134,7 @@ plugin_bin_dir = "plugins/bin"
 ```toml
 [[bots]]
 id        = "qq-main"                  # Bot 唯一标识（不可重复）
-protocol  = "onebot11"                 # 通信协议
+protocol  = "onebot11"                 # 通信协议：onebot11 / qq-official
 transport = "ws-forward"               # 传输方式
 endpoint  = "ws://127.0.0.1:3001"      # 连接地址
 enabled   = true                       # 是否启用
@@ -147,6 +147,7 @@ enabled   = true                       # 是否启用
 | `ws-forward` | 框架 → OneBot | `endpoint` | 框架主动连接 OneBot 实现端的 WebSocket |
 | `ws-reverse` | OneBot → 框架 | `bind` + `path` | 框架监听端口，等待 OneBot 实现端连接 |
 | `http` | 双向 HTTP | `endpoint` | HTTP API + HTTP POST |
+| `gateway` | 框架 → 官方 Bot Gateway | `appid` + `secret` | 连接官方 QQ Bot Gateway，事件走 WebSocket，动作走 OpenAPI |
 
 **正向 WebSocket 示例**（框架主动连接）：
 
@@ -156,6 +157,37 @@ id        = "qq-main"
 transport = "ws-forward"
 endpoint  = "ws://127.0.0.1:3001"   # OneBot 实现的 WS 地址
 ```
+
+**官方 QQ Bot Gateway 示例**：
+
+```toml
+[[bots]]
+id        = "qq-official"
+protocol  = "qq-official"
+transport = "gateway"
+enabled   = true
+
+appid = "${QQBOT_APPID}"
+secret = "${QQBOT_SECRET}"
+sandbox = false
+
+# public_messages: QQ 群 @ 消息和 QQ 单聊 C2C 消息
+# public_guild_messages: 频道 @ 消息
+# direct_message: 频道私信消息
+intents = ["public_messages", "public_guild_messages", "direct_message"]
+
+enabled_modules = ["command", "admin"]
+owners = []
+admins = []
+```
+
+::: tip 官方 Bot 配置要点
+- `qq-official` 必须配合 `transport = "gateway"` 使用。
+- `appid` 和 `secret` 建议通过 `.env` 或系统环境变量注入，不要直接写入仓库配置。
+- `owners` 和 `admins` 对官方 Bot 使用字符串 ID，可填 `openid`、`member_openid` 或频道用户 ID。
+- `config/bots/qq-official.toml` 只是参考模板；运行时仍以 `config/base.toml` 和环境覆盖配置为准。
+- 完整接入流程见 [官方 QQ Bot 接入](/guide/qq-official-quickstart)。
+:::
 
 **反向 WebSocket 示例**（框架等待连接）：
 
@@ -259,6 +291,8 @@ timeout_secs = 0     # 等待令牌超时（0 = 直接丢弃）
 ```toml
 access_token = "${QQ_TOKEN}"
 endpoint = "${ONEBOT_WS_ENDPOINT}"
+appid = "${QQBOT_APPID}"
+secret = "${QQBOT_SECRET}"
 ```
 
 框架启动时自动替换。如果环境变量不存在，会被替换为空字符串。

@@ -188,10 +188,8 @@ impl ReplyBuilder {
 
     /// Add an @mention segment.
     pub fn at(mut self, user_id: &str) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"at","data":{{"qq":"{}"}}}}"#,
-            user_id
-        ));
+        self.segments
+            .push(format!(r#"{{"type":"at","data":{{"qq":"{}"}}}}"#, user_id));
         self
     }
 
@@ -204,10 +202,8 @@ impl ReplyBuilder {
 
     /// Add a QQ face emoji segment.
     pub fn face(mut self, id: i32) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"face","data":{{"id":"{}"}}}}"#,
-            id
-        ));
+        self.segments
+            .push(format!(r#"{{"type":"face","data":{{"id":"{}"}}}}"#, id));
         self
     }
 
@@ -427,12 +423,7 @@ impl PluginDescriptor {
     }
 
     /// Add a command to this descriptor.
-    pub fn add_command(
-        mut self,
-        name: &str,
-        description: &str,
-        callback_symbol: &str,
-    ) -> Self {
+    pub fn add_command(mut self, name: &str, description: &str, callback_symbol: &str) -> Self {
         self.commands.push(CommandDescriptorEntry {
             name: RString::from(name),
             description: RString::from(description),
@@ -465,12 +456,7 @@ impl PluginDescriptor {
     }
 
     /// Add a system event route.
-    pub fn add_route(
-        mut self,
-        kind: &str,
-        route: &str,
-        callback_symbol: &str,
-    ) -> Self {
+    pub fn add_route(mut self, kind: &str, route: &str, callback_symbol: &str) -> Self {
         self.routes.push(RouteDescriptorEntry {
             kind: RString::from(kind),
             route: RString::from(route),
@@ -656,10 +642,8 @@ impl SendBuilder {
 
     /// Add an @mention segment.
     pub fn at(mut self, user_id: &str) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"at","data":{{"qq":"{}"}}}}"#,
-            user_id
-        ));
+        self.segments
+            .push(format!(r#"{{"type":"at","data":{{"qq":"{}"}}}}"#, user_id));
         self
     }
 
@@ -672,10 +656,8 @@ impl SendBuilder {
 
     /// Add a QQ face emoji segment.
     pub fn face(mut self, id: i32) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"face","data":{{"id":"{}"}}}}"#,
-            id
-        ));
+        self.segments
+            .push(format!(r#"{{"type":"face","data":{{"id":"{}"}}}}"#, id));
         self
     }
 

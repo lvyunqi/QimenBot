@@ -1,0 +1,21 @@
+# Official QQ Bot example.
+# Files under config/bots are reference templates; config/base.toml is the active config.
+
+id = "qq-official"
+protocol = "qq-official"
+transport = "gateway"
+enabled = false
+
+appid = "${QQBOT_APPID}"
+secret = "${QQBOT_SECRET}"
+sandbox = false
+
+# Common public-bot MVP intents:
+# - public_messages: QQ group @ messages and QQ C2C messages
+# - public_guild_messages: channel @ messages
+# - direct_message: channel private messages
+intents = ["public_messages", "public_guild_messages", "direct_message"]
+
+enabled_modules = ["command", "admin"]
+owners = []
+admins = []

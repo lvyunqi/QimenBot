@@ -23,8 +23,7 @@ async fn connect_to_local_ws_server() {
 #[ignore]
 async fn connect_with_access_token() {
     // This should fail if the server doesn't expect a token, or succeed if it does
-    let result =
-        OneBot11ForwardWsClient::connect("ws://127.0.0.1:3001", Some("test-token")).await;
+    let result = OneBot11ForwardWsClient::connect("ws://127.0.0.1:3001", Some("test-token")).await;
     // We just verify it doesn't panic - the actual result depends on server config
     let _ = result;
 }

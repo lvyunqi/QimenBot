@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::policy::{
+    RequestDecision, decision_label, evaluate_friend_request, evaluate_group_invite,
+};
 use super::{
     OneBotSystemDispatchSignal, OneBotSystemEventHandler, RequestRoute, SystemEventContext,
     field_string,
 };
-use super::policy::{RequestDecision, decision_label, evaluate_friend_request, evaluate_group_invite};
 
 pub struct LoggingRequestHandler;
 

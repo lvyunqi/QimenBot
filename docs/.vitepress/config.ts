@@ -40,6 +40,7 @@ export default defineConfig({
           items: [
             { text: '框架介绍', link: '/guide/introduction' },
             { text: '快速开始', link: '/guide/getting-started' },
+            { text: '官方 QQ Bot 接入', link: '/guide/qq-official-quickstart' },
             { text: '配置详解', link: '/guide/configuration' },
           ]
         },

@@ -3,7 +3,7 @@ use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, Ident, ItemFn, ItemImpl, ItemStruct, LitStr, Token};
+use syn::{Ident, ItemFn, ItemImpl, ItemStruct, LitStr, Token, parse_macro_input};
 
 /// Marks a function as a plugin entry point.
 /// The function should return a type that implements `Module`.
@@ -193,8 +193,7 @@ impl Parse for ModuleArgs {
             let _ = input.parse::<Token![,]>();
         }
 
-        let id =
-            id.ok_or_else(|| syn::Error::new(Span::call_site(), "#[module] requires `id`"))?;
+        let id = id.ok_or_else(|| syn::Error::new(Span::call_site(), "#[module] requires `id`"))?;
 
         Ok(ModuleArgs {
             id,
@@ -433,16 +432,16 @@ impl Parse for CommandAttrContent {
                     let _eq: Token![=] = input.parse()?;
                     let content;
                     syn::bracketed!(content in input);
-                    let lits: Punctuated<LitStr, Token![,]> =
-                        content.parse_terminated(|i: ParseStream| i.parse::<LitStr>(), Token![,])?;
+                    let lits: Punctuated<LitStr, Token![,]> = content
+                        .parse_terminated(|i: ParseStream| i.parse::<LitStr>(), Token![,])?;
                     result.aliases = lits.iter().map(|l| l.value()).collect();
                 }
                 "examples" => {
                     let _eq: Token![=] = input.parse()?;
                     let content;
                     syn::bracketed!(content in input);
-                    let lits: Punctuated<LitStr, Token![,]> =
-                        content.parse_terminated(|i: ParseStream| i.parse::<LitStr>(), Token![,])?;
+                    let lits: Punctuated<LitStr, Token![,]> = content
+                        .parse_terminated(|i: ParseStream| i.parse::<LitStr>(), Token![,])?;
                     result.examples = lits.iter().map(|l| l.value()).collect();
                 }
                 "category" => {
@@ -571,10 +570,12 @@ struct SysMethod {
 }
 
 /// Parse `#[notice(GroupPoke, PrivatePoke)]` / `#[request(...)]` / `#[meta(...)]`
-fn parse_system_attr(attr: &syn::Attribute, kind: SystemEventKind) -> syn::Result<(SystemEventKind, Vec<Ident>)> {
-    let variants: Punctuated<Ident, Token![,]> = attr.parse_args_with(
-        Punctuated::<Ident, Token![,]>::parse_terminated,
-    )?;
+fn parse_system_attr(
+    attr: &syn::Attribute,
+    kind: SystemEventKind,
+) -> syn::Result<(SystemEventKind, Vec<Ident>)> {
+    let variants: Punctuated<Ident, Token![,]> =
+        attr.parse_args_with(Punctuated::<Ident, Token![,]>::parse_terminated)?;
     if variants.is_empty() {
         return Err(syn::Error::new_spanned(
             attr,

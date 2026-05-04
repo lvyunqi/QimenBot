@@ -25,7 +25,7 @@ features:
     details: '通过 #[module] + #[commands] 宏，只需几行代码就能开发功能完整的插件'
   - icon: 🌐
     title: 多协议支持
-    details: 已支持 OneBot 11 协议全部功能，WebSocket / HTTP 多种传输方式可选
+    details: 支持 OneBot 11 和官方 QQ Bot，WebSocket / HTTP / Gateway 多种传输方式可选
   - icon: 🛡️
     title: 安全防护
     details: 内置消息去重、速率限制、群事件过滤、插件 ACL 权限控制等保护机制

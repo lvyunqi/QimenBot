@@ -246,7 +246,8 @@ impl OneBotSystemDispatcher {
         route: String,
         callback_symbol: String,
     ) {
-        self.dynamic_notice_routes.push((plugin_id, route, callback_symbol));
+        self.dynamic_notice_routes
+            .push((plugin_id, route, callback_symbol));
     }
 
     pub fn register_dynamic_request_route(
@@ -255,7 +256,8 @@ impl OneBotSystemDispatcher {
         route: String,
         callback_symbol: String,
     ) {
-        self.dynamic_request_routes.push((plugin_id, route, callback_symbol));
+        self.dynamic_request_routes
+            .push((plugin_id, route, callback_symbol));
     }
 
     pub fn register_dynamic_meta_route(
@@ -264,7 +266,8 @@ impl OneBotSystemDispatcher {
         route: String,
         callback_symbol: String,
     ) {
-        self.dynamic_meta_routes.push((plugin_id, route, callback_symbol));
+        self.dynamic_meta_routes
+            .push((plugin_id, route, callback_symbol));
     }
 
     pub async fn dispatch(
@@ -297,22 +300,43 @@ impl OneBotSystemDispatcher {
 
         for plugin in sorted_plugins {
             let signal = match &route {
-                OneBotSystemRoute::Notice(route) => plugin.on_notice(&plugin_ctx, &to_public_notice_route(route)).await,
-                OneBotSystemRoute::Request(route) => plugin.on_request(&plugin_ctx, &to_public_request_route(route)).await,
-                OneBotSystemRoute::Meta(route) => plugin.on_meta(&plugin_ctx, &to_public_meta_route(route)).await,
+                OneBotSystemRoute::Notice(route) => {
+                    plugin
+                        .on_notice(&plugin_ctx, &to_public_notice_route(route))
+                        .await
+                }
+                OneBotSystemRoute::Request(route) => {
+                    plugin
+                        .on_request(&plugin_ctx, &to_public_request_route(route))
+                        .await
+                }
+                OneBotSystemRoute::Meta(route) => {
+                    plugin
+                        .on_meta(&plugin_ctx, &to_public_meta_route(route))
+                        .await
+                }
                 OneBotSystemRoute::MessageSent(_) => None,
             };
 
             if let Some(signal) = signal {
-                tracing::info!(plugin = plugin.metadata().id, "system plugin produced signal");
+                tracing::info!(
+                    plugin = plugin.metadata().id,
+                    "system plugin produced signal"
+                );
                 match map_system_plugin_signal(signal) {
                     MappedSystemSignal::Dispatch(mapped) => return Some(mapped),
                     MappedSystemSignal::Block(mapped) => {
-                        tracing::info!(plugin = plugin.metadata().id, "system plugin blocked chain with reply");
+                        tracing::info!(
+                            plugin = plugin.metadata().id,
+                            "system plugin blocked chain with reply"
+                        );
                         return Some(mapped);
                     }
                     MappedSystemSignal::Ignore => {
-                        tracing::info!(plugin = plugin.metadata().id, "system plugin blocked chain silently");
+                        tracing::info!(
+                            plugin = plugin.metadata().id,
+                            "system plugin blocked chain silently"
+                        );
                         return None;
                     }
                     MappedSystemSignal::Continue => {}
@@ -587,17 +611,28 @@ enum MappedSystemSignal {
 fn map_system_plugin_signal(signal: SystemPluginSignal) -> MappedSystemSignal {
     match signal {
         SystemPluginSignal::Continue => MappedSystemSignal::Continue,
-        SystemPluginSignal::Reply(message) => MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::NoticeReply {
-            message: message.plain_text(),
-        }),
+        SystemPluginSignal::Reply(message) => {
+            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::NoticeReply {
+                message: message.plain_text(),
+            })
+        }
         SystemPluginSignal::ApproveFriend { flag, remark } => {
-            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::AutoApproveFriend { flag, remark })
+            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::AutoApproveFriend {
+                flag,
+                remark,
+            })
         }
         SystemPluginSignal::RejectFriend { flag, reason } => {
-            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::AutoRejectFriend { flag, reason })
+            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::AutoRejectFriend {
+                flag,
+                reason,
+            })
         }
         SystemPluginSignal::ApproveGroupInvite { flag, sub_type } => {
-            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::AutoApproveGroupInvite { flag, sub_type })
+            MappedSystemSignal::Dispatch(OneBotSystemDispatchSignal::AutoApproveGroupInvite {
+                flag,
+                sub_type,
+            })
         }
         SystemPluginSignal::RejectGroupInvite {
             flag,
@@ -646,7 +681,9 @@ fn to_public_notice_route(route: &NoticeRoute) -> SystemNoticeRoute {
         NoticeRoute::ChannelCreated => SystemNoticeRoute::ChannelCreated,
         NoticeRoute::ChannelDestroyed => SystemNoticeRoute::ChannelDestroyed,
         NoticeRoute::ChannelUpdated => SystemNoticeRoute::ChannelUpdated,
-        NoticeRoute::GuildMessageReactionsUpdated => SystemNoticeRoute::GuildMessageReactionsUpdated,
+        NoticeRoute::GuildMessageReactionsUpdated => {
+            SystemNoticeRoute::GuildMessageReactionsUpdated
+        }
         NoticeRoute::NotifyOther(other)
         | NoticeRoute::GroupDecreaseOther(other)
         | NoticeRoute::GroupIncreaseOther(other)
@@ -685,7 +722,7 @@ fn to_public_meta_route(route: &MetaRoute) -> SystemMetaRoute {
 #[cfg(test)]
 mod tests {
     use super::{
-        MetaRoute, NoticeRoute, OneBotSystemDispatcher, OneBotSystemDispatchSignal,
+        MetaRoute, NoticeRoute, OneBotSystemDispatchSignal, OneBotSystemDispatcher,
         OneBotSystemEventHandler, OneBotSystemRoute, RequestRoute, SystemEventContext,
         route_onebot_system_event,
     };
@@ -716,11 +753,20 @@ mod tests {
             CAPABILITIES.get_or_init(CapabilitySet::default)
         }
 
-        async fn send_action(&self, _req: NormalizedActionRequest) -> Result<NormalizedActionResponse> {
-            Err(QimenError::Runtime("test runtime does not send actions".to_string()))
+        async fn send_action(
+            &self,
+            _req: NormalizedActionRequest,
+        ) -> Result<NormalizedActionResponse> {
+            Err(QimenError::Runtime(
+                "test runtime does not send actions".to_string(),
+            ))
         }
 
-        async fn reply(&self, _event: &NormalizedEvent, _message: Message) -> Result<NormalizedActionResponse> {
+        async fn reply(
+            &self,
+            _event: &NormalizedEvent,
+            _message: Message,
+        ) -> Result<NormalizedActionResponse> {
             Ok(NormalizedActionResponse {
                 protocol: ProtocolId::OneBot11,
                 bot_instance: "qq-main".to_string(),
@@ -800,9 +846,9 @@ mod tests {
             _ctx: &SystemEventContext<'_>,
             route: &NoticeRoute,
         ) -> Option<OneBotSystemDispatchSignal> {
-            Some(OneBotSystemDispatchSignal::Continue(OneBotSystemRoute::Notice(
-                route.clone(),
-            )))
+            Some(OneBotSystemDispatchSignal::Continue(
+                OneBotSystemRoute::Notice(route.clone()),
+            ))
         }
     }
 
@@ -817,27 +863,29 @@ mod tests {
             "user_id": 1
         });
 
-        let signal = dispatcher.dispatch(SystemEventContext {
-            bot_id: "qq-main",
-            payload: &payload,
-            runtime: &TEST_RUNTIME,
-            auto_approve_friend_requests: false,
-            auto_approve_group_invites: false,
-            auto_reply_poke_enabled: false,
-            auto_reply_poke_message: None,
-            auto_approve_friend_request_user_whitelist: &[],
-            auto_approve_friend_request_user_blacklist: &[],
-            auto_approve_friend_request_comment_keywords: &[],
-            auto_reject_friend_request_comment_keywords: &[],
-            auto_approve_friend_request_remark: None,
-            auto_approve_group_invite_user_whitelist: &[],
-            auto_approve_group_invite_user_blacklist: &[],
-            auto_approve_group_invite_group_whitelist: &[],
-            auto_approve_group_invite_group_blacklist: &[],
-            auto_approve_group_invite_comment_keywords: &[],
-            auto_reject_group_invite_comment_keywords: &[],
-            auto_reject_group_invite_reason: None,
-        }).await;
+        let signal = dispatcher
+            .dispatch(SystemEventContext {
+                bot_id: "qq-main",
+                payload: &payload,
+                runtime: &TEST_RUNTIME,
+                auto_approve_friend_requests: false,
+                auto_approve_group_invites: false,
+                auto_reply_poke_enabled: false,
+                auto_reply_poke_message: None,
+                auto_approve_friend_request_user_whitelist: &[],
+                auto_approve_friend_request_user_blacklist: &[],
+                auto_approve_friend_request_comment_keywords: &[],
+                auto_reject_friend_request_comment_keywords: &[],
+                auto_approve_friend_request_remark: None,
+                auto_approve_group_invite_user_whitelist: &[],
+                auto_approve_group_invite_user_blacklist: &[],
+                auto_approve_group_invite_group_whitelist: &[],
+                auto_approve_group_invite_group_blacklist: &[],
+                auto_approve_group_invite_comment_keywords: &[],
+                auto_reject_group_invite_comment_keywords: &[],
+                auto_reject_group_invite_reason: None,
+            })
+            .await;
         assert!(signal.is_some());
     }
 }

@@ -1,10 +1,9 @@
 use abi_stable::std_types::RString;
 use abi_stable::std_types::RVec;
 use abi_stable_host_api::{
-    CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
-    InterceptorResponse, NoticeRequest, NoticeResponse, PluginDescriptor, PluginInitConfig,
-    PluginInitResult, SendAction, is_compatible_api_version, ACTION_APPROVE, ACTION_IGNORE,
-    ACTION_REJECT, ACTION_REPLY,
+    ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY, CommandRequest, CommandResponse,
+    DynamicActionResponse, InterceptorRequest, InterceptorResponse, NoticeRequest, NoticeResponse,
+    PluginDescriptor, PluginInitConfig, PluginInitResult, SendAction, is_compatible_api_version,
 };
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
@@ -132,9 +131,7 @@ impl DynamicPluginRuntime {
                 timestamp,
             };
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(request)
-            }));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(request)));
 
             let sends = flush_sends_from_library(library);
 
@@ -185,9 +182,7 @@ impl DynamicPluginRuntime {
                 raw_event_json: RString::from(raw_json),
             };
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(request)
-            }));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(request)));
 
             let sends = flush_sends_from_library(library);
 
@@ -235,9 +230,8 @@ impl DynamicPluginRuntime {
                 ))
             })?;
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(&request)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(&request)));
 
             let sends = flush_sends_from_library(library);
 
@@ -275,18 +269,16 @@ impl DynamicPluginRuntime {
         let path_for_error = descriptor.library_path.clone();
 
         Self::with_handle(handle, &descriptor.library_path, move |library| unsafe {
-            let symbol: libloading::Symbol<
-                unsafe extern "C" fn(&InterceptorRequest),
-            > = library.get(symbol_name.as_bytes()).map_err(|err| {
-                QimenError::Runtime(format!(
-                    "failed to load interceptor after_completion '{}' from '{}': {err}",
-                    symbol_name, path_for_error
-                ))
-            })?;
+            let symbol: libloading::Symbol<unsafe extern "C" fn(&InterceptorRequest)> =
+                library.get(symbol_name.as_bytes()).map_err(|err| {
+                    QimenError::Runtime(format!(
+                        "failed to load interceptor after_completion '{}' from '{}': {err}",
+                        symbol_name, path_for_error
+                    ))
+                })?;
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                symbol(&request)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(&request)));
 
             let sends = flush_sends_from_library(library);
 
@@ -339,9 +331,8 @@ impl DynamicPluginRuntime {
                         data_dir: RString::from(data_dir_owned),
                     };
 
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        init_fn(config)
-                    }));
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| init_fn(config)));
 
                     match result {
                         Ok(init_result) => {
@@ -381,9 +372,7 @@ impl DynamicPluginRuntime {
         // Phase 1: briefly lock metadata to check circuit breaker + update last_used
         {
             let mut meta = handle.meta.lock().map_err(|_| {
-                QimenError::Runtime(format!(
-                    "per-library meta lock poisoned for '{}'", path
-                ))
+                QimenError::Runtime(format!("per-library meta lock poisoned for '{}'", path))
             })?;
 
             // Circuit breaker check
@@ -472,8 +461,15 @@ impl DynamicPluginRuntime {
     ) -> Result<(DynamicResponse, Vec<SendAction>)> {
         let handle = self.get_library(&descriptor.library_path)?;
         Self::execute_command_on_handle(
-            &handle, descriptor, args, sender_id, group_id,
-            raw_event_json, sender_nickname, message_id, timestamp,
+            &handle,
+            descriptor,
+            args,
+            sender_id,
+            group_id,
+            raw_event_json,
+            sender_nickname,
+            message_id,
+            timestamp,
         )
     }
 
@@ -590,14 +586,24 @@ impl DynamicPluginRuntime {
         data_dir: &str,
     ) -> Result<()> {
         let handle = self.get_library(library_path)?;
-        Self::execute_init_on_handle(&handle, library_path, plugin_id, config_json, plugin_dir, data_dir)
+        Self::execute_init_on_handle(
+            &handle,
+            library_path,
+            plugin_id,
+            config_json,
+            plugin_dir,
+            data_dir,
+        )
     }
 
     /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
     pub fn call_plugin_shutdown(&mut self, library_path: &str) {
         if let Some(handle) = self.libraries.get(library_path) {
             unsafe {
-                if let Ok(symbol) = handle.library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") {
+                if let Ok(symbol) = handle
+                    .library
+                    .get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown")
+                {
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         symbol();
                     }));
@@ -731,7 +737,9 @@ fn parse_segments_json(json_str: &str) -> Option<Message> {
         return None;
     }
     // Convert to Message using the same format as OneBot11
-    Some(Message::from_onebot_value(&serde_json::Value::Array(array.clone())))
+    Some(Message::from_onebot_value(&serde_json::Value::Array(
+        array.clone(),
+    )))
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -824,8 +832,8 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
         })?;
 
         // Try v0.2 symbol name first, then fallback to v0.1 legacy name
-        let descriptor: PluginDescriptor = if let Ok(symbol) = library
-            .get::<unsafe extern "C" fn() -> PluginDescriptor>(b"qimen_plugin_descriptor")
+        let descriptor: PluginDescriptor = if let Ok(symbol) =
+            library.get::<unsafe extern "C" fn() -> PluginDescriptor>(b"qimen_plugin_descriptor")
         {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol())) {
                 Ok(desc) => desc,
@@ -863,8 +871,8 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             )));
         }
 
-        let is_v2_plus = descriptor.api_version.as_str() == "0.2"
-            || descriptor.api_version.as_str() == "0.3";
+        let is_v2_plus =
+            descriptor.api_version.as_str() == "0.2" || descriptor.api_version.as_str() == "0.3";
 
         // Parse v0.2+ multi-command entries
         let commands: Vec<DynamicCommandEntry> = if is_v2_plus && !descriptor.commands.is_empty() {

@@ -10,6 +10,7 @@
 Runtime
 ├── CommandDispatcher      命令路由
 ├── OneBotSystemDispatcher 系统事件路由
+├── NormalizedActionExecutor 协议动作执行
 ├── InterceptorChain       拦截器链
 ├── TokenBucketLimiter     令牌桶限流
 ├── MessageDedup           消息去重
@@ -32,13 +33,15 @@ main()
     → 调用动态插件 #[init] 钩子（TOML→JSON 配置传入）
     → 对每个 [[bots]] 配置:
         → 创建 Runtime 实例
-        → 建立传输连接 (WebSocket / HTTP)
+        → 根据 protocol + transport 建立会话
+          → onebot11 + ws-forward/ws-reverse/http
+          → qq-official + gateway
         → 进入事件循环
 ```
 
 ## 事件循环
 
-每个 Bot 实例运行一个独立的事件循环：
+每个 Bot 实例运行一个独立的事件循环。OneBot 11 的事件来自 OneBot 实现端，官方 QQ Bot 的消息和通知来自 Gateway Dispatch，二者都会先归一化成 `NormalizedEvent`：
 
 ```rust
 loop {
@@ -57,6 +60,32 @@ loop {
     }
 }
 ```
+
+### 多协议消息流水线
+
+消息事件会进入共享的 `handle_normalized_event` 流水线：
+
+```
+NormalizedEvent::Message
+  → 消息去重
+  → 群事件过滤
+  → 令牌桶限流
+  → pre_handle 拦截器
+  → 权限解析
+  → 命令匹配
+  → 静态/动态插件执行
+  → 协议动作执行器发送回复
+  → after_completion 拦截器
+```
+
+OneBot 11 和官方 QQ Bot 共用这条消息流水线。差异只保留在协议边界：
+
+| 协议 | 事件入口 | 回复出口 | 说明 |
+|------|----------|----------|------|
+| `onebot11` | WebSocket/HTTP OneBot 事件 | OneBot action | 支持 OneBot 11 完整动作模型 |
+| `qq-official` | 官方 Gateway Dispatch | 官方 OpenAPI | 支持 QQ 群 @、QQ 单聊、频道 @、频道私信 |
+
+官方 QQ Bot 的发送失败会返回 `ActionStatus::Failed` 并记录错误分类。429 频控会按 bot + route 做短期 backoff，避免主动发送失败导致 Gateway 会话被重启。
 
 ## 命令路由
 
@@ -128,6 +157,12 @@ notice_type + sub_type → SystemNoticeRoute
 "notify" + "lucky_king"              → NotifyLuckyKing
 "notify" + "honor"                   → NotifyHonor
 ```
+
+### 官方 QQ Bot 非消息事件
+
+官方 QQ Bot 的非消息事件先由 `qimen-adapter-qqbot` 归一化为 `EventKind::Notice` 或 `EventKind::Meta`，并在 `raw_json.notice_type` 中保留稳定路由名。当前已覆盖 QQ 群管理、QQ 单聊管理、频道消息删除、频道成员、互动、审核、论坛、音频和直播子频道成员事件。
+
+这些事件先进入通用事件记录和插件可见的 `NormalizedEvent`，后续如需与 OneBot 的 `SystemPlugin` 路由完全打通，可以在 runtime 中增加官方事件专用 dispatcher。
 
 ## 运行时保护机制
 
@@ -244,6 +279,8 @@ shutdown()
     → [热重载] → 重建调度器 → 继续
     → [停止信号] → 优雅关闭
 ```
+
+官方 QQ Bot 的 Gateway 会话还会保存 `session_id`、`seq`、`shard` 和 heartbeat 状态。收到 `Reconnect` 时优先 Resume，收到 `InvalidSession` 时清空会话并重新 Identify。
 
 ### 重连策略
 

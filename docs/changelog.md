@@ -1,5 +1,19 @@
 # 更新日志
 
+## v0.1.3 (2026-05-03)
+
+### 官方 QQ Bot 适配预览
+
+- 新增 `qq-official` 协议和 `gateway` 传输模式，支持官方 QQ Bot Gateway 接入
+- 新增 `qimen-adapter-qqbot`，将 QQ 群 @、QQ 单聊 C2C、频道 @、频道私信消息归一化为 `NormalizedEvent`
+- 新增 `qimen-transport-qqbot`，封装 AppID + Secret access token、Gateway 会话、Heartbeat、Resume 和 OpenAPI 发送
+- Runtime 消息流水线抽象为协议无关处理，官方 Bot 复用命令、权限、限流、去重、拦截器和插件执行
+- 支持官方 Bot 文本、图片、Markdown、Keyboard、语音/视频 media 上传、频道撤回和发送失败降级
+- 官方 OpenAPI 429 会按 bot + route 做短期 backoff，发送失败不再打断 Gateway 会话
+- 补充官方 QQ Bot 接入教程、配置说明和传输说明
+
+---
+
 ## v0.1.2 (2026-03-16)
 
 ### 动态插件执行隔离 + 超时保护

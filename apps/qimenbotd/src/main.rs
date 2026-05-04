@@ -9,9 +9,13 @@ extern crate qimen_plugin_example;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = dotenvy::dotenv();
+
     // Reference concrete symbols from each plugin crate so that the
     // linker is forced to include the object files with inventory entries.
     std::hint::black_box(qimen_plugin_example::BasicModule::__QIMEN_MODULE_ID);
 
-    run_official_host("config/base.toml").await
+    let config_path =
+        std::env::var("QIMEN_CONFIG_PATH").unwrap_or_else(|_| "config/base.toml".to_string());
+    run_official_host(&config_path).await
 }

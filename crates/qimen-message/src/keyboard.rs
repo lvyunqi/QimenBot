@@ -196,9 +196,7 @@ mod tests {
 
     #[test]
     fn to_segment() {
-        let kb = KeyboardBuilder::new()
-            .callback_button("OK", "ok")
-            .build();
+        let kb = KeyboardBuilder::new().callback_button("OK", "ok").build();
 
         let seg = kb.to_segment();
         assert_eq!(seg.kind, "keyboard");

@@ -77,9 +77,7 @@ impl PluginAclManager {
     /// Set the mode for a plugin
     pub async fn set_mode(&self, plugin_id: &str, mode: AccessControlMode) {
         let mut acls = self.acls.write().await;
-        acls.entry(plugin_id.to_string())
-            .or_default()
-            .mode = mode;
+        acls.entry(plugin_id.to_string()).or_default().mode = mode;
     }
 
     /// Add a user to a plugin's list
@@ -145,7 +143,11 @@ mod tests {
     async fn disabled_mode_allows_all() {
         let manager = PluginAclManager::new();
         // No ACL set => default Disabled mode
-        assert!(manager.should_process("test_plugin", Some(123), Some(456)).await);
+        assert!(
+            manager
+                .should_process("test_plugin", Some(123), Some(456))
+                .await
+        );
         assert!(manager.should_process("test_plugin", None, None).await);
 
         // Explicitly set Disabled
@@ -159,13 +161,19 @@ mod tests {
                 },
             )
             .await;
-        assert!(manager.should_process("test_plugin", Some(999), Some(888)).await);
+        assert!(
+            manager
+                .should_process("test_plugin", Some(999), Some(888))
+                .await
+        );
     }
 
     #[tokio::test]
     async fn whitelist_mode_filters() {
         let manager = PluginAclManager::new();
-        manager.set_mode("plugin_a", AccessControlMode::Whitelist).await;
+        manager
+            .set_mode("plugin_a", AccessControlMode::Whitelist)
+            .await;
         manager.add_user("plugin_a", 100).await;
         manager.add_group("plugin_a", 200).await;
 
@@ -174,7 +182,11 @@ mod tests {
         // Allowed group
         assert!(manager.should_process("plugin_a", None, Some(200)).await);
         // Both allowed
-        assert!(manager.should_process("plugin_a", Some(100), Some(200)).await);
+        assert!(
+            manager
+                .should_process("plugin_a", Some(100), Some(200))
+                .await
+        );
         // Not in list
         assert!(!manager.should_process("plugin_a", Some(999), None).await);
         assert!(!manager.should_process("plugin_a", None, Some(999)).await);
@@ -189,7 +201,9 @@ mod tests {
     #[tokio::test]
     async fn blacklist_mode_filters() {
         let manager = PluginAclManager::new();
-        manager.set_mode("plugin_b", AccessControlMode::Blacklist).await;
+        manager
+            .set_mode("plugin_b", AccessControlMode::Blacklist)
+            .await;
         manager.add_user("plugin_b", 100).await;
         manager.add_group("plugin_b", 200).await;
 

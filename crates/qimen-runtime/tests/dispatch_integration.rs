@@ -1,14 +1,14 @@
-use qimen_message::Message;
 use qimen_error::{QimenError, Result};
+use qimen_message::Message;
 use qimen_plugin_api::{OwnedTaskFuture, RuntimeBotContext, TaskHandle};
+use qimen_protocol_core::{
+    ActionStatus, CapabilitySet, EventKind, NormalizedActionRequest, NormalizedActionResponse,
+    NormalizedEvent, ProtocolId, TransportMode,
+};
 use qimen_runtime::command_dispatch::{CommandDispatchSignal, CommandDispatcher};
 use qimen_runtime::onebot11_dispatch::{
     NoticeRoute, OneBotSystemDispatchSignal, OneBotSystemDispatcher, SystemEventContext,
     route_onebot_system_event,
-};
-use qimen_protocol_core::{
-    ActionStatus, CapabilitySet, EventKind, NormalizedActionRequest, NormalizedActionResponse,
-    NormalizedEvent, ProtocolId, TransportMode,
 };
 use serde_json::Map;
 
@@ -30,10 +30,16 @@ impl RuntimeBotContext for TestRuntimeBotContext {
     }
 
     async fn send_action(&self, _req: NormalizedActionRequest) -> Result<NormalizedActionResponse> {
-        Err(QimenError::Runtime("test runtime does not send actions".to_string()))
+        Err(QimenError::Runtime(
+            "test runtime does not send actions".to_string(),
+        ))
     }
 
-    async fn reply(&self, _event: &NormalizedEvent, _message: Message) -> Result<NormalizedActionResponse> {
+    async fn reply(
+        &self,
+        _event: &NormalizedEvent,
+        _message: Message,
+    ) -> Result<NormalizedActionResponse> {
         Ok(NormalizedActionResponse {
             protocol: ProtocolId::OneBot11,
             bot_instance: "qq-main".to_string(),
@@ -97,8 +103,12 @@ async fn builtin_command_dispatcher_replies_to_ping() {
         Some(CommandDispatchSignal::Reply(message)) => {
             assert_eq!(message.plain_text(), "pong");
         }
-        Some(CommandDispatchSignal::Builtin(_)) => panic!("expected reply signal, got builtin action"),
-        Some(CommandDispatchSignal::DynamicCommand { .. }) => panic!("expected reply signal, got dynamic command action"),
+        Some(CommandDispatchSignal::Builtin(_)) => {
+            panic!("expected reply signal, got builtin action")
+        }
+        Some(CommandDispatchSignal::DynamicCommand { .. }) => {
+            panic!("expected reply signal, got dynamic command action")
+        }
         None => panic!("expected reply signal"),
     }
 }
@@ -203,5 +213,10 @@ fn routes_notify_notice_to_subtype() {
     });
 
     let route = route_onebot_system_event(&payload);
-    assert_eq!(route, Some(qimen_runtime::onebot11_dispatch::OneBotSystemRoute::Notice(NoticeRoute::PrivatePoke)));
+    assert_eq!(
+        route,
+        Some(qimen_runtime::onebot11_dispatch::OneBotSystemRoute::Notice(
+            NoticeRoute::PrivatePoke
+        ))
+    );
 }

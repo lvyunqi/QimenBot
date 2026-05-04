@@ -12,13 +12,19 @@ fn complex_cq_string_roundtrip() {
     assert_eq!(message.segments[0].kind, "at");
     assert_eq!(message.segments[1].kind, "text");
     assert_eq!(
-        message.segments[1].data.get("text").and_then(serde_json::Value::as_str),
+        message.segments[1]
+            .data
+            .get("text")
+            .and_then(serde_json::Value::as_str),
         Some("你好")
     );
     assert_eq!(message.segments[2].kind, "face");
     assert_eq!(message.segments[3].kind, "text");
     assert_eq!(
-        message.segments[3].data.get("text").and_then(serde_json::Value::as_str),
+        message.segments[3]
+            .data
+            .get("text")
+            .and_then(serde_json::Value::as_str),
         Some("世界")
     );
     assert_eq!(message.segments[4].kind, "image");
@@ -57,10 +63,10 @@ fn consecutive_cq_codes_no_text_between() {
 #[test]
 fn cq_code_with_special_chars_in_value() {
     // Build a message with a value containing commas, brackets, and ampersands
-    let msg = Message::from_segments(vec![
-        qimen_message::Segment::new("test")
-            .with("data".to_string(), serde_json::Value::String("a,b[c]&d".to_string())),
-    ]);
+    let msg = Message::from_segments(vec![qimen_message::Segment::new("test").with(
+        "data".to_string(),
+        serde_json::Value::String("a,b[c]&d".to_string()),
+    )]);
     let cq = to_cq_string(&msg);
     // Values should be escaped
     assert!(cq.contains("&#44;")); // comma
@@ -82,7 +88,9 @@ fn cq_code_with_special_chars_in_value() {
 
 #[test]
 fn text_with_special_chars_roundtrip() {
-    let msg = Message::from_segments(vec![qimen_message::Segment::text("hello [world] & friends")]);
+    let msg = Message::from_segments(vec![qimen_message::Segment::text(
+        "hello [world] & friends",
+    )]);
     let cq = to_cq_string(&msg);
     let parsed = parse_cq_string(&cq);
     assert_eq!(parsed.plain_text(), "hello [world] & friends");

@@ -24,22 +24,34 @@ impl AdminManager {
     }
 
     pub fn is_super_admin(&self, user_id: i64) -> bool {
-        let config = self.config.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         config.super_admins.contains(&user_id)
     }
 
     pub fn is_admin(&self, user_id: i64) -> bool {
-        let config = self.config.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         config.super_admins.contains(&user_id) || config.admins.contains(&user_id)
     }
 
     pub fn is_blocked_user(&self, user_id: i64) -> bool {
-        let config = self.config.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         config.blocked_users.contains(&user_id)
     }
 
     pub fn is_blocked_group(&self, group_id: i64) -> bool {
-        let config = self.config.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         config.blocked_groups.contains(&group_id)
     }
 

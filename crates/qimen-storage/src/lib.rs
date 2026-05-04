@@ -1,6 +1,6 @@
 use qimen_error::Result;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::path::PathBuf;
 
 pub struct PluginStorage {

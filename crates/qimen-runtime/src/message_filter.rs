@@ -81,10 +81,7 @@ pub fn filter_matches(filter: &MessageFilter, event: &NormalizedEvent) -> MatchR
     match &filter.reply_filter {
         ReplyFilter::None => {} // no check
         ReplyFilter::ReplyMe => {
-            let has_reply = event
-                .message
-                .as_ref()
-                .is_some_and(|m| m.has_reply());
+            let has_reply = event.message.as_ref().is_some_and(|m| m.has_reply());
             if !has_reply {
                 return finalize(filter, false, captures);
             }

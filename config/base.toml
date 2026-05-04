@@ -43,7 +43,7 @@ builtin_modules = ["command", "admin", "scheduler", "bridge"]
 # 填写插件的 module id（即 #[module(id = "xxx")] 中的 id）
 # 示例插件的可用 id：
 #   "example-basic"   — 基础命令示例（ping、echo、whoami、group-info、ban、stop）
-#   "example-message" — 消息构建示例（rich、parse、card、reply-quote、keyboard）
+#   "example-message" — 消息构建示例（rich、parse、card、reply-quote、keyboard、官方 Bot 富文本测试）
 #   "example-events"  — 事件处理示例（戳一戳、入群欢迎、撤回、好友请求、心跳）
 plugin_modules = ["example-basic"]
 

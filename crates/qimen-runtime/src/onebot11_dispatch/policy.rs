@@ -124,7 +124,7 @@ fn field_string(payload: &serde_json::Value, field: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        evaluate_friend_request, evaluate_group_invite, render_notice_template, RequestDecision,
+        RequestDecision, evaluate_friend_request, evaluate_group_invite, render_notice_template,
     };
     use crate::onebot11_dispatch::SystemEventContext;
     use async_trait::async_trait;
@@ -153,11 +153,20 @@ mod tests {
             CAPABILITIES.get_or_init(CapabilitySet::default)
         }
 
-        async fn send_action(&self, _req: NormalizedActionRequest) -> Result<NormalizedActionResponse> {
-            Err(QimenError::Runtime("test runtime does not send actions".to_string()))
+        async fn send_action(
+            &self,
+            _req: NormalizedActionRequest,
+        ) -> Result<NormalizedActionResponse> {
+            Err(QimenError::Runtime(
+                "test runtime does not send actions".to_string(),
+            ))
         }
 
-        async fn reply(&self, _event: &NormalizedEvent, _message: Message) -> Result<NormalizedActionResponse> {
+        async fn reply(
+            &self,
+            _event: &NormalizedEvent,
+            _message: Message,
+        ) -> Result<NormalizedActionResponse> {
             Ok(NormalizedActionResponse {
                 protocol: ProtocolId::OneBot11,
                 bot_instance: "qq-main".to_string(),

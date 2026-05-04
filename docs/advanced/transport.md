@@ -1,6 +1,6 @@
 # 传输层
 
-QimenBot 支持多种传输方式连接 OneBot 实现。传输层负责底层通信，与上层协议逻辑解耦。
+QimenBot 支持多种传输方式连接不同协议实现。传输层负责底层通信，与上层协议逻辑解耦；官方 QQ Bot 由于 Gateway 和 OpenAPI 强绑定，使用独立的协议传输封装。
 
 ## 传输模式概览
 
@@ -10,6 +10,7 @@ QimenBot 支持多种传输方式连接 OneBot 实现。传输层负责底层通
 | **WS 反向** | OneBot → 框架 | 框架监听，OneBot 连接过来 | 框架在公网时 |
 | **HTTP API** | 框架 → OneBot | 通过 HTTP 调用 API | 简单场景 |
 | **HTTP POST** | OneBot → 框架 | OneBot 推送事件到框架 | 配合 HTTP API 使用 |
+| **Gateway** | 框架 → 官方 QQ Bot | Gateway 收事件，OpenAPI 发动作 | 官方 QQ Bot |
 
 ## 正向 WebSocket（推荐）
 
@@ -124,6 +125,60 @@ QimenBot --POST /send_msg--> OneBot
          <-- JSON Response --
 ```
 
+## 官方 QQ Bot Gateway
+
+官方 QQ Bot 与 OneBot 的传输模型不同：事件通过 Gateway WebSocket 下发，发送消息、上传媒体、撤回消息通过 HTTP OpenAPI 完成。因此配置上使用 `protocol = "qq-official"` 和 `transport = "gateway"`。
+
+### 配置
+
+```toml
+[[bots]]
+id        = "qq-official"
+protocol  = "qq-official"
+transport = "gateway"
+enabled   = true
+
+appid = "${QQBOT_APPID}"
+secret = "${QQBOT_SECRET}"
+sandbox = false
+intents = ["public_messages", "public_guild_messages", "direct_message"]
+```
+
+### 工作流程
+
+```
+QimenBot                         QQ Bot OpenAPI
+    |                                  |
+    |--- POST /app/getAppAccessToken ->|  AppID + Secret
+    |<-- access_token -----------------|
+    |--- GET /gateway/bot ------------>|  获取 Gateway URL
+    |<-- wss://... --------------------|
+    |                                  |
+    |=== WebSocket Gateway ============|
+    |<-- Hello ------------------------|
+    |--- Identify / Resume ----------->|
+    |<-- Dispatch(Message/Notice) -----|  收到事件
+    |--- Heartbeat ------------------->|
+    |<-- Heartbeat ACK ----------------|
+    |                                  |
+    |--- POST /messages -------------->|  插件回复或主动发送
+    |<-- message response -------------|
+```
+
+### Intents
+
+| intent | 覆盖事件 |
+|--------|----------|
+| `public_messages` | QQ 群 @ 消息、QQ 单聊 C2C 消息 |
+| `public_guild_messages` | 频道 @ 消息 |
+| `direct_message` | 频道私信消息 |
+
+没有开启对应 intent 时，Gateway 能连接成功，但收不到相关事件。
+
+### 错误与频控
+
+官方 OpenAPI 发送失败会被归一化为失败动作响应，Gateway 会话不会因此断开。429 频控会读取 `retry_after` 信息并对 bot + route 做短期 backoff；backoff 期间同路由发送会直接返回失败响应，避免持续撞频控。
+
 ## Echo 关联
 
 WebSocket 传输中，框架使用 `echo` 字段将请求与响应关联：
@@ -214,6 +269,18 @@ pub struct ReconnectPolicy {
 }
 ```
 
+### QqBotGatewayClient
+
+官方 QQ Bot Gateway 客户端位于 `qimen-transport-qqbot`：
+
+```rust
+pub struct QqBotGatewayClient {
+    // 维护 access token、Gateway URL、session_id、seq、heartbeat 和 shard 状态
+}
+```
+
+它复用底层 WebSocket 能力，但把官方协议相关的 token、opcode、Identify、Resume、Heartbeat、OpenAPI endpoint 和错误分类都限制在 `qimen-transport-qqbot` 内，避免污染通用 WebSocket 传输层。
+
 ## 选择建议
 
 | 场景 | 推荐 |
@@ -223,3 +290,4 @@ pub struct ReconnectPolicy {
 | 生产部署（跨网络） | WS 反向（框架在公网） |
 | 不需要实时推送 | HTTP |
 | 需要高可靠性 | WS 正向 + 自动重连 |
+| 接入官方 QQ Bot | Gateway |

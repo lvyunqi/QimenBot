@@ -28,6 +28,10 @@ QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与
 简单来说，OneBot 是一个**标准协议**。不同的 OneBot 实现（Lagrange、NapCat 等）负责登录 QQ、收发消息，然后按统一格式把消息转发给你的 Bot 程序。这样你只需要关心业务逻辑，不需要操心底层通信。
 :::
 
+::: tip 使用官方 QQ Bot？
+官方 QQ Bot 不需要 OneBot 实现端，它通过官方 Gateway 和 OpenAPI 接入。请按 [官方 QQ Bot 接入](/guide/qq-official-quickstart) 配置 `protocol = "qq-official"`。
+:::
+
 ## 获取 QimenBot
 
 ### 方式一：下载预编译版本（推荐新手）

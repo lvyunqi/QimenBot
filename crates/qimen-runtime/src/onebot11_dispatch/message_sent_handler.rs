@@ -21,11 +21,7 @@ impl OneBotSystemEventHandler for LoggingMessageSentHandler {
     }
 }
 
-fn handle_message_sent(
-    bot_id: &str,
-    route: &MessageSentRoute,
-    payload: &serde_json::Value,
-) {
+fn handle_message_sent(bot_id: &str, route: &MessageSentRoute, payload: &serde_json::Value) {
     match route {
         MessageSentRoute::Private => {
             tracing::info!(

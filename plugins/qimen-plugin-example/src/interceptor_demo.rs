@@ -98,7 +98,10 @@ impl MessageEventInterceptor for CooldownInterceptor {
         if let Some(last) = map.get(&sender)
             && now.duration_since(*last).as_secs() < Self::COOLDOWN_SECS
         {
-            tracing::debug!(sender = sender.as_str(), "cooldown active, blocking / 冷却中，拦截");
+            tracing::debug!(
+                sender = sender.as_str(),
+                "cooldown active, blocking / 冷却中，拦截"
+            );
             return false; // 拦截过于频繁的消息 / block too-frequent messages
         }
 

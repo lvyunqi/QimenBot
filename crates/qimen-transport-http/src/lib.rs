@@ -40,14 +40,16 @@ impl OneBot11HttpClient {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
 
-        let response = request.send().await.map_err(|err| {
-            QimenError::Transport(format!("http request to {url} failed: {err}"))
-        })?;
+        let response = request
+            .send()
+            .await
+            .map_err(|err| QimenError::Transport(format!("http request to {url} failed: {err}")))?;
 
         let status = response.status();
-        let body = response.text().await.map_err(|err| {
-            QimenError::Transport(format!("failed to read response body: {err}"))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| QimenError::Transport(format!("failed to read response body: {err}")))?;
 
         if !status.is_success() {
             return Err(QimenError::Transport(format!(
@@ -101,11 +103,7 @@ impl OneBot11HttpEventServer {
 
         let (event_tx, event_rx) = mpsc::channel(128);
 
-        let listener_task = tokio::spawn(http_accept_loop(
-            listener,
-            event_tx,
-            config.access_token,
-        ));
+        let listener_task = tokio::spawn(http_accept_loop(listener, event_tx, config.access_token));
 
         Ok(Self {
             event_rx,
@@ -169,7 +167,9 @@ async fn handle_http_connection(
     loop {
         let n = stream.read(&mut tmp).await?;
         if n == 0 {
-            return Err(QimenError::Transport("connection closed before headers complete".to_string()));
+            return Err(QimenError::Transport(
+                "connection closed before headers complete".to_string(),
+            ));
         }
         buf.extend_from_slice(&tmp[..n]);
 
@@ -190,7 +190,13 @@ async fn handle_http_connection(
     // Parse request line
     let first_line = header_text.lines().next().unwrap_or("");
     if !first_line.starts_with("POST ") {
-        write_response(&mut stream, 405, "Method Not Allowed", "only POST is accepted").await?;
+        write_response(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            "only POST is accepted",
+        )
+        .await?;
         return Err(QimenError::Transport(format!(
             "unexpected method: {first_line}"
         )));
@@ -233,7 +239,13 @@ async fn handle_http_connection(
         .unwrap_or(0);
 
     if content_length == 0 {
-        write_response(&mut stream, 400, "Bad Request", "missing or zero Content-Length").await?;
+        write_response(
+            &mut stream,
+            400,
+            "Bad Request",
+            "missing or zero Content-Length",
+        )
+        .await?;
         return Err(QimenError::Transport("missing body".to_string()));
     }
 
@@ -258,9 +270,8 @@ async fn handle_http_connection(
     // Truncate to content_length in case we read extra
     body.truncate(content_length);
 
-    let payload = String::from_utf8(body).map_err(|err| {
-        QimenError::Transport(format!("invalid UTF-8 body: {err}"))
-    })?;
+    let payload = String::from_utf8(body)
+        .map_err(|err| QimenError::Transport(format!("invalid UTF-8 body: {err}")))?;
 
     // Validate it is valid JSON
     let _: Value = serde_json::from_str(&payload)?;
