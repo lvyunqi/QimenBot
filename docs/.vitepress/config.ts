@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitepress'
 
+const qqGroupLink = 'https://qun.qq.com/universal-share/share?ac=1&authKey=0sFE1a6DbXGo70vp3VpylxRQ8AmXY%2BgpIAbrB4Cgf9qjT634oSVcrHDWptDNP3%2Fq&busi_data=eyJncm91cENvZGUiOiI4MzU2ODQ3NzgiLCJ0b2tlbiI6IitmMTBOWS96UXQ2Tk9nakgrOWZFMElPL0VXcFJnNmp0c0NSS0tpK25wY24xNEpGV2MvdjY1c2VBL3ArM09TQngiLCJ1aW4iOiI0MzQ2NTgxOTgifQ%3D%3D&data=EJZhsrc7rxEPVPxGeDybFi7TfocR3lNIFijyePfdpsQTTzNNnqoiMvuahA0t8HoN8DVZR9aKBCKcTxDKmOb8IQ&svctype=4&tempid=h5_group_info'
+
 export default defineConfig({
   title: 'QimenBot',
   description: '基于 Rust 的高性能多协议 Bot 框架',
@@ -24,6 +26,7 @@ export default defineConfig({
       { text: '插件开发', link: '/plugin/overview', activeMatch: '/plugin/' },
       { text: 'API 参考', link: '/api/plugin-api', activeMatch: '/api/' },
       { text: '进阶', link: '/advanced/runtime', activeMatch: '/advanced/' },
+      { text: 'QQ群', link: qqGroupLink },
       {
         text: '相关链接',
         items: [

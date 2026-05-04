@@ -11,6 +11,8 @@ _✨ 基于 Rust 的高性能多协议 Bot 框架 ✨_
 [![OneBot 11](https://img.shields.io/badge/OneBot-11-black?style=flat-square)](https://github.com/botuniverse/onebot-11)
 [![QQ Official](https://img.shields.io/badge/QQ_Official-Bot-blue?style=flat-square)](docs/guide/qq-official-quickstart.md)
 
+**QQ 交流群：835684778** · [点击加入群聊【QimenBot】](https://qun.qq.com/universal-share/share?ac=1&authKey=0sFE1a6DbXGo70vp3VpylxRQ8AmXY%2BgpIAbrB4Cgf9qjT634oSVcrHDWptDNP3%2Fq&busi_data=eyJncm91cENvZGUiOiI4MzU2ODQ3NzgiLCJ0b2tlbiI6IitmMTBOWS96UXQ2Tk9nakgrOWZFMElPL0VXcFJnNmp0c0NSS0tpK25wY24xNEpGV2MvdjY1c2VBL3ArM09TQngiLCJ1aW4iOiI0MzQ2NTgxOTgifQ%3D%3D&data=EJZhsrc7rxEPVPxGeDybFi7TfocR3lNIFijyePfdpsQTTzNNnqoiMvuahA0t8HoN8DVZR9aKBCKcTxDKmOb8IQ&svctype=4&tempid=h5_group_info)
+
 **简体中文** | [English](README_EN.md) | [日本語](README_JA.md)
 
 </div>
