@@ -20,6 +20,7 @@ export default defineConfig({
 
     nav: [
       { text: '指南', link: '/guide/introduction', activeMatch: '/guide/' },
+      { text: '官方 QQ Bot', link: '/guide/qq-official-quickstart', activeMatch: '/guide/qq-official-quickstart' },
       { text: '插件开发', link: '/plugin/overview', activeMatch: '/plugin/' },
       { text: 'API 参考', link: '/api/plugin-api', activeMatch: '/api/' },
       { text: '进阶', link: '/advanced/runtime', activeMatch: '/advanced/' },

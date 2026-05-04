@@ -183,7 +183,7 @@ admins = []
 
 ::: tip 官方 Bot 配置要点
 - `qq-official` 必须配合 `transport = "gateway"` 使用。
-- `appid` 和 `secret` 建议通过 `.env` 或系统环境变量注入，不要直接写入仓库配置。
+- `appid` 和 `secret` 可通过 `.env`、系统环境变量或部署平台环境变量注入。
 - `owners` 和 `admins` 对官方 Bot 使用字符串 ID，可填 `openid`、`member_openid` 或频道用户 ID。
 - `config/bots/qq-official.toml` 只是参考模板；运行时仍以 `config/base.toml` 和环境覆盖配置为准。
 - 完整接入流程见 [官方 QQ Bot 接入](/guide/qq-official-quickstart)。

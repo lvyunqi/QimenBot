@@ -15,7 +15,7 @@
 | `QQBOT_APPID` | 机器人 AppID |
 | `QQBOT_SECRET` | 机器人 AppSecret |
 
-建议写入本地 `.env` 或系统环境变量，不要直接提交到仓库：
+可以写入本地 `.env`、系统环境变量，或部署平台提供的环境变量配置：
 
 ```text
 QQBOT_APPID=你的 AppID
@@ -70,8 +70,8 @@ admins = []
 | `public_guild_messages` | 频道 @ 消息 |
 | `direct_message` | 频道私信消息 |
 
-::: warning 不要提交密钥
-`config/bots/qq-official.toml` 只是参考模板，不会被框架自动加载。真实凭据应放在 `.env`、系统环境变量或部署平台密钥管理中。
+::: tip 配置模板
+`config/bots/qq-official.toml` 是参考模板，不会被框架自动加载。实际运行时请将同等配置放入 `config/base.toml`，或通过 `QIMEN_CONFIG_PATH` 指向自定义配置文件。
 :::
 
 ## 启动验证
@@ -163,9 +163,3 @@ Ark、Embed 主要面向频道消息；QQ 群和 C2C 的图片、语音、视频
 ### 被动回复过期
 
 官方平台对被动回复窗口有限制。插件收到消息后应尽快回复；耗时任务建议先返回处理中提示，再用允许的主动消息能力补发结果。
-
-## 后续开发建议
-
-- 插件中优先使用 `sender_id()`、`chat_id()`、`message_id_str()` 这类字符串方法。
-- 需要官方专属能力时，先确认 OpenAPI 是否支持当前场景，再在适配器层扩展 action。
-- 真实 QQ 群、频道、频道私信联调结果应补充到对应插件或配置文档中，不再维护单独的设计草稿和阶段进度表。
