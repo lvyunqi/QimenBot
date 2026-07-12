@@ -10,15 +10,15 @@
 
 ## Recent Completion
 
+- Prepared the dynamic-library residency fix as release `v0.1.8`.
 - Removed unsafe idle eviction for loaded dynamic libraries and added explicit-residency lifecycle coverage.
 - Removed repository-local AI agent instructions and added the root MIT license file.
 - Prepared the command dispatch observability fix as release `v0.1.7`.
 - Added private-chat query support and correct multi-chunk routing in the standalone status plugin.
-- Corrected the RFC 6455 accept GUID and prepared hotfix release `v0.1.6`.
 
 ## Next Step
 
-- Prepare the dynamic-library residency fix as release `v0.1.8` for Linux deployment verification.
+- Deploy `v0.1.8` on Linux and verify a dynamic plugin command after more than five minutes of idle time.
 
 ## Verification Baseline
 
