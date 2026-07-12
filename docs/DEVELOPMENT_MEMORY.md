@@ -10,23 +10,21 @@
 
 ## Recent Completion
 
-- Added API 0.4 background-thread examples for private, group, channel, and channel-private sends.
-- Updated the dynamic plugin template to bind Host API v1 and join its worker during shutdown.
-- Documented proactive queue configuration, enqueue statuses, protocol target mapping, and FFI lifecycle rules.
-- Updated the Chinese, English, and Japanese standalone-plugin dependency examples for crates.io 0.1.10.
-- Added the v0.1.10 changelog entry and VitePress navigation.
+- Bumped all workspace crates and both publishable dynamic-plugin crates to 0.1.10.
+- Regenerated the root and independent dynamic-example lockfiles at 0.1.10.
+- Passed the GitHub CI-equivalent workspace Clippy command with warnings denied.
+- Passed all workspace unit, integration, and documentation tests.
+- Confirmed the independent API 0.4 example still resolves the local 0.1.10 crates.
 
 ## Next Step
 
-- Bump the workspace and publishable crates to version 0.1.10.
+- Package and publish abi-stable-host-api 0.1.10, then qimen-dynamic-plugin-derive 0.1.10.
 
 ## Verification Baseline
 
-- cargo fmt --check (plugins/qimen-dynamic-plugin-example)
-- cargo test --offline (plugins/qimen-dynamic-plugin-example)
-- cargo clippy --offline --all-targets -- -D warnings (plugins/qimen-dynamic-plugin-example)
-- cargo build --release --offline (plugins/qimen-dynamic-plugin-example)
-- cargo test -p qimen-config --offline
+- cargo check --offline (plugins/qimen-dynamic-plugin-example)
+- cargo fmt --all -- --check
+- cargo clippy --workspace --offline -- -D warnings
+- cargo test --workspace --offline
 - cargo check --workspace --offline
-- npm run docs:build (docs)
 - git diff --check
