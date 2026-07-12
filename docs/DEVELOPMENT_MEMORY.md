@@ -7,18 +7,19 @@
 - Dynamic plugins can be developed outside the main repository using crates.io dependencies.
 - Dynamic command dispatch logs identify actual plugin matches without labeling unknown commands as built-ins.
 - Loaded dynamic plugins remain resident until explicit reload so background plugin threads cannot outlive unloaded code.
+- Dynamic callback signatures match the proc-macro exports, and queued send actions are copied into host-owned ABI strings.
 
 ## Recent Completion
 
+- Prepared the dynamic FFI ownership hardening as release `v0.1.9`.
+- Matched command and route callbacks to their reference-parameter exports.
+- Copied queued send actions into host ownership before asynchronous processing or unload.
 - Prepared the dynamic-library residency fix as release `v0.1.8`.
 - Removed unsafe idle eviction for loaded dynamic libraries and added explicit-residency lifecycle coverage.
-- Removed repository-local AI agent instructions and added the root MIT license file.
-- Prepared the command dispatch observability fix as release `v0.1.7`.
-- Added private-chat query support and correct multi-chunk routing in the standalone status plugin.
 
 ## Next Step
 
-- Deploy `v0.1.8` on Linux and verify a dynamic plugin command after more than five minutes of idle time.
+- Deploy `v0.1.9` on Linux and verify a multi-part dynamic command after more than five minutes of idle time.
 
 ## Verification Baseline
 
@@ -26,8 +27,10 @@
 - `cargo test -p qimen-config`
 - `cargo test -p qimen-runtime --lib`
 - `cargo check --workspace --offline`
-- `cargo test --workspace`
-- `cargo clippy --workspace -- -D warnings`
+- `CARGO_INCREMENTAL=0 RUSTFLAGS="-C debuginfo=0" cargo test --workspace --offline -j 2`
+- `cargo clippy --workspace --offline -- -D warnings`
+- Independent dynamic-library runtime fixture: command execution, queued-send flush, explicit unload, then safe send read/drop.
+- Standalone real dynamic plugin: 9 multi-part sends remained readable and safely droppable after explicit DLL unload.
 - `cargo clippy -p qimen-transport-ws --all-targets -- -D warnings`
 - `cargo clippy -p qimen-runtime -p qimen-config -p qimen-official-host --lib -- -D warnings`
 - Standalone status plugin: `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings`, and `cargo build --release --offline`.
