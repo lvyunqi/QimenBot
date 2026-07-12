@@ -9,11 +9,11 @@
 
 ## Recent Completion
 
+- Removed repository-local AI agent instructions and added the root MIT license file.
 - Prepared the command dispatch observability fix as release `v0.1.7`.
 - Added private-chat query support and correct multi-chunk routing in the standalone status plugin.
 - Corrected the RFC 6455 accept GUID and prepared hotfix release `v0.1.6`.
 - Prepared the verified reverse WebSocket and standalone plugin documentation batch as release `v0.1.5`.
-- Documented and release-built a standalone dynamic plugin against both published `0.1.1` crates.
 
 ## Next Step
 

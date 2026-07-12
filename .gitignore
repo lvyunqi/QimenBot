@@ -25,6 +25,7 @@ docs/.vitepress/cache/
 /.windsurf/
 /.kiro/
 /GEMINI.md
+/CLAUDE.md
 /AGENTS.md
 .github/copilot-instructions.md
 .github/instructions/
