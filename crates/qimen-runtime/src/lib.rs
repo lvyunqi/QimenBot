@@ -3127,15 +3127,13 @@ fn build_qqbot_notice_reply_action(
     {
         params.insert("channel_id".to_string(), Value::String(channel_id));
         "send_channel_msg"
-    } else if let Some(guild_id) = event
-        .extensions
-        .get("guild_id")
-        .and_then(value_to_optional_string)
-    {
+    } else {
+        let guild_id = event
+            .extensions
+            .get("guild_id")
+            .and_then(value_to_optional_string)?;
         params.insert("guild_id".to_string(), Value::String(guild_id));
         "send_dms"
-    } else {
-        return None;
     };
 
     if let Some(message_id) = event.message_id_str() {

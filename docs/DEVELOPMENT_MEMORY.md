@@ -7,6 +7,7 @@
 
 ## Recent Completion
 
+- Updated the QQ notice reply fallback for the Rust 1.97 Clippy `question_mark` lint.
 - Added reverse WebSocket bind/path validation, authentication, event routing, and Action echo correlation.
 - Replaced the hard-coded host compatibility version with the compiled package version.
 - Added TCP-level reverse WebSocket integration tests and a runtime liveness regression test.
@@ -21,6 +22,7 @@
 - `cargo test -p qimen-config`
 - `cargo test -p qimen-runtime --lib`
 - `cargo test --workspace`
+- `cargo clippy --workspace -- -D warnings`
 - `cargo clippy -p qimen-transport-ws --all-targets -- -D warnings`
 - `cargo clippy -p qimen-runtime -p qimen-config -p qimen-official-host --lib -- -D warnings`
 - Daemon smoke test: reverse-only config stayed alive and logged the bound address/path.
