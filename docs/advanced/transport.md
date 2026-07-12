@@ -96,7 +96,7 @@ QimenBot                    OneBot 实现
 ### 适用场景
 
 - 框架部署在公网服务器，OneBot 实现在内网
-- 一个框架监听端口，多个 OneBot 实现连接
+- OneBot 实现断线后主动重连同一个监听地址
 - 防火墙只允许出站连接的环境
 
 ## HTTP 传输
@@ -251,8 +251,27 @@ impl WsReverseServer {
     /// 绑定并监听
     pub async fn bind(config: WsReverseConfig) -> Result<Self>;
 
+    /// 等待下一个完成鉴权和握手的连接
+    pub async fn next_connection(&mut self) -> Option<OneBot11ReverseWsConnection>;
+}
+
+pub struct WsReverseConfig {
+    pub bind: String,
+    pub path: String,
+    pub access_token: Option<String>,
+}
+
+impl OneBot11ReverseWsConnection {
     /// 接收下一个事件
     pub async fn next_event(&mut self) -> Option<String>;
+
+    /// 发送 Action 并按 echo 等待响应
+    pub async fn send_text_await_echo(
+        &self,
+        text: &str,
+        echo: &str,
+        timeout: Duration,
+    ) -> Result<String>;
 }
 ```
 

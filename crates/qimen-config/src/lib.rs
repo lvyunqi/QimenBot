@@ -146,6 +146,21 @@ impl AppConfig {
                     bot.id
                 )));
             }
+            if bot.protocol == "onebot11" && bot.transport == "ws-reverse" {
+                if bot.bind.as_deref().is_none_or(str::is_empty) {
+                    return Err(QimenError::Config(format!(
+                        "bot '{}' with transport ws-reverse must declare bind",
+                        bot.id
+                    )));
+                }
+                let path = bot.path.as_deref().unwrap_or_default();
+                if !path.starts_with('/') {
+                    return Err(QimenError::Config(format!(
+                        "bot '{}' with transport ws-reverse must declare a path starting with '/'",
+                        bot.id
+                    )));
+                }
+            }
             if bot.protocol == "qq-official" {
                 if bot.appid.as_deref().is_none_or(str::is_empty) {
                     return Err(QimenError::Config(format!(
@@ -563,6 +578,54 @@ secret = "secret"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_complete_ws_reverse_config() {
+        let toml_str = r#"
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "reverse-bot"
+protocol = "onebot11"
+transport = "ws-reverse"
+bind = "127.0.0.1:6701"
+path = "/onebot/reverse"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_incomplete_ws_reverse_config() {
+        let toml_str = r#"
+[runtime]
+env = "dev"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "reverse-bot"
+protocol = "onebot11"
+transport = "ws-reverse"
+path = "onebot/reverse"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("must declare bind"));
     }
 
     #[test]

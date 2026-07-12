@@ -17,7 +17,7 @@ use std::fs;
 use std::path::Path;
 
 const HOST_PLUGIN_API_VERSION: &str = "0.1";
-const HOST_FRAMEWORK_VERSION: &str = "0.1.1";
+const HOST_FRAMEWORK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub async fn run_official_host(config_path: &str) -> Result<()> {
     // First-start: auto-copy config template if config file is missing
@@ -71,8 +71,9 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
 
     let runtime =
         Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report);
+    tracing::info!(bots = runtime.bots().len(), "official host initialized");
     runtime.boot().await?;
-    tracing::info!(bots = runtime.bots().len(), "official host booted");
+    tracing::info!("official host stopped");
     Ok(())
 }
 

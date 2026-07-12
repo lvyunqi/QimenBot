@@ -56,6 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 rusqlite = { version = "0.34", features = ["bundled"] }
 rand = "0.9"
 inventory = "0.3"
+futures-util = "0.3"
 
 [profile.release]
 lto = true

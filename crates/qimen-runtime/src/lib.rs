@@ -41,7 +41,10 @@ use qimen_transport_qqbot::{
     GatewayStep, QqBotGatewayClient, QqBotGatewaySession, QqBotOpenApiClient, QqBotOpenApiConfig,
     SendMessagePayload, UploadFilePayload,
 };
-use qimen_transport_ws::{OneBot11ForwardWsClient, ReconnectPolicy};
+use qimen_transport_ws::{
+    OneBot11ForwardWsClient, OneBot11ReverseWsConnection, ReconnectPolicy, WsReverseConfig,
+    WsReverseServer,
+};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::future::Future;
@@ -52,7 +55,33 @@ struct OneBotRuntimeContext<'a> {
     runtime: &'a Runtime,
     bot: &'a BotRuntimeInfo,
     adapter: &'a OneBot11Adapter,
-    client: &'a OneBot11ForwardWsClient,
+    client: &'a OneBot11WsClient,
+}
+
+enum OneBot11WsClient {
+    Forward(OneBot11ForwardWsClient),
+    Reverse(OneBot11ReverseWsConnection),
+}
+
+impl OneBot11WsClient {
+    async fn next_event(&mut self) -> Option<String> {
+        match self {
+            Self::Forward(client) => client.next_event().await,
+            Self::Reverse(client) => client.next_event().await,
+        }
+    }
+
+    async fn send_text_await_echo(
+        &self,
+        text: &str,
+        echo: &str,
+        timeout: Duration,
+    ) -> Result<String> {
+        match self {
+            Self::Forward(client) => client.send_text_await_echo(text, echo, timeout).await,
+            Self::Reverse(client) => client.send_text_await_echo(text, echo, timeout).await,
+        }
+    }
 }
 
 struct QqOfficialRuntimeContext<'a> {
@@ -162,6 +191,8 @@ pub struct BotRuntimeInfo {
     pub transport: TransportMode,
     pub capabilities: CapabilitySet,
     pub endpoint: Option<String>,
+    pub bind: Option<String>,
+    pub path: Option<String>,
     pub access_token: Option<String>,
     pub appid: Option<String>,
     pub secret: Option<String>,
@@ -435,6 +466,8 @@ impl Runtime {
                 transport: parse_transport(&bot.transport),
                 capabilities: CapabilitySet::default(),
                 endpoint: bot.endpoint.clone(),
+                bind: bot.bind.clone(),
+                path: bot.path.clone(),
                 access_token: bot.access_token.clone(),
                 appid: bot.appid.clone(),
                 secret: bot.secret.clone(),
@@ -691,6 +724,7 @@ impl Runtime {
             });
         }
 
+        let mut bot_futures = Vec::new();
         for (idx, bot) in self.bots.iter().enumerate() {
             tracing::info!(
                 bot_id = %bot.id,
@@ -704,19 +738,41 @@ impl Runtime {
                 continue;
             }
 
-            if matches!(bot.protocol, ProtocolId::OneBot11)
-                && matches!(bot.transport, TransportMode::WsForward)
-            {
-                let limiter = &self.rate_limiters[idx];
-                self.run_onebot11_forward_ws(bot, limiter).await?;
-            } else if matches!(bot.protocol, ProtocolId::QqOfficial)
-                && matches!(bot.transport, TransportMode::Gateway)
-            {
-                let limiter = &self.rate_limiters[idx];
-                self.run_qqbot_gateway(bot, limiter).await?;
-            }
+            bot_futures.push(self.run_bot(bot, &self.rate_limiters[idx]));
         }
+
+        if bot_futures.is_empty() {
+            tracing::warn!("no enabled bot transport loops were started");
+            return Ok(());
+        }
+
+        futures_util::future::try_join_all(bot_futures).await?;
         Ok(())
+    }
+
+    /// 每个 Bot 使用独立 future 运行，避免长连接阻塞后续实例启动。
+    async fn run_bot(&self, bot: &BotRuntimeInfo, limiter: &TokenBucketLimiter) -> Result<()> {
+        if matches!(bot.protocol, ProtocolId::OneBot11)
+            && matches!(bot.transport, TransportMode::WsForward)
+        {
+            self.run_onebot11_forward_ws(bot, limiter).await
+        } else if matches!(bot.protocol, ProtocolId::OneBot11)
+            && matches!(bot.transport, TransportMode::WsReverse)
+        {
+            self.run_onebot11_reverse_ws(bot, limiter).await
+        } else if matches!(bot.protocol, ProtocolId::QqOfficial)
+            && matches!(bot.transport, TransportMode::Gateway)
+        {
+            self.run_qqbot_gateway(bot, limiter).await
+        } else {
+            tracing::warn!(
+                bot_id = %bot.id,
+                protocol = ?bot.protocol,
+                transport = ?bot.transport,
+                "bot transport is not implemented, skipping startup"
+            );
+            Ok(())
+        }
     }
 
     fn build_system_dispatcher(&self) -> OneBotSystemDispatcher {
@@ -1095,6 +1151,94 @@ impl Runtime {
         }
     }
 
+    /// 监听 OneBot 反向 WebSocket，并为每次重连复用统一事件处理管线。
+    async fn run_onebot11_reverse_ws(
+        &self,
+        bot: &BotRuntimeInfo,
+        limiter: &TokenBucketLimiter,
+    ) -> Result<()> {
+        let bind = bot.bind.clone().ok_or_else(|| {
+            QimenError::Config(format!("bot '{}' missing ws-reverse bind", bot.id))
+        })?;
+        let path = bot.path.clone().ok_or_else(|| {
+            QimenError::Config(format!("bot '{}' missing ws-reverse path", bot.id))
+        })?;
+
+        let mut server = WsReverseServer::bind(WsReverseConfig {
+            bind: bind.clone(),
+            path: path.clone(),
+            access_token: bot.access_token.clone(),
+        })
+        .await?;
+        let adapter = OneBot11Adapter;
+        let mut system_dispatcher = self.build_system_dispatcher();
+        let mut command_dispatcher = self.build_command_dispatcher()?;
+        let mut command_help_text = render_help_text(&command_dispatcher.describe_commands());
+        let reconnect_policy = ReconnectPolicy::default();
+
+        loop {
+            let connection = tokio::select! {
+                ctrl = tokio::signal::ctrl_c() => {
+                    ctrl.map_err(|err| QimenError::Runtime(err.to_string()))?;
+                    tracing::info!(bot_id = %bot.id, "received ctrl-c, stopping ws-reverse listener");
+                    return Ok(());
+                }
+                connection = server.next_connection() => {
+                    connection.ok_or_else(|| {
+                        QimenError::Transport(format!(
+                            "bot '{}' ws-reverse listener stopped unexpectedly",
+                            bot.id
+                        ))
+                    })?
+                }
+            };
+
+            let peer = connection.peer_addr();
+            tracing::info!(bot_id = %bot.id, peer = %peer, "ws-reverse session connected");
+            let mut client = OneBot11WsClient::Reverse(connection);
+
+            loop {
+                let session_result = self
+                    .run_onebot11_session(
+                        bot,
+                        &adapter,
+                        &system_dispatcher,
+                        &command_dispatcher,
+                        &command_help_text,
+                        &mut client,
+                        &reconnect_policy,
+                        limiter,
+                    )
+                    .await;
+
+                match session_result {
+                    Ok(SessionEnd::Shutdown) => return Ok(()),
+                    Ok(SessionEnd::PluginReload { reply_action }) => {
+                        tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
+                        if let Some(action) = reply_action
+                            && let Err(err) =
+                                self.execute_action(bot, &adapter, &client, action).await
+                        {
+                            tracing::warn!(bot_id = %bot.id, error = %err, "failed to send reload reply");
+                        }
+                        system_dispatcher = self.build_system_dispatcher();
+                        command_dispatcher = self.build_command_dispatcher()?;
+                        command_help_text =
+                            render_help_text(&command_dispatcher.describe_commands());
+                    }
+                    Ok(SessionEnd::Reconnect(reason)) => {
+                        tracing::warn!(bot_id = %bot.id, peer = %peer, reason = %reason, "ws-reverse session ended, waiting for reconnect");
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::warn!(bot_id = %bot.id, peer = %peer, error = %err, "ws-reverse session failed, waiting for reconnect");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     async fn run_onebot11_forward_ws(
         &self,
         bot: &BotRuntimeInfo,
@@ -1116,7 +1260,7 @@ impl Runtime {
         loop {
             let session_started = tokio::time::Instant::now();
 
-            let mut client = match OneBot11ForwardWsClient::connect(
+            let client = match OneBot11ForwardWsClient::connect(
                 &endpoint,
                 bot.access_token.as_deref(),
             )
@@ -1139,6 +1283,7 @@ impl Runtime {
                     continue;
                 }
             };
+            let mut client = OneBot11WsClient::Forward(client);
 
             let session_result = self
                 .run_onebot11_session(
@@ -1197,7 +1342,7 @@ impl Runtime {
         system_dispatcher: &OneBotSystemDispatcher,
         command_dispatcher: &CommandDispatcher,
         command_help_text: &str,
-        client: &mut OneBot11ForwardWsClient,
+        client: &mut OneBot11WsClient,
         reconnect_policy: &ReconnectPolicy,
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionEnd> {
@@ -1252,7 +1397,7 @@ impl Runtime {
         system_dispatcher: &OneBotSystemDispatcher,
         command_dispatcher: &CommandDispatcher,
         command_help_text: &str,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         text: &str,
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionSignal> {
@@ -1330,7 +1475,7 @@ impl Runtime {
 
         let packet = IncomingPacket {
             protocol: ProtocolId::OneBot11,
-            transport_mode: TransportMode::WsForward,
+            transport_mode: bot.transport.clone(),
             bot_instance: bot.id.clone(),
             payload,
             raw_bytes: None,
@@ -1785,7 +1930,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         flag: String,
         remark: Option<String>,
     ) -> Result<()> {
@@ -1813,7 +1958,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         flag: String,
         reason: Option<String>,
     ) -> Result<()> {
@@ -1841,7 +1986,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         flag: String,
         sub_type: String,
     ) -> Result<()> {
@@ -1869,7 +2014,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         flag: String,
         sub_type: String,
         reason: Option<String>,
@@ -1899,7 +2044,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         action: NormalizedActionRequest,
     ) -> Result<qimen_protocol_core::NormalizedActionResponse> {
         let echo = action
@@ -1916,7 +2061,7 @@ impl Runtime {
 
         let response_packet = IncomingPacket {
             protocol: ProtocolId::OneBot11,
-            transport_mode: TransportMode::WsForward,
+            transport_mode: bot.transport.clone(),
             bot_instance: bot.id.clone(),
             payload: serde_json::from_str(&raw_response)?,
             raw_bytes: None,
@@ -2270,7 +2415,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         sends: Vec<SendAction>,
     ) -> Result<()> {
         for send in sends {
@@ -2424,7 +2569,7 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         adapter: &OneBot11Adapter,
-        client: &OneBot11ForwardWsClient,
+        client: &OneBot11WsClient,
         payload: &Value,
         signal: DynamicResponse,
     ) -> Result<()> {
@@ -3550,6 +3695,43 @@ mod tests {
     use qimen_protocol_core::{ActorRef, ChatRef};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[tokio::test]
+    async fn ws_reverse_boot_stays_alive_while_waiting_for_connection() {
+        let config: AppConfig = toml::from_str(
+            r#"
+[runtime]
+env = "test"
+shutdown_timeout_secs = 1
+task_grace_secs = 1
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "127.0.0.1:0"
+
+[official_host]
+builtin_modules = []
+plugin_modules = []
+
+[[bots]]
+id = "reverse-bot"
+protocol = "onebot11"
+transport = "ws-reverse"
+bind = "127.0.0.1:0"
+path = "/onebot/reverse"
+"#,
+        )
+        .unwrap();
+        let runtime = Runtime::from_config(&config);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), runtime.boot())
+                .await
+                .is_err(),
+            "ws-reverse boot must keep running while it waits for clients"
+        );
+    }
+
     #[test]
     fn qqbot_error_helpers_detect_rate_limit_backoff() {
         let error = "transport error: qqbot request /v2/users/u/messages failed with HTTP 429, code 11241, category RateLimited: rate limit exceeded, retry_after_ms=1500";
@@ -3700,6 +3882,8 @@ mod tests {
             transport: TransportMode::Gateway,
             capabilities: CapabilitySet::default(),
             endpoint: None,
+            bind: None,
+            path: None,
             access_token: None,
             appid: Some("appid".to_string()),
             secret: Some("secret".to_string()),

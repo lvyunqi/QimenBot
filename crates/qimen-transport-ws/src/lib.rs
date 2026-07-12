@@ -1,6 +1,7 @@
 use qimen_error::{QimenError, Result};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -295,8 +296,8 @@ impl Drop for OneBot11ForwardWsClient {
 
 #[derive(Debug, Clone)]
 pub struct WsReverseConfig {
-    pub host: String,
-    pub port: u16,
+    pub bind: String,
+    pub path: String,
     pub access_token: Option<String>,
 }
 
@@ -305,28 +306,48 @@ pub struct WsReverseConfig {
 // ---------------------------------------------------------------------------
 
 pub struct WsReverseServer {
-    event_rx: mpsc::Receiver<String>,
+    connection_rx: mpsc::Receiver<OneBot11ReverseWsConnection>,
     listener_task: JoinHandle<()>,
+    local_addr: SocketAddr,
 }
 
 impl WsReverseServer {
+    /// 绑定反向 WebSocket 监听地址，并等待 OneBot 实现端建立会话。
     pub async fn bind(config: WsReverseConfig) -> Result<Self> {
-        let addr = format!("{}:{}", config.host, config.port);
-        let listener = TcpListener::bind(&addr).await?;
-        tracing::info!(address = %addr, "ws-reverse server listening");
+        if !config.path.starts_with('/') {
+            return Err(QimenError::Transport(
+                "ws-reverse path must start with '/'".to_string(),
+            ));
+        }
 
-        let (event_tx, event_rx) = mpsc::channel(128);
+        let listener = TcpListener::bind(&config.bind).await?;
+        let local_addr = listener.local_addr()?;
+        tracing::info!(address = %local_addr, path = %config.path, "ws-reverse server listening");
 
-        let listener_task = tokio::spawn(accept_loop(listener, event_tx, config.access_token));
+        let (connection_tx, connection_rx) = mpsc::channel(8);
+
+        let listener_task = tokio::spawn(accept_loop(
+            listener,
+            connection_tx,
+            config.path,
+            config.access_token,
+        ));
 
         Ok(Self {
-            event_rx,
+            connection_rx,
             listener_task,
+            local_addr,
         })
     }
 
-    pub async fn next_event(&mut self) -> Option<String> {
-        self.event_rx.recv().await
+    /// 返回实际绑定地址；配置端口为 0 时可用于测试获取系统分配端口。
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// 等待下一个完成鉴权和握手的 OneBot 反向 WebSocket 会话。
+    pub async fn next_connection(&mut self) -> Option<OneBot11ReverseWsConnection> {
+        self.connection_rx.recv().await
     }
 }
 
@@ -336,22 +357,93 @@ impl Drop for WsReverseServer {
     }
 }
 
+/// 单个 OneBot 反向 WebSocket 双向会话。
+pub struct OneBot11ReverseWsConnection {
+    writer: Arc<Mutex<DynWriter>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+    event_rx: mpsc::Receiver<String>,
+    reader_task: JoinHandle<()>,
+    peer_addr: SocketAddr,
+}
+
+impl OneBot11ReverseWsConnection {
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_addr
+    }
+
+    pub async fn next_event(&mut self) -> Option<String> {
+        self.event_rx.recv().await
+    }
+
+    pub async fn send_text(&self, text: &str) -> Result<()> {
+        let mut writer = self.writer.lock().await;
+        write_ws_text_frame_unmasked(&mut *writer, text).await
+    }
+
+    /// 发送 OneBot Action，并按照 echo 等待同一连接上的响应。
+    pub async fn send_text_await_echo(
+        &self,
+        text: &str,
+        echo: &str,
+        timeout: Duration,
+    ) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(echo.to_string(), tx);
+
+        if let Err(err) = self.send_text(text).await {
+            self.pending.lock().await.remove(echo);
+            return Err(err);
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(payload)) => Ok(payload),
+            Ok(Err(_)) => Err(QimenError::Transport(format!(
+                "pending echo channel closed for {echo}"
+            ))),
+            Err(_) => {
+                self.pending.lock().await.remove(echo);
+                Err(QimenError::Transport(format!(
+                    "timed out waiting for echo {echo}"
+                )))
+            }
+        }
+    }
+}
+
+impl Drop for OneBot11ReverseWsConnection {
+    fn drop(&mut self) {
+        self.reader_task.abort();
+    }
+}
+
 async fn accept_loop(
     listener: TcpListener,
-    event_tx: mpsc::Sender<String>,
+    connection_tx: mpsc::Sender<OneBot11ReverseWsConnection>,
+    path: String,
     access_token: Option<String>,
 ) {
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
                 tracing::info!(peer = %peer, "ws-reverse: accepted connection");
-                let event_tx = event_tx.clone();
+                let connection_tx = connection_tx.clone();
+                let path = path.clone();
                 let access_token = access_token.clone();
                 tokio::spawn(async move {
-                    if let Err(err) =
-                        handle_reverse_connection(stream, event_tx, access_token.as_deref()).await
+                    match accept_reverse_connection(stream, peer, &path, access_token.as_deref())
+                        .await
                     {
-                        tracing::error!(peer = %peer, error = %err, "ws-reverse: connection error");
+                        Ok(connection) => {
+                            if connection_tx.send(connection).await.is_err() {
+                                tracing::warn!(
+                                    peer = %peer,
+                                    "ws-reverse: runtime dropped, closing connection"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!(peer = %peer, error = %err, "ws-reverse: connection error");
+                        }
                     }
                 });
             }
@@ -363,22 +455,55 @@ async fn accept_loop(
     }
 }
 
-async fn handle_reverse_connection(
+async fn accept_reverse_connection(
     mut stream: TcpStream,
-    event_tx: mpsc::Sender<String>,
+    peer_addr: SocketAddr,
+    expected_path: &str,
     access_token: Option<&str>,
-) -> Result<()> {
-    // Read the HTTP upgrade request from the client
-    let mut buf = vec![0_u8; 4096];
-    let n = stream.read(&mut buf).await?;
-    if n == 0 {
-        return Err(QimenError::Transport("empty request".to_string()));
+) -> Result<OneBot11ReverseWsConnection> {
+    // HTTP 头可能被拆成多个 TCP 包，读取到完整的分隔符后再解析。
+    let mut request_bytes = Vec::with_capacity(1024);
+    loop {
+        let mut chunk = [0_u8; 1024];
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Err(QimenError::Transport("empty request".to_string()));
+        }
+        request_bytes.extend_from_slice(&chunk[..read]);
+        if request_bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+        if request_bytes.len() > 16 * 1024 {
+            stream
+                .write_all(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
+                .await?;
+            return Err(QimenError::Transport(
+                "websocket upgrade request headers are too large".to_string(),
+            ));
+        }
     }
-    let request_text = String::from_utf8_lossy(&buf[..n]);
+
+    let request_text = String::from_utf8_lossy(&request_bytes);
+    let request_line = request_text
+        .lines()
+        .next()
+        .ok_or_else(|| QimenError::Transport("missing HTTP request line".to_string()))?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next().unwrap_or_default();
+    let target = request_parts.next().unwrap_or_default();
+    let request_path = target.split('?').next().unwrap_or_default();
+
+    if method != "GET" || request_path != expected_path {
+        stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n").await?;
+        return Err(QimenError::Transport(format!(
+            "unexpected websocket path '{request_path}', expected '{expected_path}'"
+        )));
+    }
 
     // Validate it is a WebSocket upgrade request
-    if !request_text.contains("Upgrade: websocket") && !request_text.contains("upgrade: websocket")
-    {
+    let is_websocket_upgrade = http_header_value(&request_text, "upgrade")
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    if !is_websocket_upgrade {
         let response = "HTTP/1.1 400 Bad Request\r\n\r\n";
         stream.write_all(response.as_bytes()).await?;
         return Err(QimenError::Transport(
@@ -388,21 +513,11 @@ async fn handle_reverse_connection(
 
     // Check access token if configured
     if let Some(expected) = access_token.filter(|t| !t.is_empty()) {
-        let authorized = request_text.lines().any(|line| {
-            // Header name matching is case-insensitive per HTTP spec
-            if let Some(colon_pos) = line.find(':') {
-                let name = &line[..colon_pos];
-                if !name.eq_ignore_ascii_case("authorization") {
-                    return false;
-                }
-                let value = line[colon_pos + 1..].trim();
-                // "Bearer" prefix is case-insensitive, token is exact match
-                if value.len() > 7 && value[..7].eq_ignore_ascii_case("bearer ") {
-                    return &value[7..] == expected;
-                }
-            }
-            false
-        });
+        let authorized = http_header_value(&request_text, "authorization")
+            .and_then(|value| value.get(..7).map(|prefix| (prefix, value)))
+            .is_some_and(|(prefix, value)| {
+                prefix.eq_ignore_ascii_case("bearer ") && &value[7..] == expected
+            });
 
         if !authorized {
             let response = "HTTP/1.1 401 Unauthorized\r\n\r\n";
@@ -412,22 +527,8 @@ async fn handle_reverse_connection(
     }
 
     // Extract Sec-WebSocket-Key
-    let ws_key = request_text
-        .lines()
-        .find_map(|line| {
-            let lower = line.to_lowercase();
-            if lower.starts_with("sec-websocket-key:") {
-                Some(
-                    line.split_once(':')
-                        .map(|x| x.1)
-                        .unwrap_or("")
-                        .trim()
-                        .to_string(),
-                )
-            } else {
-                None
-            }
-        })
+    let ws_key = http_header_value(&request_text, "sec-websocket-key")
+        .map(str::to_string)
         .ok_or_else(|| QimenError::Transport("missing Sec-WebSocket-Key".to_string()))?;
 
     // Compute accept key
@@ -438,35 +539,35 @@ async fn handle_reverse_connection(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept_key}\r\n\r\n"
     );
     stream.write_all(response.as_bytes()).await?;
-    tracing::info!("ws-reverse: websocket handshake completed");
+    tracing::info!(peer = %peer_addr, path = %expected_path, "ws-reverse: websocket handshake completed");
 
-    let (mut reader, _writer) = tokio::io::split(stream);
+    let (reader, writer) = tokio::io::split(stream);
+    let writer: Arc<Mutex<DynWriter>> = Arc::new(Mutex::new(Box::new(writer)));
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let (event_tx, event_rx) = mpsc::channel(128);
+    let reader_task = {
+        let writer = Arc::clone(&writer);
+        let pending = Arc::clone(&pending);
+        tokio::spawn(async move {
+            reverse_reader_task(reader, writer, event_tx, pending, peer_addr).await;
+        })
+    };
 
-    // Server-side reader loop – clients send masked frames; we just forward
-    // text messages to the event channel.
-    loop {
-        match read_ws_frame_server(&mut reader).await {
-            Ok(Some(payload)) => {
-                if payload.is_empty() {
-                    continue;
-                }
-                if event_tx.send(payload).await.is_err() {
-                    tracing::warn!("ws-reverse: event receiver dropped, stopping");
-                    break;
-                }
-            }
-            Ok(None) => {
-                tracing::info!("ws-reverse: client closed connection");
-                break;
-            }
-            Err(err) => {
-                tracing::error!(error = %err, "ws-reverse: read error");
-                break;
-            }
-        }
-    }
+    Ok(OneBot11ReverseWsConnection {
+        writer,
+        pending,
+        event_rx,
+        reader_task,
+        peer_addr,
+    })
+}
 
-    Ok(())
+fn http_header_value<'a>(request: &'a str, expected_name: &str) -> Option<&'a str> {
+    request.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case(expected_name)
+            .then(|| value.trim())
+    })
 }
 
 fn compute_ws_accept_key(key: &str) -> String {
@@ -617,6 +718,50 @@ async fn generic_reader_task<R>(
     }
 }
 
+/// 反向 WS reader 同时分流事件和 Action 响应，避免响应被误当作事件处理。
+async fn reverse_reader_task<R>(
+    mut reader: R,
+    writer: Arc<Mutex<DynWriter>>,
+    event_tx: mpsc::Sender<String>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+    peer_addr: SocketAddr,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    loop {
+        match read_ws_frame_server(&mut reader, &writer).await {
+            Ok(Some(payload)) => {
+                if payload.is_empty() {
+                    continue;
+                }
+
+                if let Some(echo) = extract_action_response_echo(&payload) {
+                    let maybe_sender = pending.lock().await.remove(&echo);
+                    if let Some(sender) = maybe_sender {
+                        let _ = sender.send(payload);
+                        continue;
+                    }
+                }
+
+                if event_tx.send(payload).await.is_err() {
+                    tracing::warn!(peer = %peer_addr, "ws-reverse: event receiver dropped, stopping");
+                    break;
+                }
+            }
+            Ok(None) => {
+                pending.lock().await.clear();
+                tracing::info!(peer = %peer_addr, "ws-reverse: client closed connection");
+                break;
+            }
+            Err(err) => {
+                pending.lock().await.clear();
+                tracing::error!(peer = %peer_addr, error = %err, "ws-reverse: read error");
+                break;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket frame reading
 // ---------------------------------------------------------------------------
@@ -651,9 +796,11 @@ where
     }
 }
 
-/// Read a WebSocket frame from a server perspective (client frames are masked,
-/// no pong writer needed – pings are not sent by the server side).
-async fn read_ws_frame_server<R>(reader: &mut R) -> Result<Option<String>>
+/// Read a WebSocket frame from a server perspective (client frames are masked).
+async fn read_ws_frame_server<R>(
+    reader: &mut R,
+    writer: &Arc<Mutex<DynWriter>>,
+) -> Result<Option<String>>
 where
     R: AsyncRead + Unpin,
 {
@@ -667,7 +814,12 @@ where
             .map(Some)
             .map_err(|err| QimenError::Transport(err.to_string())),
         0x8 => Ok(None),
-        0x9 | 0xA => Ok(Some(String::new())),
+        0x9 => {
+            let mut writer = writer.lock().await;
+            write_ws_frame_unmasked(&mut *writer, 0xA, &payload).await?;
+            Ok(Some(String::new()))
+        }
+        0xA => Ok(Some(String::new())),
         _ => Ok(Some(String::new())),
     }
 }
@@ -727,6 +879,37 @@ where
     W: AsyncWrite + Unpin + ?Sized,
 {
     write_ws_frame_masked(stream, 0x1, text.as_bytes()).await
+}
+
+/// Write an unmasked text frame from the WebSocket server to its client.
+async fn write_ws_text_frame_unmasked<W>(stream: &mut W, text: &str) -> Result<()>
+where
+    W: AsyncWrite + Unpin + ?Sized,
+{
+    write_ws_frame_unmasked(stream, 0x1, text.as_bytes()).await
+}
+
+async fn write_ws_frame_unmasked<W>(stream: &mut W, opcode: u8, payload: &[u8]) -> Result<()>
+where
+    W: AsyncWrite + Unpin + ?Sized,
+{
+    let mut frame = Vec::with_capacity(payload.len() + 10);
+    frame.push(0x80 | opcode);
+
+    let payload_len = payload.len();
+    if payload_len <= 125 {
+        frame.push(payload_len as u8);
+    } else if payload_len <= u16::MAX as usize {
+        frame.push(126);
+        frame.extend_from_slice(&(payload_len as u16).to_be_bytes());
+    } else {
+        frame.push(127);
+        frame.extend_from_slice(&(payload_len as u64).to_be_bytes());
+    }
+
+    frame.extend_from_slice(payload);
+    stream.write_all(&frame).await?;
+    Ok(())
 }
 
 /// Write a WebSocket frame with client masking.
