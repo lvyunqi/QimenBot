@@ -168,6 +168,28 @@ impl MessageEventInterceptor for MyInterceptor {
 impl MyPlugin { /* ... */ }
 ```
 
+### Standalone Dynamic Plugins
+
+Dynamic plugins can be developed outside the QimenBot repository. They do not need local path dependencies or a checkout of the framework source:
+
+```toml
+[package]
+name = "qimen-dynamic-plugin-myplugin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+abi-stable-host-api = "0.1.1"
+qimen-dynamic-plugin-derive = "0.1.1"
+abi_stable = "0.11"
+```
+
+The two QimenBot-specific crates are published on crates.io. Their current package version is `0.1.1`; this is separate from dynamic plugin ABI API `0.3`, which the derive macro declares automatically. Build for the same OS and CPU architecture as the QimenBot host, then copy the `.so`, `.dll`, or `.dylib` into `plugin_bin_dir`. See the [dynamic plugin guide](docs/plugin/dynamic.md) for the complete example.
+
 ### Event Processing Pipeline
 
 ```

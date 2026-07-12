@@ -498,6 +498,30 @@ impl MyPlugin { /* ... */ }
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
 
+### 在主仓库外独立开发
+
+动态插件不需要引用本地 QimenBot 源码。两个 QimenBot 专用依赖已发布到 crates.io，插件可以是任意目录中的独立 Rust 项目：
+
+```toml
+[package]
+name = "qimen-dynamic-plugin-myplugin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+abi-stable-host-api = "0.1.1"
+qimen-dynamic-plugin-derive = "0.1.1"
+abi_stable = "0.11"
+```
+
+[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 的 crate 发布版本当前为 `0.1.1`。这与插件描述符中的 ABI API `0.3` 是两套版本；过程宏会自动生成正确的 API 声明。
+
+仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
+
 ### 最小动态插件
 
 使用 `#[dynamic_plugin]` 过程宏，无需手写 FFI 导出代码：
@@ -522,21 +546,22 @@ mod my_plugin {
 ### 构建 & 部署
 
 ```bash
-# 1. 在 plugins/ 下创建独立 crate（不加入 workspace）
-cargo new --lib plugins/my-plugin
-# Cargo.toml 中设置 crate-type = ["cdylib"]，加 [workspace] 空表
+# 1. 在任意目录创建独立 crate
+cargo new --lib qimen-dynamic-plugin-myplugin
+# Cargo.toml 中设置 crate-type = ["cdylib"] 并添加上述 crates.io 依赖
 
 # 2. 编译
-cd plugins/my-plugin
+cd qimen-dynamic-plugin-myplugin
 cargo build --release
 
-# 3. 部署：复制动态库到 plugin_bin_dir
-cp target/release/libmy_plugin.so ../../plugins/bin/
-# Windows: cp target/release/my_plugin.dll ../../plugins/bin/
-# macOS:   cp target/release/libmy_plugin.dylib ../../plugins/bin/
+# 3. 部署：复制或上传动态库到 QimenBot 的 plugin_bin_dir
+scp target/release/libqimen_dynamic_plugin_myplugin.so user@bot-host:/opt/qimenbot/plugins/bin/
+# Windows: Copy-Item target/release/qimen_dynamic_plugin_myplugin.dll C:\qimenbot\plugins\bin\
 
 # 4. 在 Bot 中执行 /plugins reload 热重载
 ```
+
+动态库必须针对 QimenBot 宿主的操作系统和 CPU 架构构建。完整流程见[动态插件开发文档](docs/plugin/dynamic.md)。
 
 ### 宏属性一览
 

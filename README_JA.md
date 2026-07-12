@@ -168,6 +168,28 @@ impl MessageEventInterceptor for MyInterceptor {
 impl MyPlugin { /* ... */ }
 ```
 
+### スタンドアロン動的プラグイン
+
+動的プラグインは QimenBot リポジトリの外で独立して開発できます。ローカルの path 依存やフレームワークのソースコードは不要です：
+
+```toml
+[package]
+name = "qimen-dynamic-plugin-myplugin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+abi-stable-host-api = "0.1.1"
+qimen-dynamic-plugin-derive = "0.1.1"
+abi_stable = "0.11"
+```
+
+QimenBot 専用の 2 つの crate は crates.io で公開されています。現在のパッケージバージョンは `0.1.1` で、動的プラグイン ABI API `0.3` とは別のバージョン体系です。API 宣言は derive マクロが自動生成します。QimenBot ホストと同じ OS・CPU アーキテクチャ向けにビルドし、生成された `.so`、`.dll`、または `.dylib` を `plugin_bin_dir` に配置してください。詳細は[動的プラグインガイド](docs/plugin/dynamic.md)を参照してください。
+
 ### イベント処理パイプライン
 
 ```

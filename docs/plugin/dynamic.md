@@ -24,11 +24,26 @@
 
 动态插件推荐使用 `#[dynamic_plugin]` **过程宏**来编写。宏会自动生成所有 FFI 导出函数，你只需关注业务逻辑。
 
+动态插件可以在 **QimenBot 主仓库之外完全独立开发和编译**。构建机器不需要 QimenBot 源码，只需要 Rust 工具链和 crates.io；部署时把生成的动态库复制到 QimenBot 的 `plugin_bin_dir` 即可。
+
+QimenBot 提供的两个专用依赖已经发布到 crates.io：
+
+| crate | 当前发布版本 | 用途 |
+|-------|-------------|------|
+| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.1` | 动态插件与宿主之间的 ABI 稳定类型和 API |
+| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.1` | `#[dynamic_plugin]` 及其内部属性宏 |
+
+::: info 两套版本不要混淆
+crate 的发布版本当前是 `0.1.1`；插件描述符中的动态插件 API 版本当前是 `0.3`。过程宏会自动声明 API `0.3`，宿主同时兼容 API `0.1`、`0.2` 和 `0.3`。
+:::
+
 ### 第 1 步：创建项目
 
+在任意不属于 QimenBot 主仓库的目录创建普通 Rust 库：
+
 ```bash
-cargo new --lib plugins/qimen-dynamic-plugin-myplugin
-cd plugins/qimen-dynamic-plugin-myplugin
+cargo new --lib qimen-dynamic-plugin-myplugin
+cd qimen-dynamic-plugin-myplugin
 ```
 
 ### 第 2 步：配置 Cargo.toml
@@ -38,22 +53,22 @@ cd plugins/qimen-dynamic-plugin-myplugin
 name = "qimen-dynamic-plugin-myplugin"
 edition = "2024"
 version = "0.1.0"
+rust-version = "1.89"
 
 [lib]
 crate-type = ["cdylib"]  # 编译为动态库
 
-[workspace]  # 独立于主工作空间
-
 [dependencies]
-abi-stable-host-api = "0.1"
-qimen-dynamic-plugin-derive = "0.1"
+abi-stable-host-api = "0.1.1"
+qimen-dynamic-plugin-derive = "0.1.1"
 abi_stable = "0.11"
 serde_json = "1"  # 可选，用于解析事件 JSON
 ```
 
 ::: warning 重要配置
 - `crate-type = ["cdylib"]` — 必须设为 cdylib 才能编译为动态库
-- `[workspace]` — 空的 workspace 表，使这个 crate 不属于主工作空间
+- `abi_stable` — 过程宏生成的 ABI 类型路径会直接使用该 crate，因此需要保留这个依赖
+- `[workspace]` — 仓库外独立项目不需要；只有把插件目录放进 QimenBot 仓库、但不加入主 workspace 时才需要添加空表
 :::
 
 ### 第 3 步：编写插件
@@ -80,7 +95,6 @@ mod my_plugin {
 ### 第 4 步：编译
 
 ```bash
-cd plugins/qimen-dynamic-plugin-myplugin
 cargo build --release
 ```
 
@@ -94,18 +108,20 @@ cargo build --release
 
 ### 第 5 步：部署
 
-将动态库复制到配置文件中 `plugin_bin_dir` 指定的目录（默认 `plugins/bin/`）：
+将动态库复制到运行 QimenBot 的机器上，并放入配置文件中 `plugin_bin_dir` 指定的目录（默认 `plugins/bin/`）。动态库必须使用与宿主一致的操作系统和 CPU 架构构建：
 
 ```bash
-# Linux
-cp target/release/libqimen_dynamic_plugin_myplugin.so ../../plugins/bin/
+# Linux：插件与 QimenBot 在同一台机器
+cp target/release/libqimen_dynamic_plugin_myplugin.so /opt/qimenbot/plugins/bin/
 
-# macOS
-cp target/release/libqimen_dynamic_plugin_myplugin.dylib ../../plugins/bin/
+# Linux：从独立开发机上传到宿主
+scp target/release/libqimen_dynamic_plugin_myplugin.so user@bot-host:/opt/qimenbot/plugins/bin/
 
 # Windows
-cp target/release/qimen_dynamic_plugin_myplugin.dll ../../plugins/bin/
+Copy-Item target/release/qimen_dynamic_plugin_myplugin.dll C:\qimenbot\plugins\bin\
 ```
+
+Linux 下还应确保构建环境与宿主的 C 运行时兼容；最稳妥的做法是在与宿主相同的发行版环境或 CI 容器中构建。
 
 ### 第 6 步：加载
 
@@ -853,6 +869,6 @@ fn notify(req: &CommandRequest) -> CommandResponse {
 1. **同步执行** — 动态插件回调是同步的 `extern "C"` 函数，不支持 `async/await`
 2. **C ABI** — 所有导出函数必须标记 `#[unsafe(no_mangle)]`（Rust 2024 Edition 语法）
 3. **ABI 稳定** — 使用 `abi_stable` crate 提供的类型（`RString`、`RVec`），不能直接传递 Rust 标准库类型跨 FFI 边界
-4. **独立编译** — 动态插件不属于主工作空间，Cargo.toml 中必须有空的 `[workspace]` 表
+4. **独立编译** — 仓库外项目直接独立构建；放在 QimenBot 仓库内时用空的 `[workspace]` 表与主工作空间隔离
 5. **每模块限制** — 最多一个 `#[init]`、一个 `#[shutdown]`、一个 `#[pre_handle]`、一个 `#[after_completion]` 函数
 :::
