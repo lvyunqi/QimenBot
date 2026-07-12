@@ -1,9 +1,11 @@
+use crate::proactive_send::{ProactiveHostContext, ProactiveSendHub, host_enqueue_send};
 use abi_stable::std_types::RString;
 use abi_stable::std_types::RVec;
 use abi_stable_host_api::{
     ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY, CommandRequest, CommandResponse,
-    DynamicActionResponse, InterceptorRequest, InterceptorResponse, NoticeRequest, NoticeResponse,
-    PluginDescriptor, PluginInitConfig, PluginInitResult, SendAction, is_compatible_api_version,
+    DynamicActionResponse, HOST_API_V1_ABI_VERSION, HostApiV1, InterceptorRequest,
+    InterceptorResponse, NoticeRequest, NoticeResponse, PluginDescriptor, PluginInitConfig,
+    PluginInitResult, SendAction, SendEnqueueStatus, is_compatible_api_version,
 };
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
@@ -49,6 +51,7 @@ pub(crate) type LibraryHandle = Arc<LoadedLibrary>;
 #[derive(Default)]
 pub struct DynamicPluginRuntime {
     libraries: HashMap<String, LibraryHandle>,
+    host_api_bindings: HashMap<String, Box<ProactiveHostContext>>,
 }
 
 /// Response from a dynamic plugin callback.
@@ -69,6 +72,7 @@ impl DynamicPluginRuntime {
     pub fn new() -> Self {
         Self {
             libraries: HashMap::new(),
+            host_api_bindings: HashMap::new(),
         }
     }
 
@@ -82,6 +86,60 @@ impl DynamicPluginRuntime {
             .get(path)
             .cloned()
             .ok_or_else(|| QimenError::Runtime(format!("library '{}' missing after load", path)))
+    }
+
+    /// Bind the API 0.4 Host API table for a loaded dynamic plugin.
+    pub(crate) fn bind_host_api_v1(
+        &mut self,
+        handle: &LibraryHandle,
+        library_path: &str,
+        hub: ProactiveSendHub,
+    ) -> Result<()> {
+        if self.host_api_bindings.contains_key(library_path) {
+            return Ok(());
+        }
+
+        let mut context = Box::new(ProactiveHostContext::new(hub));
+        let api = HostApiV1 {
+            abi_version: HOST_API_V1_ABI_VERSION,
+            context: context.as_context_ptr(),
+            enqueue_send: Some(host_enqueue_send),
+        };
+        let path_for_error = library_path.to_string();
+
+        Self::with_handle(handle, library_path, move |library| unsafe {
+            let symbol: libloading::Symbol<unsafe extern "C" fn(*const HostApiV1) -> i32> = library
+                .get(b"qimen_plugin_bind_host_api_v1")
+                .map_err(|err| {
+                    QimenError::Runtime(format!(
+                        "failed to load Host API bind symbol from '{}': {err}",
+                        path_for_error
+                    ))
+                })?;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                symbol(&api as *const HostApiV1)
+            }));
+            let code = result.map_err(|_| {
+                QimenError::Runtime(format!(
+                    "plugin '{}' panicked while binding Host API v1",
+                    path_for_error
+                ))
+            })?;
+            let status = SendEnqueueStatus::from_code(code);
+            if status.is_accepted() {
+                Ok(())
+            } else {
+                Err(QimenError::Runtime(format!(
+                    "plugin '{}' rejected Host API v1 binding with status {:?}",
+                    path_for_error, status
+                )))
+            }
+        })?;
+
+        self.host_api_bindings
+            .insert(library_path.to_string(), context);
+        Ok(())
     }
 
     // ─── Static "on handle" methods ─────────────────────────────────────
@@ -596,34 +654,94 @@ impl DynamicPluginRuntime {
     }
 
     /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
-    pub fn call_plugin_shutdown(&mut self, library_path: &str) {
+    pub fn call_plugin_shutdown(&mut self, library_path: &str) -> bool {
         if let Some(handle) = self.libraries.get(library_path) {
             unsafe {
                 if let Ok(symbol) = handle
                     .library
                     .get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown")
                 {
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    return std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         symbol();
-                    }));
+                    }))
+                    .is_ok();
                 }
             }
         }
+        true
+    }
+
+    /// Call the API 0.4 Host API unbind hook and release the host context.
+    pub fn unbind_host_api_v1(&mut self, library_path: &str) -> Result<()> {
+        if !self.host_api_bindings.contains_key(library_path) {
+            return Ok(());
+        }
+
+        let handle = self.libraries.get(library_path).cloned().ok_or_else(|| {
+            QimenError::Runtime(format!(
+                "cannot unbind Host API v1 because plugin '{}' is not loaded",
+                library_path
+            ))
+        })?;
+        let path_for_error = library_path.to_string();
+        Self::with_handle(&handle, library_path, move |library| unsafe {
+            let symbol: libloading::Symbol<unsafe extern "C" fn() -> i32> = library
+                .get(b"qimen_plugin_unbind_host_api_v1")
+                .map_err(|err| {
+                    QimenError::Runtime(format!(
+                        "failed to load Host API unbind symbol from '{}': {err}",
+                        path_for_error
+                    ))
+                })?;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol()));
+            let code = result.map_err(|_| {
+                QimenError::Runtime(format!(
+                    "plugin '{}' panicked while unbinding Host API v1",
+                    path_for_error
+                ))
+            })?;
+            let status = SendEnqueueStatus::from_code(code);
+            if status.is_accepted() {
+                Ok(())
+            } else {
+                Err(QimenError::Runtime(format!(
+                    "plugin '{}' rejected Host API v1 unbind with status {:?}",
+                    path_for_error, status
+                )))
+            }
+        })?;
+
+        self.host_api_bindings.remove(library_path);
+        Ok(())
     }
 
     /// Unload a specific library by path (for hot reload).
     pub fn unload_library(&mut self, path: &str) {
-        self.call_plugin_shutdown(path);
+        if !self.call_plugin_shutdown(path) {
+            tracing::error!(
+                path = %path,
+                "dynamic plugin shutdown panicked; keeping library resident for safety"
+            );
+            return;
+        }
+        if let Err(err) = self.unbind_host_api_v1(path) {
+            tracing::error!(
+                path = %path,
+                error = %err,
+                "dynamic plugin Host API unbind failed; keeping library resident for safety"
+            );
+            return;
+        }
         self.libraries.remove(path);
     }
 
     /// Unload all libraries (for reload).
     pub fn unload_all(&mut self) {
         let paths: Vec<String> = self.libraries.keys().cloned().collect();
-        for path in &paths {
-            self.call_plugin_shutdown(path);
+        for path in paths {
+            self.unload_library(&path);
         }
-        self.libraries.clear();
     }
 
     fn ensure_library(&mut self, path: &str) -> Result<()> {
@@ -654,6 +772,7 @@ impl DynamicPluginRuntime {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod lifecycle_tests {
     use super::*;
 
@@ -905,13 +1024,12 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2 or 0.3)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2, 0.3 or 0.4)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
 
-        let is_v2_plus =
-            descriptor.api_version.as_str() == "0.2" || descriptor.api_version.as_str() == "0.3";
+        let is_v2_plus = matches!(descriptor.api_version.as_str(), "0.2" | "0.3" | "0.4");
 
         // Parse v0.2+ multi-command entries
         let commands: Vec<DynamicCommandEntry> = if is_v2_plus && !descriptor.commands.is_empty() {

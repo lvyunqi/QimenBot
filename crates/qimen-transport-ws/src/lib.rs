@@ -116,6 +116,69 @@ enum SplitStream {
 /// Type-erased writer so the client struct remains a single type.
 type DynWriter = Box<dyn AsyncWrite + Unpin + Send>;
 
+/// Cloneable OneBot 11 Action sender for an already-established WebSocket session.
+///
+/// The event receiver remains owned by the forward client or reverse connection;
+/// this handle only shares the writer and echo wait map so runtime background
+/// workers can submit Actions without taking over the event stream.
+#[derive(Clone)]
+pub struct OneBot11WsActionSender {
+    writer: Arc<Mutex<DynWriter>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+    mask_outgoing: bool,
+}
+
+impl OneBot11WsActionSender {
+    fn new(
+        writer: Arc<Mutex<DynWriter>>,
+        pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+        mask_outgoing: bool,
+    ) -> Self {
+        Self {
+            writer,
+            pending,
+            mask_outgoing,
+        }
+    }
+
+    pub async fn send_text(&self, text: &str) -> Result<()> {
+        let mut writer = self.writer.lock().await;
+        if self.mask_outgoing {
+            write_ws_text_frame_masked(&mut *writer, text).await
+        } else {
+            write_ws_text_frame_unmasked(&mut *writer, text).await
+        }
+    }
+
+    pub async fn send_text_await_echo(
+        &self,
+        text: &str,
+        echo: &str,
+        timeout: Duration,
+    ) -> Result<String> {
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(echo.to_string(), tx);
+
+        if let Err(err) = self.send_text(text).await {
+            self.pending.lock().await.remove(echo);
+            return Err(err);
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(payload)) => Ok(payload),
+            Ok(Err(_)) => Err(QimenError::Transport(format!(
+                "pending echo channel closed for {echo}"
+            ))),
+            Err(_) => {
+                self.pending.lock().await.remove(echo);
+                Err(QimenError::Transport(format!(
+                    "timed out waiting for echo {echo}"
+                )))
+            }
+        }
+    }
+}
+
 pub struct OneBot11ForwardWsClient {
     writer: Arc<Mutex<DynWriter>>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
@@ -250,9 +313,12 @@ impl OneBot11ForwardWsClient {
         self.event_rx.recv().await
     }
 
+    pub fn action_sender(&self) -> OneBot11WsActionSender {
+        OneBot11WsActionSender::new(self.writer.clone(), self.pending.clone(), true)
+    }
+
     pub async fn send_text(&self, text: &str) -> Result<()> {
-        let mut writer = self.writer.lock().await;
-        write_ws_text_frame_masked(&mut *writer, text).await
+        self.action_sender().send_text(text).await
     }
 
     pub async fn send_text_await_echo(
@@ -375,9 +441,12 @@ impl OneBot11ReverseWsConnection {
         self.event_rx.recv().await
     }
 
+    pub fn action_sender(&self) -> OneBot11WsActionSender {
+        OneBot11WsActionSender::new(self.writer.clone(), self.pending.clone(), false)
+    }
+
     pub async fn send_text(&self, text: &str) -> Result<()> {
-        let mut writer = self.writer.lock().await;
-        write_ws_text_frame_unmasked(&mut *writer, text).await
+        self.action_sender().send_text(text).await
     }
 
     /// 发送 OneBot Action，并按照 echo 等待同一连接上的响应。
@@ -387,26 +456,9 @@ impl OneBot11ReverseWsConnection {
         echo: &str,
         timeout: Duration,
     ) -> Result<String> {
-        let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(echo.to_string(), tx);
-
-        if let Err(err) = self.send_text(text).await {
-            self.pending.lock().await.remove(echo);
-            return Err(err);
-        }
-
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(payload)) => Ok(payload),
-            Ok(Err(_)) => Err(QimenError::Transport(format!(
-                "pending echo channel closed for {echo}"
-            ))),
-            Err(_) => {
-                self.pending.lock().await.remove(echo);
-                Err(QimenError::Transport(format!(
-                    "timed out waiting for echo {echo}"
-                )))
-            }
-        }
+        self.action_sender()
+            .send_text_await_echo(text, echo, timeout)
+            .await
     }
 }
 

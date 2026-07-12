@@ -41,6 +41,9 @@ pub struct OfficialHostConfig {
     /// Timeout in seconds for dynamic plugin FFI calls (default: 30).
     #[serde(default = "default_dynamic_plugin_timeout_secs")]
     pub dynamic_plugin_timeout_secs: u64,
+    /// Real-time proactive send queue settings for dynamic plugins.
+    #[serde(default)]
+    pub proactive_send: ProactiveSendConfig,
 }
 
 impl Default for OfficialHostConfig {
@@ -51,6 +54,24 @@ impl Default for OfficialHostConfig {
             plugin_state_path: default_plugin_state_path(),
             plugin_bin_dir: default_plugin_bin_dir(),
             dynamic_plugin_timeout_secs: default_dynamic_plugin_timeout_secs(),
+            proactive_send: ProactiveSendConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProactiveSendConfig {
+    #[serde(default = "default_proactive_send_queue_capacity")]
+    pub queue_capacity: usize,
+    #[serde(default = "default_proactive_send_offline_ttl_secs")]
+    pub offline_ttl_secs: u64,
+}
+
+impl Default for ProactiveSendConfig {
+    fn default() -> Self {
+        Self {
+            queue_capacity: default_proactive_send_queue_capacity(),
+            offline_ttl_secs: default_proactive_send_offline_ttl_secs(),
         }
     }
 }
@@ -124,6 +145,12 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self.official_host.proactive_send.queue_capacity == 0 {
+            return Err(QimenError::Config(
+                "official_host.proactive_send.queue_capacity must be greater than zero".to_string(),
+            ));
+        }
+
         if self.bots.is_empty() {
             return Err(QimenError::Config(
                 "at least one [[bots]] entry is required".to_string(),
@@ -244,6 +271,14 @@ fn default_plugin_bin_dir() -> String {
 
 fn default_dynamic_plugin_timeout_secs() -> u64 {
     30
+}
+
+fn default_proactive_send_queue_capacity() -> usize {
+    256
+}
+
+fn default_proactive_send_offline_ttl_secs() -> u64 {
+    60
 }
 
 fn expand_env_placeholders(input: &str) -> String {
@@ -408,6 +443,62 @@ transport = "ws-forward"
             "config/plugin-state.toml"
         );
         assert_eq!(config.official_host.plugin_bin_dir, "plugins/bin");
+        assert_eq!(config.official_host.proactive_send.queue_capacity, 256);
+        assert_eq!(config.official_host.proactive_send.offline_ttl_secs, 60);
+    }
+
+    #[test]
+    fn parse_proactive_send_config() {
+        let toml_str = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[official_host.proactive_send]
+queue_capacity = 32
+offline_ttl_secs = 0
+
+[[bots]]
+id = "test"
+protocol = "onebot11"
+transport = "ws-forward"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.official_host.proactive_send.queue_capacity, 32);
+        assert_eq!(config.official_host.proactive_send.offline_ttl_secs, 0);
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_zero_proactive_send_capacity() {
+        let toml_str = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[official_host.proactive_send]
+queue_capacity = 0
+
+[[bots]]
+id = "test"
+protocol = "onebot11"
+transport = "ws-forward"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("proactive_send.queue_capacity"));
     }
 
     #[test]

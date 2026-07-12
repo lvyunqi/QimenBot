@@ -8,8 +8,8 @@ API 0.4 adds real-time proactive sends from dynamic plugin background workers. R
 
 - [x] Add the versioned request, status codes, host function table, and bot-scoped plugin API.
 - [x] Generate API 0.4 bind/unbind exports while leaving the macro default at API 0.3.
-- [ ] Add per-bot bounded queues, online executors, WebSocket sender handles, TTL, and shutdown behavior.
-- [ ] Cover private, group, channel, and channel-private routing for OneBot 11 and QQ official bots.
+- [x] Add per-bot bounded queues, online executors, WebSocket sender handles, TTL, and shutdown behavior.
+- [x] Cover private, group, channel, and channel-private routing for OneBot 11 and QQ official bots.
 - [ ] Update examples, templates, configuration, and public documentation.
 - [ ] Verify registry-only plugin builds, publish the two dependency crates, and tag v0.1.10.
 

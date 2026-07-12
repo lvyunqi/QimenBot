@@ -9,6 +9,7 @@ pub mod message_filter;
 pub mod onebot11_dispatch;
 pub mod permission;
 pub mod plugin_acl;
+pub mod proactive_send;
 pub mod rate_limiter;
 
 use self::command_dispatch::{CommandDispatchSignal, CommandDispatcher, render_help_text};
@@ -16,6 +17,7 @@ use self::dynamic_runtime::{DynamicPluginRuntime, DynamicResponse};
 use self::interceptor::InterceptorChain;
 use self::onebot11_dispatch::{OneBotSystemDispatchSignal, OneBotSystemDispatcher};
 use self::permission::PermissionResolver;
+use self::proactive_send::{ProactiveSendHub, ProactiveSendSettings};
 use self::rate_limiter::TokenBucketLimiter;
 use crate::dedup::MessageDedup;
 use crate::group_event_filter::GroupEventFilter;
@@ -42,8 +44,8 @@ use qimen_transport_qqbot::{
     SendMessagePayload, UploadFilePayload,
 };
 use qimen_transport_ws::{
-    OneBot11ForwardWsClient, OneBot11ReverseWsConnection, ReconnectPolicy, WsReverseConfig,
-    WsReverseServer,
+    OneBot11ForwardWsClient, OneBot11ReverseWsConnection, OneBot11WsActionSender, ReconnectPolicy,
+    WsReverseConfig, WsReverseServer,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -80,6 +82,13 @@ impl OneBot11WsClient {
         match self {
             Self::Forward(client) => client.send_text_await_echo(text, echo, timeout).await,
             Self::Reverse(client) => client.send_text_await_echo(text, echo, timeout).await,
+        }
+    }
+
+    fn action_sender(&self) -> OneBot11WsActionSender {
+        match self {
+            Self::Forward(client) => client.action_sender(),
+            Self::Reverse(client) => client.action_sender(),
         }
     }
 }
@@ -421,6 +430,7 @@ pub struct Runtime {
     interceptor_chain: std::sync::RwLock<InterceptorChain>,
     rate_limiters: Vec<TokenBucketLimiter>,
     qqbot_send_backoff_until: std::sync::Mutex<HashMap<String, Instant>>,
+    proactive_send_hub: ProactiveSendHub,
     pub dedup: Arc<MessageDedup>,
     pub group_event_filter: Arc<GroupEventFilter>,
     pub plugin_acl: Arc<PluginAclManager>,
@@ -443,10 +453,27 @@ impl Default for Runtime {
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
+            proactive_send_hub: ProactiveSendHub::new(
+                &[],
+                ProactiveSendSettings {
+                    queue_capacity: 256,
+                    offline_ttl: Duration::from_secs(60),
+                },
+            ),
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
             interceptor_pending_sends: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        // boot future 被取消时无法执行异步收尾；析构至少先拒绝新请求，并安全解绑后再卸载动态库。
+        self.proactive_send_hub.shutdown();
+        if let Ok(mut runtime) = self.dynamic_runtime.lock() {
+            runtime.unload_all();
         }
     }
 }
@@ -526,6 +553,15 @@ impl Runtime {
             .iter()
             .map(|b| TokenBucketLimiter::new(&b.limiter_config))
             .collect();
+        let proactive_send_hub = ProactiveSendHub::new(
+            &bots,
+            ProactiveSendSettings {
+                queue_capacity: config.official_host.proactive_send.queue_capacity,
+                offline_ttl: Duration::from_secs(
+                    config.official_host.proactive_send.offline_ttl_secs,
+                ),
+            },
+        );
 
         let static_interceptors = plugins.interceptors;
         let mut interceptor_chain = InterceptorChain::new();
@@ -548,6 +584,7 @@ impl Runtime {
             interceptor_chain: std::sync::RwLock::new(interceptor_chain),
             rate_limiters,
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
+            proactive_send_hub,
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
@@ -608,6 +645,21 @@ impl Runtime {
     }
 
     pub async fn boot(&self) -> Result<()> {
+        self.proactive_send_hub.start_workers();
+        let result = self.boot_inner().await;
+
+        // 先拒绝主动发送并等待宿主 worker 收尾，再让插件停止后台线程、解绑 Host API 并卸载动态库。
+        self.proactive_send_hub.shutdown_and_wait().await;
+        if let Ok(mut runtime) = self.dynamic_runtime.lock() {
+            runtime.unload_all();
+        } else {
+            tracing::error!("dynamic runtime lock poisoned during shutdown");
+        }
+
+        result
+    }
+
+    async fn boot_inner(&self) -> Result<()> {
         // Call plugin init for all dynamic plugins
         {
             let report_clone = {
@@ -652,7 +704,23 @@ impl Runtime {
                         let mut drt = self.dynamic_runtime.lock().map_err(|_| {
                             QimenError::Runtime("dynamic runtime lock poisoned".to_string())
                         })?;
-                        drt.get_library(&entry.path)?
+                        let handle = drt.get_library(&entry.path)?;
+                        if entry.api_version == "0.4"
+                            && let Err(err) = drt.bind_host_api_v1(
+                                &handle,
+                                &entry.path,
+                                self.proactive_send_hub.clone(),
+                            )
+                        {
+                            tracing::error!(
+                                plugin = %entry.plugin_id,
+                                path = %entry.path,
+                                error = %err,
+                                "dynamic plugin Host API v1 bind failed"
+                            );
+                            continue;
+                        }
+                        handle
                     }; // outer lock released
 
                     // Phase 2: spawn_blocking + timeout for init
@@ -973,7 +1041,11 @@ impl Runtime {
 
         let mut api_config = QqBotOpenApiConfig::new(appid, secret);
         api_config.sandbox = bot.sandbox;
-        let api_client = QqBotOpenApiClient::new(api_config)?;
+        let api_client = Arc::new(QqBotOpenApiClient::new(api_config)?);
+        let proactive_registration = self
+            .proactive_send_hub
+            .register_qq_official_executor(bot, Arc::clone(&api_client))
+            .await;
         let adapter = QqBotAdapter;
         let mut system_dispatcher = self.build_system_dispatcher();
         let mut command_dispatcher = self.build_command_dispatcher()?;
@@ -1069,6 +1141,12 @@ impl Runtime {
 
             tokio::time::sleep(reconnect_delay).await;
             reconnect_delay = reconnect_policy.next_delay(reconnect_delay);
+        }
+
+        if let Some(registration_id) = proactive_registration {
+            self.proactive_send_hub
+                .unregister_executor(&bot.id, registration_id)
+                .await;
         }
 
         Ok(())
@@ -1196,6 +1274,10 @@ impl Runtime {
             let peer = connection.peer_addr();
             tracing::info!(bot_id = %bot.id, peer = %peer, "ws-reverse session connected");
             let mut client = OneBot11WsClient::Reverse(connection);
+            let proactive_registration = self
+                .proactive_send_hub
+                .register_onebot11_executor(bot, client.action_sender())
+                .await;
 
             loop {
                 let session_result = self
@@ -1212,7 +1294,14 @@ impl Runtime {
                     .await;
 
                 match session_result {
-                    Ok(SessionEnd::Shutdown) => return Ok(()),
+                    Ok(SessionEnd::Shutdown) => {
+                        if let Some(registration_id) = proactive_registration {
+                            self.proactive_send_hub
+                                .unregister_executor(&bot.id, registration_id)
+                                .await;
+                        }
+                        return Ok(());
+                    }
                     Ok(SessionEnd::PluginReload { reply_action }) => {
                         tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
                         if let Some(action) = reply_action
@@ -1235,6 +1324,12 @@ impl Runtime {
                         break;
                     }
                 }
+            }
+
+            if let Some(registration_id) = proactive_registration {
+                self.proactive_send_hub
+                    .unregister_executor(&bot.id, registration_id)
+                    .await;
             }
         }
     }
@@ -1284,6 +1379,10 @@ impl Runtime {
                 }
             };
             let mut client = OneBot11WsClient::Forward(client);
+            let proactive_registration = self
+                .proactive_send_hub
+                .register_onebot11_executor(bot, client.action_sender())
+                .await;
 
             let session_result = self
                 .run_onebot11_session(
@@ -1299,7 +1398,14 @@ impl Runtime {
                 .await;
 
             match session_result {
-                Ok(SessionEnd::Shutdown) => break,
+                Ok(SessionEnd::Shutdown) => {
+                    if let Some(registration_id) = proactive_registration {
+                        self.proactive_send_hub
+                            .unregister_executor(&bot.id, registration_id)
+                            .await;
+                    }
+                    break;
+                }
                 Ok(SessionEnd::PluginReload { reply_action }) => {
                     tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
                     // Send the reload reply before rebuilding
@@ -1312,6 +1418,11 @@ impl Runtime {
                     system_dispatcher = self.build_system_dispatcher();
                     command_dispatcher = self.build_command_dispatcher()?;
                     command_help_text = render_help_text(&command_dispatcher.describe_commands());
+                    if let Some(registration_id) = proactive_registration {
+                        self.proactive_send_hub
+                            .unregister_executor(&bot.id, registration_id)
+                            .await;
+                    }
                     // Continue the loop without reconnecting — reuse the existing connection
                     continue;
                 }
@@ -1321,6 +1432,12 @@ impl Runtime {
                 Err(err) => {
                     tracing::warn!(bot_id = %bot.id, error = %err, "session failed, reconnecting");
                 }
+            }
+
+            if let Some(registration_id) = proactive_registration {
+                self.proactive_send_hub
+                    .unregister_executor(&bot.id, registration_id)
+                    .await;
             }
 
             if session_started.elapsed() >= reconnect_policy.stable_connection_threshold {
