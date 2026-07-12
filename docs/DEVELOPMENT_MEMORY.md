@@ -8,15 +8,15 @@
 
 ## Recent Completion
 
+- Corrected the RFC 6455 accept GUID and prepared hotfix release `v0.1.6`.
 - Prepared the verified reverse WebSocket and standalone plugin documentation batch as release `v0.1.5`.
 - Documented and release-built a standalone dynamic plugin against both published `0.1.1` crates.
 - Updated the QQ notice reply fallback for the Rust 1.97 Clippy `question_mark` lint.
 - Added reverse WebSocket bind/path validation, authentication, event routing, and Action echo correlation.
-- Replaced the hard-coded host compatibility version with the compiled package version.
 
 ## Next Step
 
-- Validate the `v0.1.5` Linux release against the deployed OneBot implementation.
+- Validate the `v0.1.6` Linux release against the deployed OneBot implementation.
 
 ## Verification Baseline
 

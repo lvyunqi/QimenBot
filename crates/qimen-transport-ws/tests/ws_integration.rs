@@ -9,6 +9,9 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+const RFC6455_TEST_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+const RFC6455_TEST_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+
 /// Test connecting to a local OneBot11 WebSocket server.
 /// This test is ignored by default since it requires a running server.
 #[tokio::test]
@@ -86,6 +89,7 @@ async fn reverse_ws_routes_events_and_action_responses_bidirectionally() {
     let (mut peer, response) =
         reverse_handshake(address, "/onebot/reverse", Some("test-token")).await;
     assert!(response.starts_with("HTTP/1.1 101"));
+    assert!(response.contains(&format!("Sec-WebSocket-Accept: {RFC6455_TEST_ACCEPT}\r\n")));
     let mut connection = tokio::time::timeout(Duration::from_secs(1), server.next_connection())
         .await
         .unwrap()
@@ -139,7 +143,7 @@ async fn reverse_handshake(
 ) -> (TcpStream, String) {
     let mut stream = TcpStream::connect(address).await.unwrap();
     let mut request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {RFC6455_TEST_KEY}\r\n"
     );
     if let Some(token) = token {
         request.push_str(&format!("Authorization: Bearer {token}\r\n"));

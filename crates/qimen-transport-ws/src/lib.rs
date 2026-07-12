@@ -572,7 +572,7 @@ fn http_header_value<'a>(request: &'a str, expected_name: &str) -> Option<&'a st
 
 fn compute_ws_accept_key(key: &str) -> String {
     use std::io::Write;
-    const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-5AB5DC525B63";
+    const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     // SHA-1 implementation (minimal, for the WebSocket accept key only)
     let mut input = Vec::new();
@@ -957,5 +957,18 @@ fn extract_action_response_echo(payload: &str) -> Option<String> {
     match echo {
         Value::String(text) => Some(text.clone()),
         other => Some(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_ws_accept_key;
+
+    #[test]
+    fn websocket_accept_key_matches_rfc6455_vector() {
+        assert_eq!(
+            compute_ws_accept_key("dGhlIHNhbXBsZSBub25jZQ=="),
+            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        );
     }
 }
