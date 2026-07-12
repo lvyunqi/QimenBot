@@ -183,12 +183,12 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.1"
-qimen-dynamic-plugin-derive = "0.1.1"
+abi-stable-host-api = "0.1.10"
+qimen-dynamic-plugin-derive = "0.1.10"
 abi_stable = "0.11"
 ```
 
-QimenBot 専用の 2 つの crate は crates.io で公開されています。現在のパッケージバージョンは `0.1.1` で、動的プラグイン ABI API `0.3` とは別のバージョン体系です。API 宣言は derive マクロが自動生成します。QimenBot ホストと同じ OS・CPU アーキテクチャ向けにビルドし、生成された `.so`、`.dll`、または `.dylib` を `plugin_bin_dir` に配置してください。詳細は[動的プラグインガイド](docs/plugin/dynamic.md)を参照してください。
+QimenBot 専用の 2 つの crate は crates.io で公開されています。現在のパッケージバージョンは `0.1.10` で、動的プラグイン ABI API `0.4` とは別のバージョン体系です。リアルタイムの能動送信を利用するプラグインは `api = "0.4"` を明示してください。`api` を省略した場合、derive マクロは旧ホストとの互換性を保つ API `0.3` プラグインを生成します。QimenBot ホストと同じ OS・CPU アーキテクチャ向けにビルドし、生成された `.so`、`.dll`、または `.dylib` を `plugin_bin_dir` に配置してください。詳細は[動的プラグインガイド](docs/plugin/dynamic.md)を参照してください。
 
 ### イベント処理パイプライン
 

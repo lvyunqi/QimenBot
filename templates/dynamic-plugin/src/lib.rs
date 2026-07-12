@@ -1,74 +1,83 @@
-//! QimenBot 动态插件模板 / Dynamic Plugin Template
-//!
-//! 将 `{{name}}` 替换为你的插件名称，然后开始开发！
-//! Replace `{{name}}` with your plugin name and start developing!
-//!
-//! ## 编译 / Build
-//!
-//! ```bash
-//! cargo build --release
-//! ```
-//!
-//! ## 安装 / Install
-//!
-//! 将编译产物复制到 `plugins/bin/` 目录：
-//! Copy the build artifact to the `plugins/bin/` directory:
-//!
-//! ```bash
-//! cp target/release/libqimen_dynamic_plugin_{{name}}.so ../../plugins/bin/
-//! ```
+//! QimenBot API 0.4 dynamic plugin template.
 
-use abi_stable::std_types::RString;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
 use abi_stable_host_api::{
-    CommandDescriptorEntry, CommandRequest, CommandResponse, DynamicActionResponse,
-    PluginDescriptor,
+    BotApi, CommandRequest, CommandResponse, PluginInitConfig, PluginInitResult,
 };
+use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-// ─── Plugin Descriptor 插件描述符 ────────────────────────────────────────────
+static STOP_WORKER: AtomicBool = AtomicBool::new(false);
+static WORKER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn qimen_plugin_descriptor() -> PluginDescriptor {
-    PluginDescriptor::new("{{name}}", "0.1.0")
-        .add_command_full(CommandDescriptorEntry {
-            name: RString::from("hello"),
-            description: RString::from("Say hello / 打招呼"),
-            callback_symbol: RString::from("{{name}}_hello"),
-            aliases: RString::from("hi"),
-            category: RString::from("{{name}}"),
-            required_role: RString::new(),
-        })
-    // 添加更多命令 / Add more commands:
-    // .add_command_full(CommandDescriptorEntry { ... })
+#[dynamic_plugin(id = "{{name}}", version = "0.1.0", api = "0.4")]
+mod plugin {
+    use super::*;
+
+    /// Optional configuration:
+    /// background_push = { bot_id = "qq-main", group_id = "123", interval_secs = 60 }
+    #[init]
+    fn init(config: PluginInitConfig) -> PluginInitResult {
+        let Ok(root) = serde_json::from_str::<serde_json::Value>(config.config_json.as_str()) else {
+            return PluginInitResult::ok();
+        };
+        let Some(push) = root.get("background_push") else {
+            return PluginInitResult::ok();
+        };
+        let Some(bot_id) = push.get("bot_id").and_then(serde_json::Value::as_str) else {
+            return PluginInitResult::err("background_push.bot_id is required");
+        };
+        let Some(group_id) = push.get("group_id").and_then(serde_json::Value::as_str) else {
+            return PluginInitResult::err("background_push.group_id is required");
+        };
+        let interval = Duration::from_secs(
+            push.get("interval_secs")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(60)
+                .max(1),
+        );
+        let bot_id = bot_id.to_string();
+        let group_id = group_id.to_string();
+
+        STOP_WORKER.store(false, Ordering::Release);
+        let handle = thread::spawn(move || {
+            while !STOP_WORKER.load(Ordering::Acquire) {
+                let status = BotApi::for_bot(&bot_id)
+                    .send_group_msg(&group_id, "Hello from a background plugin worker");
+                eprintln!("[{{name}}] proactive enqueue status: {status:?}");
+                thread::park_timeout(interval);
+            }
+        });
+        match WORKER.lock() {
+            Ok(mut worker) => {
+                *worker = Some(handle);
+                PluginInitResult::ok()
+            }
+            Err(_) => {
+                STOP_WORKER.store(true, Ordering::Release);
+                handle.thread().unpark();
+                let _ = handle.join();
+                PluginInitResult::err("worker lock is poisoned")
+            }
+        }
+    }
+
+    #[shutdown]
+    fn shutdown() {
+        STOP_WORKER.store(true, Ordering::Release);
+        if let Ok(mut worker) = WORKER.lock()
+            && let Some(handle) = worker.take()
+        {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
+    }
+
+    #[command(name = "hello", description = "Say hello", aliases = "hi")]
+    fn hello(req: &CommandRequest) -> CommandResponse {
+        CommandResponse::text(&format!("Hello, {}!", req.sender_id.as_str()))
+    }
 }
-
-// ─── Command Callbacks 命令回调 ──────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn {{name}}_hello(req: &CommandRequest) -> CommandResponse {
-    let sender = req.sender_id.as_str();
-    let nickname = req.sender_nickname.as_str();
-    let display = if nickname.is_empty() { sender } else { nickname };
-
-    CommandResponse::text(&format!("Hello, {}! 你好！", display))
-}
-
-// ─── Optional Lifecycle Hooks 可选生命周期钩子 ───────────────────────────────
-//
-// 取消注释以启用 init/shutdown 钩子：
-// Uncomment to enable init/shutdown hooks:
-//
-// use abi_stable_host_api::{PluginInitConfig, PluginInitResult};
-//
-// #[unsafe(no_mangle)]
-// pub unsafe extern "C" fn qimen_plugin_init(config: PluginInitConfig) -> PluginInitResult {
-//     // 在这里初始化你的插件（数据库连接、配置加载等）
-//     // Initialize your plugin here (database connections, config loading, etc.)
-//     let _config_json = config.config_json.as_str();
-//     PluginInitResult::ok()
-// }
-//
-// #[unsafe(no_mangle)]
-// pub unsafe extern "C" fn qimen_plugin_shutdown() {
-//     // 在这里清理资源
-//     // Clean up resources here
-// }

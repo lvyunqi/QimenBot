@@ -30,11 +30,11 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 
 | crate | 当前发布版本 | 用途 |
 |-------|-------------|------|
-| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.1` | 动态插件与宿主之间的 ABI 稳定类型和 API |
-| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.1` | `#[dynamic_plugin]` 及其内部属性宏 |
+| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.10` | 动态插件与宿主之间的 ABI 稳定类型和 API |
+| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.10` | `#[dynamic_plugin]` 及其内部属性宏 |
 
 ::: info 两套版本不要混淆
-crate 的发布版本当前是 `0.1.1`；插件描述符中的动态插件 API 版本当前是 `0.3`。过程宏会自动声明 API `0.3`，宿主同时兼容 API `0.1`、`0.2` 和 `0.3`。
+crate 的发布版本当前是 `0.1.10`；插件描述符中的最新动态插件 API 版本是 `0.4`。需要实时主动推送时必须显式声明 `api = "0.4"`；未声明 `api` 时过程宏仍自动生成 API `0.3` 插件。宿主同时兼容 API `0.1`、`0.2`、`0.3` 和 `0.4`。
 :::
 
 ### 第 1 步：创建项目
@@ -59,8 +59,8 @@ rust-version = "1.89"
 crate-type = ["cdylib"]  # 编译为动态库
 
 [dependencies]
-abi-stable-host-api = "0.1.1"
-qimen-dynamic-plugin-derive = "0.1.1"
+abi-stable-host-api = "0.1.10"
+qimen-dynamic-plugin-derive = "0.1.10"
 abi_stable = "0.11"
 serde_json = "1"  # 可选，用于解析事件 JSON
 ```
@@ -871,4 +871,8 @@ fn notify(req: &CommandRequest) -> CommandResponse {
 3. **ABI 稳定** — 使用 `abi_stable` crate 提供的类型（`RString`、`RVec`），不能直接传递 Rust 标准库类型跨 FFI 边界
 4. **独立编译** — 仓库外项目直接独立构建；放在 QimenBot 仓库内时用空的 `[workspace]` 表与主工作空间隔离
 5. **每模块限制** — 最多一个 `#[init]`、一个 `#[shutdown]`、一个 `#[pre_handle]`、一个 `#[after_completion]` 函数
+:::
+
+::: info API 0.4 实时主动推送
+QimenBot v0.1.10 支持动态插件后台线程实时发送，并要求显式指定 bot_id。完整接口、目标映射、返回状态和安全卸载示例见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。API 0.1 至 0.3 的回调后 flush 行为保持兼容。
 :::

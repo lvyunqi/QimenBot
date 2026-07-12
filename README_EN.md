@@ -183,12 +183,12 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.1"
-qimen-dynamic-plugin-derive = "0.1.1"
+abi-stable-host-api = "0.1.10"
+qimen-dynamic-plugin-derive = "0.1.10"
 abi_stable = "0.11"
 ```
 
-The two QimenBot-specific crates are published on crates.io. Their current package version is `0.1.1`; this is separate from dynamic plugin ABI API `0.3`, which the derive macro declares automatically. Build for the same OS and CPU architecture as the QimenBot host, then copy the `.so`, `.dll`, or `.dylib` into `plugin_bin_dir`. See the [dynamic plugin guide](docs/plugin/dynamic.md) for the complete example.
+The two QimenBot-specific crates are published on crates.io. Their current package version is `0.1.10`; this is separate from dynamic plugin ABI API `0.4`. Plugins that need real-time proactive sends must explicitly declare `api = "0.4"`; when `api` is omitted, the derive macro still emits an API `0.3` plugin for compatibility with older hosts. Build for the same OS and CPU architecture as the QimenBot host, then copy the `.so`, `.dll`, or `.dylib` into `plugin_bin_dir`. See the [dynamic plugin guide](docs/plugin/dynamic.md) for the complete example.
 
 ### Event Processing Pipeline
 

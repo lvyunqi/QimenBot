@@ -339,3 +339,13 @@ enable = false
 rate = 5.0
 capacity = 10
 ```
+
+## 动态插件实时主动发送队列
+
+~~~toml
+[official_host.proactive_send]
+queue_capacity = 256
+offline_ttl_secs = 60
+~~~
+
+queue_capacity 是每个启用 Bot 的独立队列容量，必须大于 0。offline_ttl_secs 是离线请求等待对应 Bot 上线的时间；设置为 0 会在离线时立即丢弃。详见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。

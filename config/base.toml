@@ -54,6 +54,13 @@ plugin_state_path = "config/plugin-state.toml"
 # 动态插件（.so/.dll/.dylib）的扫描目录
 plugin_bin_dir = "plugins/bin"
 
+# Dynamic plugin API 0.4 real-time proactive send queues.
+[official_host.proactive_send]
+# Maximum accepted requests waiting for each enabled bot.
+queue_capacity = 256
+# How long a queued request may wait for its bot to reconnect; 0 drops immediately.
+offline_ttl_secs = 60
+
 # ── Bot 实例配置 / Bot Instances ─────────────────────────────────────────
 # 每个 [[bots]] 块定义一个 Bot 实例，可以配置多个
 

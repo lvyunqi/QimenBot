@@ -4,18 +4,19 @@
 
 ## API 版本
 
-当前 API 版本为 **0.3**，兼容 0.1 和 0.2 版本。
+当前 API 版本为 **0.4**，兼容 0.1、0.2 和 0.3 版本。`#[dynamic_plugin]` 未声明 `api` 时仍默认生成 API 0.3 插件；只有显式声明 `api = "0.4"` 才会导出 Host API 绑定符号。
 
 ```rust
 /// 获取当前 API 版本
-pub fn expected_api_version() -> RString  // "0.3"
+pub fn expected_api_version() -> RString  // "0.4"
 
 /// 检查版本兼容性
 pub fn is_compatible_api_version(version: &str) -> bool
 // "0.1" → true
 // "0.2" → true
 // "0.3" → true
-// "0.4" → false
+// "0.4" → true
+// "0.5" → false
 ```
 
 ### 版本历史
@@ -25,6 +26,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 | **0.1** | 初始版本：单命令、纯文本响应 |
 | **0.2** | 多命令/多路由 `RVec<CommandDescriptorEntry>`，富媒体 JSON 响应 |
 | **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段；`InterceptorRequest` / `InterceptorResponse` / `InterceptorDescriptorEntry` 拦截器支持 |
+| **0.4** | `ProactiveSendRequest`、`HostApiV1`、`SendEnqueueStatus`；按 Bot 实时主动发送；安全 bind/unbind 生命周期；私聊、群聊、频道和频道私信目标 |
 
 ## PluginDescriptor
 
@@ -520,10 +522,14 @@ pub unsafe extern "C" fn qimen_plugin_flush_sends() -> RVec<SendAction>
 
 ## 向后兼容
 
-v0.3 FFI 接口向后兼容 v0.1 和 v0.2：
+v0.4 FFI 接口向后兼容 v0.1、v0.2 和 v0.3：
 
 - v0.1 的 `qimen_demo_plugin_descriptor` 符号名仍然支持
 - v0.1 的单命令/单路由字段仍然可用
 - 框架会优先尝试 v0.2+ 符号 `qimen_plugin_descriptor`，找不到再尝试 v0.1
 - v0.2 的 `CommandDescriptorEntry`（无 `scope` 字段）会自动使用 `scope = "all"` 默认值
 - 旧插件无 `qimen_plugin_flush_sends` 符号时宿主返回空 Vec，无副作用
+
+::: info Host API v1 / 动态插件 API 0.4
+API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，并由过程宏生成 bind/unbind 导出。完整 ABI 生命周期、BotApi::for_bot、SendBuilder::try_send 和目标字段说明见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
+:::

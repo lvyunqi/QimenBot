@@ -84,6 +84,7 @@ export default defineConfig({
             { text: 'CommandResponse', link: '/plugin/dynamic#command-response' },
             { text: '拦截器', link: '/plugin/dynamic#pre-handle' },
             { text: '自定义发送 (BotApi)', link: '/plugin/dynamic#bot-api' },
+            { text: 'API 0.4 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
             { text: '插件配置', link: '/plugin/dynamic#config' },
             { text: '完整示例', link: '/plugin/dynamic#full-example' },
             { text: '手动 FFI 写法', link: '/plugin/dynamic#manual-ffi' },

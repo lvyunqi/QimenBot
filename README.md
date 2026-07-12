@@ -513,12 +513,12 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.1"
-qimen-dynamic-plugin-derive = "0.1.1"
+abi-stable-host-api = "0.1.10"
+qimen-dynamic-plugin-derive = "0.1.10"
 abi_stable = "0.11"
 ```
 
-[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 的 crate 发布版本当前为 `0.1.1`。这与插件描述符中的 ABI API `0.3` 是两套版本；过程宏会自动生成正确的 API 声明。
+[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 的 crate 发布版本当前为 `0.1.10`。这与插件描述符中的 ABI API `0.4` 是两套版本；需要实时主动推送的插件应显式声明 `api = "0.4"`，未声明时过程宏仍生成兼容旧宿主的 API `0.3` 插件。
 
 仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
 

@@ -10,22 +10,23 @@
 
 ## Recent Completion
 
-- Added per-bot bounded proactive queues with offline TTL, queue-full reporting, strict bot isolation, and shutdown wakeups.
-- Added cloneable OneBot 11 WebSocket action senders for forward and reverse sessions.
-- Added protocol-neutral target mapping for all planned OneBot 11 and QQ official message targets.
-- Registered online executors independently from inbound events, including QQ official OpenAPI clients.
-- Kept dynamic libraries resident when plugin shutdown or Host API unbind cannot complete safely.
+- Added API 0.4 background-thread examples for private, group, channel, and channel-private sends.
+- Updated the dynamic plugin template to bind Host API v1 and join its worker during shutdown.
+- Documented proactive queue configuration, enqueue statuses, protocol target mapping, and FFI lifecycle rules.
+- Updated the Chinese, English, and Japanese standalone-plugin dependency examples for crates.io 0.1.10.
+- Added the v0.1.10 changelog entry and VitePress navigation.
 
 ## Next Step
 
-- Update API 0.4 dynamic plugin examples, configuration samples, and documentation.
+- Bump the workspace and publishable crates to version 0.1.10.
 
 ## Verification Baseline
 
+- cargo fmt --check (plugins/qimen-dynamic-plugin-example)
+- cargo test --offline (plugins/qimen-dynamic-plugin-example)
+- cargo clippy --offline --all-targets -- -D warnings (plugins/qimen-dynamic-plugin-example)
+- cargo build --release --offline (plugins/qimen-dynamic-plugin-example)
 - cargo test -p qimen-config --offline
-- cargo test -p qimen-transport-ws --offline
-- cargo test -p qimen-runtime --lib --offline
-- cargo clippy -p qimen-runtime -p qimen-config -p qimen-transport-ws --offline -- -D warnings
 - cargo check --workspace --offline
-- cargo fmt --all
+- npm run docs:build (docs)
 - git diff --check
