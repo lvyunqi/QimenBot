@@ -13,17 +13,20 @@
 //!   Added `PluginInitConfig` / `PluginInitResult` lifecycle hooks.
 
 use abi_stable::std_types::{RString, RVec};
-use std::sync::Mutex;
+use std::{
+    ffi::c_void,
+    sync::{Mutex, RwLock},
+};
 
 /// Current plugin API version. Dynamic plugins must declare the same version
 /// to be loaded by the host.
 pub fn expected_api_version() -> RString {
-    RString::from("0.3")
+    RString::from("0.4")
 }
 
-/// Also accept legacy 0.1 / 0.2 plugins for backward compatibility.
+/// Also accept legacy 0.1-0.3 plugins for backward compatibility.
 pub fn is_compatible_api_version(version: &str) -> bool {
-    version == "0.1" || version == "0.2" || version == "0.3"
+    matches!(version, "0.1" | "0.2" | "0.3" | "0.4")
 }
 
 // ─── Action constants ───────────────────────────────────────────────────
@@ -527,6 +530,168 @@ pub struct SendAction {
     pub segments_json: RString,
 }
 
+/// Current proactive send request schema version.
+pub const PROACTIVE_SEND_SCHEMA_VERSION: u32 = 1;
+
+/// Host API v1 function table version.
+pub const HOST_API_V1_ABI_VERSION: u32 = 1;
+
+/// Stable status returned when the host accepts a proactive send request.
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendEnqueueStatus {
+    Accepted = 0,
+    HostUnavailable = 1,
+    InvalidRequest = 2,
+    BotNotFound = 3,
+    BotDisabled = 4,
+    QueueFull = 5,
+    HostShuttingDown = 6,
+}
+
+impl SendEnqueueStatus {
+    /// Convert an FFI status code into the public Rust status enum.
+    pub fn from_code(code: i32) -> Self {
+        match code {
+            0 => Self::Accepted,
+            2 => Self::InvalidRequest,
+            3 => Self::BotNotFound,
+            4 => Self::BotDisabled,
+            5 => Self::QueueFull,
+            6 => Self::HostShuttingDown,
+            _ => Self::HostUnavailable,
+        }
+    }
+
+    /// Return the stable integer representation used across the FFI boundary.
+    pub const fn code(self) -> i32 {
+        self as i32
+    }
+
+    /// Return whether the host accepted ownership of the request.
+    pub const fn is_accepted(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+}
+
+/// A proactive send request submitted directly from plugin code.
+#[repr(C)]
+#[derive(Clone)]
+pub struct ProactiveSendRequest {
+    pub schema_version: u32,
+    pub bot_id: RString,
+    pub target_kind: RString,
+    pub target_id: RString,
+    pub context_json: RString,
+    pub message: RString,
+    pub segments_json: RString,
+    pub options_json: RString,
+}
+
+impl ProactiveSendRequest {
+    /// Build a v1 request with empty JSON extension objects.
+    pub fn new(bot_id: &str, target_kind: &str, target_id: &str) -> Self {
+        Self {
+            schema_version: PROACTIVE_SEND_SCHEMA_VERSION,
+            bot_id: RString::from(bot_id),
+            target_kind: RString::from(target_kind),
+            target_id: RString::from(target_id),
+            context_json: RString::from("{}"),
+            message: RString::new(),
+            segments_json: RString::new(),
+            options_json: RString::from("{}"),
+        }
+    }
+}
+
+/// Host callback used to copy and enqueue a proactive send request.
+pub type HostEnqueueSendFn = unsafe extern "C" fn(*mut c_void, *const ProactiveSendRequest) -> i32;
+
+/// Versioned host function table bound to an API 0.4 dynamic plugin.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostApiV1 {
+    pub abi_version: u32,
+    pub context: *mut c_void,
+    pub enqueue_send: Option<HostEnqueueSendFn>,
+}
+
+#[derive(Clone, Copy)]
+struct HostApiBinding(HostApiV1);
+
+// SAFETY: The host owns the context and keeps it alive until unbind returns.
+// Access is serialized through HOST_API, and unbind waits for active readers.
+unsafe impl Send for HostApiBinding {}
+unsafe impl Sync for HostApiBinding {}
+
+static HOST_API: RwLock<Option<HostApiBinding>> = RwLock::new(None);
+
+/// Bind the host function table used by real-time proactive sends.
+///
+/// # Safety
+/// The api pointer must be valid for this call. The host must keep the
+/// referenced context alive until unbind_host_api_v1 returns.
+pub unsafe fn bind_host_api_v1(api: *const HostApiV1) -> i32 {
+    if api.is_null() {
+        return SendEnqueueStatus::InvalidRequest.code();
+    }
+
+    // SAFETY: The caller guarantees that api is valid for this call.
+    let api = unsafe { *api };
+    if api.abi_version != HOST_API_V1_ABI_VERSION || api.enqueue_send.is_none() {
+        return SendEnqueueStatus::InvalidRequest.code();
+    }
+
+    match HOST_API.write() {
+        Ok(mut binding) => {
+            *binding = Some(HostApiBinding(api));
+            SendEnqueueStatus::Accepted.code()
+        }
+        Err(_) => SendEnqueueStatus::HostUnavailable.code(),
+    }
+}
+
+/// Unbind the current host table after all plugin background workers stop.
+pub fn unbind_host_api_v1() -> i32 {
+    match HOST_API.write() {
+        Ok(mut binding) => {
+            *binding = None;
+            SendEnqueueStatus::Accepted.code()
+        }
+        Err(_) => SendEnqueueStatus::HostUnavailable.code(),
+    }
+}
+
+/// Submit a proactive request through the currently bound host API.
+pub fn submit_proactive_send(request: &ProactiveSendRequest) -> SendEnqueueStatus {
+    if request.schema_version != PROACTIVE_SEND_SCHEMA_VERSION
+        || request.bot_id.is_empty()
+        || request.target_id.is_empty()
+        || !matches!(
+            request.target_kind.as_str(),
+            "private" | "group" | "channel" | "channel_private"
+        )
+        || (request.message.is_empty() && request.segments_json.is_empty())
+    {
+        return SendEnqueueStatus::InvalidRequest;
+    }
+
+    let binding = match HOST_API.read() {
+        Ok(binding) => binding,
+        Err(_) => return SendEnqueueStatus::HostUnavailable,
+    };
+    let Some(binding) = *binding else {
+        return SendEnqueueStatus::HostUnavailable;
+    };
+    let Some(enqueue_send) = binding.0.enqueue_send else {
+        return SendEnqueueStatus::HostUnavailable;
+    };
+
+    // SAFETY: bind_host_api_v1 validated the callback. Holding the read lock
+    // prevents unbind from releasing the host context during this call.
+    SendEnqueueStatus::from_code(unsafe { enqueue_send(binding.0.context, request) })
+}
+
 static SEND_QUEUE: Mutex<Vec<SendAction>> = Mutex::new(Vec::new());
 
 /// Drain all queued send actions. Called by the generated `qimen_plugin_flush_sends` symbol.
@@ -543,6 +708,13 @@ pub fn drain_send_queue() -> Vec<SendAction> {
 pub struct BotApi;
 
 impl BotApi {
+    /// Select a concrete runtime bot for real-time proactive sends.
+    pub fn for_bot(bot_id: &str) -> ProactiveBotApi {
+        ProactiveBotApi {
+            bot_id: bot_id.to_string(),
+        }
+    }
+
     /// Send a plain text message to a private chat.
     pub fn send_private_msg(user_id: &str, text: &str) {
         Self::push(SendAction {
@@ -590,6 +762,80 @@ impl BotApi {
     }
 }
 
+/// Bot-scoped real-time API used by background plugin workers.
+pub struct ProactiveBotApi {
+    bot_id: String,
+}
+
+impl ProactiveBotApi {
+    /// Send a text message to a private target.
+    pub fn send_private_msg(&self, user_id: &str, text: &str) -> SendEnqueueStatus {
+        self.send_text("private", user_id, "{}", text)
+    }
+
+    /// Send a text message to a group target.
+    pub fn send_group_msg(&self, group_id: &str, text: &str) -> SendEnqueueStatus {
+        self.send_text("group", group_id, "{}", text)
+    }
+
+    /// Send a text message to a channel target.
+    pub fn send_channel_msg(&self, channel_id: &str, text: &str) -> SendEnqueueStatus {
+        self.send_text("channel", channel_id, "{}", text)
+    }
+
+    /// Send a OneBot guild channel message with both routing identifiers.
+    pub fn send_guild_channel_msg(
+        &self,
+        guild_id: &str,
+        channel_id: &str,
+        text: &str,
+    ) -> SendEnqueueStatus {
+        let context = format!(r#"{{"guild_id":"{}"}}"#, escape_json_string(guild_id));
+        self.send_text("channel", channel_id, &context, text)
+    }
+
+    /// Send a text message to a channel-private target.
+    pub fn send_channel_private_msg(&self, guild_id: &str, text: &str) -> SendEnqueueStatus {
+        self.send_text("channel_private", guild_id, "{}", text)
+    }
+
+    /// Send pre-encoded rich segments to any supported target kind.
+    pub fn send_rich(
+        &self,
+        target_kind: &str,
+        target_id: &str,
+        context_json: &str,
+        segments_json: &str,
+    ) -> SendEnqueueStatus {
+        let mut request = ProactiveSendRequest::new(&self.bot_id, target_kind, target_id);
+        request.context_json = RString::from(context_json);
+        request.segments_json = RString::from(segments_json);
+        submit_proactive_send(&request)
+    }
+
+    fn send_text(
+        &self,
+        target_kind: &str,
+        target_id: &str,
+        context_json: &str,
+        text: &str,
+    ) -> SendEnqueueStatus {
+        let mut request = ProactiveSendRequest::new(&self.bot_id, target_kind, target_id);
+        request.context_json = RString::from(context_json);
+        request.message = RString::from(text);
+        submit_proactive_send(&request)
+    }
+}
+
+fn escape_json_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 /// Fluent builder for constructing and queuing a rich-media send to an
 /// arbitrary target (group or private).
 ///
@@ -603,6 +849,9 @@ impl BotApi {
 pub struct SendBuilder {
     message_type: String,
     target_id: String,
+    bot_id: Option<String>,
+    context_json: String,
+    options_json: String,
     segments: Vec<String>,
 }
 
@@ -612,6 +861,9 @@ impl SendBuilder {
         Self {
             message_type: "group".to_string(),
             target_id: group_id.to_string(),
+            bot_id: None,
+            context_json: "{}".to_string(),
+            options_json: "{}".to_string(),
             segments: Vec::new(),
         }
     }
@@ -621,18 +873,64 @@ impl SendBuilder {
         Self {
             message_type: "private".to_string(),
             target_id: user_id.to_string(),
+            bot_id: None,
+            context_json: "{}".to_string(),
+            options_json: "{}".to_string(),
             segments: Vec::new(),
         }
     }
 
+    /// Start building a message destined for a channel.
+    pub fn channel(channel_id: &str) -> Self {
+        Self {
+            message_type: "channel".to_string(),
+            target_id: channel_id.to_string(),
+            bot_id: None,
+            context_json: "{}".to_string(),
+            options_json: "{}".to_string(),
+            segments: Vec::new(),
+        }
+    }
+
+    /// Start building a message destined for a channel-private conversation.
+    pub fn channel_private(guild_id: &str) -> Self {
+        Self {
+            message_type: "channel_private".to_string(),
+            target_id: guild_id.to_string(),
+            bot_id: None,
+            context_json: "{}".to_string(),
+            options_json: "{}".to_string(),
+            segments: Vec::new(),
+        }
+    }
+
+    /// Select the concrete runtime bot used by try_send.
+    pub fn bot(mut self, bot_id: &str) -> Self {
+        self.bot_id = Some(bot_id.to_string());
+        self
+    }
+
+    /// Attach the OneBot guild identifier required by channel sends.
+    pub fn guild_id(mut self, guild_id: &str) -> Self {
+        self.context_json = format!(r#"{{"guild_id":"{}"}}"#, escape_json_string(guild_id));
+        self
+    }
+
+    /// Replace the protocol-specific routing context JSON object.
+    pub fn context_json(mut self, context_json: &str) -> Self {
+        self.context_json = context_json.to_string();
+        self
+    }
+
+    /// Replace the optional send behavior JSON object.
+    pub fn options_json(mut self, options_json: &str) -> Self {
+        self.options_json = options_json.to_string();
+        self
+    }
+
     /// Add a text segment.
     pub fn text(mut self, text: &str) -> Self {
-        let escaped = text
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
+        let escaped = escape_json_string(text);
         self.segments.push(format!(
             r#"{{"type":"text","data":{{"text":"{}"}}}}"#,
             escaped
@@ -690,5 +988,153 @@ impl SendBuilder {
             message: RString::new(),
             segments_json: RString::from(json),
         });
+    }
+
+    /// Submit the built message immediately through the bound host API.
+    pub fn try_send(self) -> SendEnqueueStatus {
+        let Some(bot_id) = self.bot_id else {
+            return SendEnqueueStatus::InvalidRequest;
+        };
+        let mut request = ProactiveSendRequest::new(&bot_id, &self.message_type, &self.target_id);
+        request.context_json = RString::from(self.context_json);
+        request.options_json = RString::from(self.options_json);
+        request.segments_json = RString::from(format!("[{}]", self.segments.join(",")));
+        submit_proactive_send(&request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    unsafe extern "C" fn record_send(
+        context: *mut c_void,
+        request: *const ProactiveSendRequest,
+    ) -> i32 {
+        if context.is_null() || request.is_null() {
+            return SendEnqueueStatus::InvalidRequest.code();
+        }
+        // SAFETY: The test keeps both allocations alive until unbind completes.
+        let output = unsafe { &*(context.cast::<Mutex<Vec<ProactiveSendRequest>>>()) };
+        let request = unsafe { &*request };
+        match output.lock() {
+            Ok(mut output) => {
+                output.push(request.clone());
+                SendEnqueueStatus::Accepted.code()
+            }
+            Err(_) => SendEnqueueStatus::HostUnavailable.code(),
+        }
+    }
+
+    #[test]
+    fn api_04_is_current_and_legacy_versions_remain_compatible() {
+        assert_eq!(expected_api_version().as_str(), "0.4");
+        for version in ["0.1", "0.2", "0.3", "0.4"] {
+            assert!(is_compatible_api_version(version));
+        }
+        assert!(!is_compatible_api_version("0.5"));
+    }
+
+    #[test]
+    fn bot_scoped_builder_submits_owned_channel_routing() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
+        let output = Box::new(Mutex::new(Vec::<ProactiveSendRequest>::new()));
+        let context = (&*output as *const Mutex<Vec<ProactiveSendRequest>>)
+            .cast_mut()
+            .cast::<c_void>();
+        let api = HostApiV1 {
+            abi_version: HOST_API_V1_ABI_VERSION,
+            context,
+            enqueue_send: Some(record_send),
+        };
+
+        // SAFETY: api and output remain alive until unbind returns.
+        assert_eq!(
+            unsafe { bind_host_api_v1(&api) },
+            SendEnqueueStatus::Accepted.code()
+        );
+        let status = SendBuilder::channel("channel-1")
+            .bot("bot-main")
+            .guild_id("guild-1")
+            .text("hello")
+            .try_send();
+        assert_eq!(status, SendEnqueueStatus::Accepted);
+        assert_eq!(unbind_host_api_v1(), SendEnqueueStatus::Accepted.code());
+
+        let output = output.lock().expect("output");
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].bot_id.as_str(), "bot-main");
+        assert_eq!(output[0].target_kind.as_str(), "channel");
+        assert_eq!(output[0].target_id.as_str(), "channel-1");
+        assert_eq!(output[0].context_json.as_str(), r#"{"guild_id":"guild-1"}"#);
+        assert!(output[0].segments_json.as_str().contains("hello"));
+    }
+
+    struct BlockingContext {
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+    }
+
+    unsafe extern "C" fn blocking_send(
+        context: *mut c_void,
+        _request: *const ProactiveSendRequest,
+    ) -> i32 {
+        // SAFETY: The test keeps the context alive until both threads join.
+        let context = unsafe { &*context.cast::<BlockingContext>() };
+        context.entered.wait();
+        context.release.wait();
+        SendEnqueueStatus::Accepted.code()
+    }
+
+    #[test]
+    fn unbind_waits_for_an_in_flight_host_callback() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let context = Box::new(BlockingContext {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        });
+        let api = HostApiV1 {
+            abi_version: HOST_API_V1_ABI_VERSION,
+            context: (&*context as *const BlockingContext).cast_mut().cast(),
+            enqueue_send: Some(blocking_send),
+        };
+        // SAFETY: context remains alive until send and unbind complete.
+        assert_eq!(
+            unsafe { bind_host_api_v1(&api) },
+            SendEnqueueStatus::Accepted.code()
+        );
+
+        let sender =
+            std::thread::spawn(|| BotApi::for_bot("bot-main").send_group_msg("group-1", "hello"));
+        entered.wait();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let unbinder = std::thread::spawn(move || {
+            let status = unbind_host_api_v1();
+            done_tx.send(status).expect("send unbind status");
+        });
+
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err()
+        );
+        release.wait();
+        assert_eq!(sender.join().expect("sender"), SendEnqueueStatus::Accepted);
+        assert_eq!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("unbind status"),
+            SendEnqueueStatus::Accepted.code()
+        );
+        unbinder.join().expect("unbinder");
+        assert_eq!(
+            BotApi::for_bot("bot-main").send_group_msg("group-1", "after"),
+            SendEnqueueStatus::HostUnavailable
+        );
     }
 }

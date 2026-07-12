@@ -8,18 +8,19 @@
 - Dynamic command dispatch logs identify actual plugin matches without labeling unknown commands as built-ins.
 - Loaded dynamic plugins remain resident until explicit reload so background plugin threads cannot outlive unloaded code.
 - Dynamic callback signatures match the proc-macro exports, and queued send actions are copied into host-owned ABI strings.
+- Dynamic plugin API 0.4 types and bot-scoped proactive send helpers are implemented with synchronized host binding.
 
 ## Recent Completion
 
+- Added API 0.4 proactive request/status types and a versioned Host API table.
+- Added synchronized bind/unbind handling that waits for in-flight plugin sends.
+- Added explicit bot, channel, channel-private, and guild-channel plugin send builders.
+- Preserved the API 0.1-0.3 queued-send compatibility path.
 - Prepared the dynamic FFI ownership hardening as release `v0.1.9`.
-- Matched command and route callbacks to their reference-parameter exports.
-- Copied queued send actions into host ownership before asynchronous processing or unload.
-- Prepared the dynamic-library residency fix as release `v0.1.8`.
-- Removed unsafe idle eviction for loaded dynamic libraries and added explicit-residency lifecycle coverage.
 
 ## Next Step
 
-- Deploy `v0.1.9` on Linux and verify a multi-part dynamic command after more than five minutes of idle time.
+- Generate API 0.4 host bind/unbind exports in the dynamic plugin derive crate.
 
 ## Verification Baseline
 
@@ -35,5 +36,7 @@
 - `cargo clippy -p qimen-runtime -p qimen-config -p qimen-official-host --lib -- -D warnings`
 - Standalone status plugin: `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings`, and `cargo build --release --offline`.
 - Standalone external `cdylib` release build using registry versions `abi-stable-host-api@0.1.1` and `qimen-dynamic-plugin-derive@0.1.1`.
+- `cargo test -p abi-stable-host-api --offline`
+- `cargo clippy -p abi-stable-host-api --all-targets --offline -- -D warnings`
 - `cd docs && npm ci && npm run docs:build`
 - Daemon smoke test: reverse-only config stayed alive and logged the bound address/path.
