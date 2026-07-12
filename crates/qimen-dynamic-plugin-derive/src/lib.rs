@@ -9,16 +9,18 @@ use syn::{
 
 // ─── Plugin-level args ──────────────────────────────────────────────────
 
-// Parse: id = "...", version = "..."
+// Parse: id = "...", version = "...", api = "0.4"
 struct PluginArgs {
     id: String,
     version: String,
+    api: String,
 }
 
 impl Parse for PluginArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut id = None;
         let mut version = None;
+        let mut api = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -28,6 +30,7 @@ impl Parse for PluginArgs {
             match key.to_string().as_str() {
                 "id" => id = Some(value.value()),
                 "version" => version = Some(value.value()),
+                "api" => api = Some(value.value()),
                 other => return Err(syn::Error::new(key.span(), format!("unknown key: {other}"))),
             }
 
@@ -36,9 +39,15 @@ impl Parse for PluginArgs {
             }
         }
 
+        let api = api.unwrap_or_else(|| "0.3".to_string());
+        if !matches!(api.as_str(), "0.1" | "0.2" | "0.3" | "0.4") {
+            return Err(input.error("api must be one of 0.1, 0.2, 0.3, or 0.4"));
+        }
+
         Ok(PluginArgs {
             id: id.ok_or_else(|| input.error("missing `id`"))?,
             version: version.ok_or_else(|| input.error("missing `version`"))?,
+            api,
         })
     }
 }
@@ -137,7 +146,7 @@ impl Parse for RouteArgs {
 ///
 /// Usage:
 /// ```ignore
-/// #[dynamic_plugin(id = "my-plugin", version = "0.1.0")]
+/// #[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.4")]
 /// mod my_plugin {
 ///     #[command(name = "greet", description = "Say hello", aliases = "hi,hello")]
 ///     fn greet(req: &CommandRequest) -> CommandResponse {
@@ -338,6 +347,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
     // Generate the descriptor function
     let plugin_id = &args.id;
     let plugin_version = &args.version;
+    let plugin_api = &args.api;
 
     let command_registrations: Vec<TokenStream2> = command_entries
         .iter()
@@ -396,6 +406,24 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         quote! {}
     };
 
+    let host_api_exports = if args.api == "0.4" {
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn qimen_plugin_bind_host_api_v1(
+                api: *const ::abi_stable_host_api::HostApiV1,
+            ) -> i32 {
+                unsafe { ::abi_stable_host_api::bind_host_api_v1(api) }
+            }
+
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn qimen_plugin_unbind_host_api_v1() -> i32 {
+                ::abi_stable_host_api::unbind_host_api_v1()
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let output = quote! {
         #(#mod_attrs)*
         #mod_vis mod #mod_name {
@@ -405,10 +433,13 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn qimen_plugin_descriptor() -> ::abi_stable_host_api::PluginDescriptor {
             ::abi_stable_host_api::PluginDescriptor::new(#plugin_id, #plugin_version)
+                .with_api_version(#plugin_api)
                 #(#command_registrations)*
                 #(#route_registrations)*
                 #interceptor_registration
         }
+
+        #host_api_exports
 
         /// Drain all queued `SendAction`s produced by `BotApi` / `SendBuilder`
         /// during the most recent FFI callback.
@@ -457,4 +488,50 @@ fn extract_attr(
 /// Check if a bare attribute (no arguments) exists, e.g. `#[init]`.
 fn has_bare_attr(attrs: &[syn::Attribute], name: &str) -> bool {
     attrs.iter().any(|a| a.path().is_ident(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expand(args: &str) -> String {
+        let args = syn::parse_str::<PluginArgs>(args).expect("plugin args");
+        let module = syn::parse_str::<ItemMod>(
+            r#"
+            mod fixture {
+                #[command(name = "ping", description = "reply")]
+                fn ping(_req: &CommandRequest) -> CommandResponse {
+                    CommandResponse::text("pong")
+                }
+            }
+            "#,
+        )
+        .expect("module");
+        expand_dynamic_plugin(args, module)
+            .expect("expand")
+            .to_string()
+    }
+
+    #[test]
+    fn omitted_api_keeps_legacy_03_descriptor_without_host_exports() {
+        let output = expand(r#"id = "fixture", version = "0.1.0""#);
+        assert!(output.contains("with_api_version (\"0.3\")"));
+        assert!(!output.contains("qimen_plugin_bind_host_api_v1"));
+        assert!(!output.contains("qimen_plugin_unbind_host_api_v1"));
+    }
+
+    #[test]
+    fn api_04_generates_bind_and_unbind_exports() {
+        let output = expand(r#"id = "fixture", version = "0.1.0", api = "0.4""#);
+        assert!(output.contains("with_api_version (\"0.4\")"));
+        assert!(output.contains("qimen_plugin_bind_host_api_v1"));
+        assert!(output.contains("qimen_plugin_unbind_host_api_v1"));
+    }
+
+    #[test]
+    fn unsupported_api_is_rejected() {
+        let result =
+            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.5""#);
+        assert!(result.is_err());
+    }
 }

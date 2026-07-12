@@ -425,6 +425,12 @@ impl PluginDescriptor {
         }
     }
 
+    /// Override the declared dynamic plugin API version.
+    pub fn with_api_version(mut self, api_version: &str) -> Self {
+        self.api_version = RString::from(api_version);
+        self
+    }
+
     /// Add a command to this descriptor.
     pub fn add_command(mut self, name: &str, description: &str, callback_symbol: &str) -> Self {
         self.commands.push(CommandDescriptorEntry {

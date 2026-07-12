@@ -9,18 +9,19 @@
 - Loaded dynamic plugins remain resident until explicit reload so background plugin threads cannot outlive unloaded code.
 - Dynamic callback signatures match the proc-macro exports, and queued send actions are copied into host-owned ABI strings.
 - Dynamic plugin API 0.4 types and bot-scoped proactive send helpers are implemented with synchronized host binding.
+- The dynamic plugin macro emits Host API bind/unbind symbols only when a plugin explicitly declares API 0.4.
 
 ## Recent Completion
 
+- Added an optional dynamic plugin API declaration with a compatibility default of API 0.3.
+- Generated API 0.4 Host API bind/unbind exports and descriptor metadata.
 - Added API 0.4 proactive request/status types and a versioned Host API table.
 - Added synchronized bind/unbind handling that waits for in-flight plugin sends.
 - Added explicit bot, channel, channel-private, and guild-channel plugin send builders.
-- Preserved the API 0.1-0.3 queued-send compatibility path.
-- Prepared the dynamic FFI ownership hardening as release `v0.1.9`.
 
 ## Next Step
 
-- Generate API 0.4 host bind/unbind exports in the dynamic plugin derive crate.
+- Implement per-bot proactive send queues and online protocol executors in the runtime.
 
 ## Verification Baseline
 
@@ -38,5 +39,7 @@
 - Standalone external `cdylib` release build using registry versions `abi-stable-host-api@0.1.1` and `qimen-dynamic-plugin-derive@0.1.1`.
 - `cargo test -p abi-stable-host-api --offline`
 - `cargo clippy -p abi-stable-host-api --all-targets --offline -- -D warnings`
+- `cargo test -p qimen-dynamic-plugin-derive -p abi-stable-host-api --offline`
+- `cargo clippy -p qimen-dynamic-plugin-derive -p abi-stable-host-api --all-targets --offline -- -D warnings`
 - `cd docs && npm ci && npm run docs:build`
 - Daemon smoke test: reverse-only config stayed alive and logged the bound address/path.
