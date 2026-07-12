@@ -347,6 +347,12 @@ impl<'a> CommandDispatch<'a> {
             }
 
             if let Some(descriptor) = &entry.dynamic_descriptor {
+                tracing::info!(
+                    bot_id = %self.bot_id,
+                    plugin = %descriptor.plugin_id,
+                    command = %descriptor.command_name,
+                    "matched dynamic command"
+                );
                 return Some(CommandDispatchSignal::DynamicCommand {
                     descriptor: descriptor.clone(),
                     args: parsed.args.clone(),
@@ -373,14 +379,7 @@ impl CommandHandler for BuiltinCommandHandler {
         ctx: &CommandContext<'_>,
         parsed: &ParsedCommandInput,
     ) -> Option<CommandDispatchSignal> {
-        tracing::info!(
-            bot_id = %ctx.bot_id,
-            trigger = ?parsed.trigger,
-            command = %parsed.name,
-            "matched builtin command"
-        );
-
-        match parsed.name.as_str() {
+        let signal = match parsed.name.as_str() {
             "ping" => Some(CommandDispatchSignal::Reply(Message::text("pong"))),
             "echo" => Some(CommandDispatchSignal::Reply(Message::text(
                 parsed.args.first().cloned().unwrap_or_default(),
@@ -390,7 +389,18 @@ impl CommandHandler for BuiltinCommandHandler {
                 ctx.bot_id
             )))),
             _ => None,
+        };
+
+        if signal.is_some() {
+            tracing::info!(
+                bot_id = %ctx.bot_id,
+                trigger = ?parsed.trigger,
+                command = %parsed.name,
+                "matched builtin command"
+            );
         }
+
+        signal
     }
 }
 
