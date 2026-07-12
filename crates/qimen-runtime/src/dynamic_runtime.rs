@@ -22,7 +22,6 @@ const MAX_ERROR_HISTORY: usize = 10;
 
 /// Mutable metadata for a loaded library (protected by its own Mutex).
 struct LibraryMeta {
-    last_used: Instant,
     failures: u32,
     tripped_until: Option<Instant>,
     last_error: Option<String>,
@@ -73,11 +72,11 @@ impl DynamicPluginRuntime {
         }
     }
 
-    /// Obtain a per-library handle. Briefly borrows `&mut self` to ensure the
-    /// library is loaded and to run idle eviction, then returns an `Arc` clone.
+    /// Obtain a per-library handle. Loaded plugins remain resident until an
+    /// explicit reload or shutdown unloads them, because plugins may own
+    /// background threads whose code lives in the dynamic library.
     /// The caller should drop the outer lock immediately after calling this.
     pub(crate) fn get_library(&mut self, path: &str) -> Result<LibraryHandle> {
-        self.evict_idle_libraries(Duration::from_secs(300));
         self.ensure_library(path)?;
         self.libraries
             .get(path)
@@ -369,7 +368,7 @@ impl DynamicPluginRuntime {
     where
         F: FnOnce(&libloading::Library) -> Result<T>,
     {
-        // Phase 1: briefly lock metadata to check circuit breaker + update last_used
+        // Phase 1: briefly lock metadata to check the circuit breaker.
         {
             let mut meta = handle.meta.lock().map_err(|_| {
                 QimenError::Runtime(format!("per-library meta lock poisoned for '{}'", path))
@@ -385,8 +384,6 @@ impl DynamicPluginRuntime {
                 }
                 meta.tripped_until = None;
             }
-
-            meta.last_used = Instant::now();
         } // meta lock released
 
         // Phase 2: execute FFI — NO lock held, concurrent calls allowed
@@ -642,7 +639,6 @@ impl DynamicPluginRuntime {
                 Arc::new(LoadedLibrary {
                     library,
                     meta: Mutex::new(LibraryMeta {
-                        last_used: Instant::now(),
                         failures: 0,
                         tripped_until: None,
                         last_error: None,
@@ -653,24 +649,34 @@ impl DynamicPluginRuntime {
         }
         Ok(())
     }
+}
 
-    fn evict_idle_libraries(&mut self, max_idle: Duration) {
-        let now = Instant::now();
-        self.libraries.retain(|_, handle| {
-            match handle.meta.try_lock() {
-                Ok(meta) => {
-                    now.duration_since(meta.last_used) <= max_idle || meta.tripped_until.is_some()
-                }
-                Err(std::sync::TryLockError::WouldBlock) => {
-                    // Meta lock is briefly held — library is active, keep it
-                    true
-                }
-                Err(std::sync::TryLockError::Poisoned(_)) => {
-                    // Poisoned lock — remove it
-                    false
-                }
-            }
-        });
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[cfg(target_os = "windows")]
+    const TEST_LIBRARY: &str = "kernel32.dll";
+    #[cfg(target_os = "linux")]
+    const TEST_LIBRARY: &str = "libc.so.6";
+    #[cfg(target_os = "macos")]
+    const TEST_LIBRARY: &str = "/usr/lib/libSystem.B.dylib";
+
+    #[test]
+    fn loaded_library_remains_cached_until_explicit_unload() {
+        let mut runtime = DynamicPluginRuntime::new();
+
+        let first = runtime.get_library(TEST_LIBRARY).unwrap();
+        let second = runtime.get_library(TEST_LIBRARY).unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(runtime.libraries.contains_key(TEST_LIBRARY));
+
+        drop(first);
+        drop(second);
+        runtime.unload_library(TEST_LIBRARY);
+
+        assert!(!runtime.libraries.contains_key(TEST_LIBRARY));
     }
 }
 

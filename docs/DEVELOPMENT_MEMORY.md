@@ -6,24 +6,26 @@
 - Enabled long-running bot transports are polled concurrently.
 - Dynamic plugins can be developed outside the main repository using crates.io dependencies.
 - Dynamic command dispatch logs identify actual plugin matches without labeling unknown commands as built-ins.
+- Loaded dynamic plugins remain resident until explicit reload so background plugin threads cannot outlive unloaded code.
 
 ## Recent Completion
 
+- Removed unsafe idle eviction for loaded dynamic libraries and added explicit-residency lifecycle coverage.
 - Removed repository-local AI agent instructions and added the root MIT license file.
 - Prepared the command dispatch observability fix as release `v0.1.7`.
 - Added private-chat query support and correct multi-chunk routing in the standalone status plugin.
 - Corrected the RFC 6455 accept GUID and prepared hotfix release `v0.1.6`.
-- Prepared the verified reverse WebSocket and standalone plugin documentation batch as release `v0.1.5`.
 
 ## Next Step
 
-- Build and deploy the updated status plugin on Linux, then verify `/模型状态` in private chat.
+- Prepare the dynamic-library residency fix as release `v0.1.8` for Linux deployment verification.
 
 ## Verification Baseline
 
 - `cargo test -p qimen-transport-ws --test ws_integration`
 - `cargo test -p qimen-config`
 - `cargo test -p qimen-runtime --lib`
+- `cargo check --workspace --offline`
 - `cargo test --workspace`
 - `cargo clippy --workspace -- -D warnings`
 - `cargo clippy -p qimen-transport-ws --all-targets -- -D warnings`
