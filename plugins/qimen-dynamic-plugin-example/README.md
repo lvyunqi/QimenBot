@@ -4,6 +4,22 @@
 
 **API 版本：v0.3**
 
+## 在 QimenBot 仓库外开发
+
+本示例虽然存放在 QimenBot 仓库中，但动态插件本身不依赖本地主框架源码。可以在任意目录创建独立 crate，并直接使用 crates.io 上的 QimenBot 动态插件依赖：
+
+```toml
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+abi-stable-host-api = "0.1.1"
+qimen-dynamic-plugin-derive = "0.1.1"
+abi_stable = "0.11"
+```
+
+仓库外项目不需要 `[workspace]`。构建完成后，只需将与宿主操作系统及 CPU 架构匹配的动态库复制到 QimenBot 的 `plugin_bin_dir`。
+
 ## 快速开始
 
 ### 1. 编译
@@ -149,10 +165,10 @@ rust-version = "1.89"
 crate-type = ["cdylib"]         # 编译为动态库
 
 [dependencies]
-abi-stable-host-api = "0.1"
+abi-stable-host-api = "0.1.1"
 abi_stable = "0.11"
 serde_json = "1"
-qimen-dynamic-plugin-derive = "0.1"
+qimen-dynamic-plugin-derive = "0.1.1"
 ```
 
 ## 手动 FFI 写法
