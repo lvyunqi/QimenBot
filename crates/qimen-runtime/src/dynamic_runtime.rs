@@ -111,7 +111,7 @@ impl DynamicPluginRuntime {
 
         Self::with_handle(handle, &descriptor.library_path, move |library| unsafe {
             let symbol: libloading::Symbol<
-                unsafe extern "C" fn(CommandRequest) -> CommandResponse,
+                unsafe extern "C" fn(&CommandRequest) -> CommandResponse,
             > = library.get(callback.as_bytes()).map_err(|err| {
                 QimenError::Runtime(format!(
                     "failed to load dynamic callback '{}' from '{}': {err}",
@@ -130,7 +130,8 @@ impl DynamicPluginRuntime {
                 timestamp,
             };
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(request)));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(&request)));
 
             let sends = flush_sends_from_library(library);
 
@@ -168,7 +169,7 @@ impl DynamicPluginRuntime {
         let kind_owned = kind.to_string();
 
         Self::with_handle(handle, library_path, move |library| unsafe {
-            let symbol: libloading::Symbol<unsafe extern "C" fn(NoticeRequest) -> NoticeResponse> =
+            let symbol: libloading::Symbol<unsafe extern "C" fn(&NoticeRequest) -> NoticeResponse> =
                 library.get(callback_owned.as_bytes()).map_err(|err| {
                     QimenError::Runtime(format!(
                         "failed to load dynamic {} callback '{}' from '{}': {err}",
@@ -181,7 +182,8 @@ impl DynamicPluginRuntime {
                 raw_event_json: RString::from(raw_json),
             };
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(request)));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(&request)));
 
             let sends = flush_sends_from_library(library);
 
@@ -678,6 +680,26 @@ mod lifecycle_tests {
 
         assert!(!runtime.libraries.contains_key(TEST_LIBRARY));
     }
+
+    #[test]
+    fn queued_send_action_is_copied_without_losing_fields() {
+        let action = SendAction {
+            message_type: RString::from("group"),
+            target_id: RString::from("20001"),
+            message: RString::from("hello"),
+            segments_json: RString::from(r#"[{"type":"text","data":{"text":"hello"}}]"#),
+        };
+
+        let owned = own_send_action(action);
+
+        assert_eq!(owned.message_type.as_str(), "group");
+        assert_eq!(owned.target_id.as_str(), "20001");
+        assert_eq!(owned.message.as_str(), "hello");
+        assert_eq!(
+            owned.segments_json.as_str(),
+            r#"[{"type":"text","data":{"text":"hello"}}]"#
+        );
+    }
 }
 
 fn extract_panic_message(panic_info: &Box<dyn std::any::Any + Send>) -> &str {
@@ -700,7 +722,7 @@ unsafe fn flush_sends_from_library(library: &libloading::Library) -> Vec<SendAct
     match symbol {
         Ok(flush_fn) => {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { flush_fn() })) {
-                Ok(rvec) => rvec.into_iter().collect(),
+                Ok(rvec) => rvec.into_iter().map(own_send_action).collect(),
                 Err(_) => {
                     tracing::warn!("qimen_plugin_flush_sends panicked, discarding queued sends");
                     Vec::new()
@@ -708,6 +730,17 @@ unsafe fn flush_sends_from_library(library: &libloading::Library) -> Vec<SendAct
             }
         }
         Err(_) => Vec::new(), // Symbol not found — old plugin, no sends
+    }
+}
+
+/// Copy a queued action into host-owned ABI strings before leaving the library call.
+/// This keeps asynchronous send processing independent from plugin reload/unload timing.
+fn own_send_action(action: SendAction) -> SendAction {
+    SendAction {
+        message_type: RString::from(action.message_type.as_str()),
+        target_id: RString::from(action.target_id.as_str()),
+        message: RString::from(action.message.as_str()),
+        segments_json: RString::from(action.segments_json.as_str()),
     }
 }
 
