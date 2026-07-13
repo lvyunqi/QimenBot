@@ -543,6 +543,41 @@ mod my_plugin {
 
 宏自动生成 `qimen_plugin_descriptor()` 和所有 `extern "C" fn` 导出，你只需专注业务逻辑。
 
+### API 0.4 实时主动推送
+
+需要从后台线程发送消息时，显式声明 API `0.4`，并为每次发送指定运行时中的 `bot_id`：
+
+```rust
+use abi_stable_host_api::{BotApi, SendEnqueueStatus};
+use qimen_dynamic_plugin_derive::dynamic_plugin;
+
+#[dynamic_plugin(id = "push-example", version = "0.1.0", api = "0.4")]
+mod push_example {
+    use super::*;
+
+    fn push_now() {
+        match BotApi::for_bot("qq-main")
+            .send_group_msg("123456", "后台实时通知")
+        {
+            SendEnqueueStatus::Accepted => {}
+            status => eprintln!("主动发送未被宿主接受: {status:?}"),
+        }
+    }
+}
+```
+
+`Accepted` 仅表示宿主已复制请求并接受入队，不表示网络发送已经成功。`try_send()` 还可能返回 `HostUnavailable`、`InvalidRequest`、`BotNotFound`、`BotDisabled`、`QueueFull` 或 `HostShuttingDown`。实时接口支持私聊、群聊、频道和频道私信；OneBot 频道目标通过 `SendBuilder::guild_id(...)` 补充 `guild_id`。
+
+宿主默认给每个启用 Bot 建立容量为 `256` 的独立队列，离线请求最多等待 `60` 秒：
+
+```toml
+[official_host.proactive_send]
+queue_capacity = 256
+offline_ttl_secs = 60
+```
+
+API 0.4 的 Host API 会在插件 `init` 前绑定，因此后台线程不需要等待命令、事件或 Heartbeat。插件必须在 `shutdown` 中停止并 `join` 自己创建的线程，然后宿主才会解绑 Host API 和卸载动态库。完整目标映射、状态码和线程示例见 [API 0.4 实时主动推送](docs/advanced/dynamic-proactive-send-v04.md)。
+
 ### 构建 & 部署
 
 ```bash
@@ -603,9 +638,18 @@ CommandResponse::builder()
     .face(1)
     .build()
 
-// 主动向群/私聊发送消息
+// 兼容 API 0.1-0.3：在当前 FFI 回调返回后由宿主 flush
 BotApi::send_group_msg(group_id, "通知内容");
 SendBuilder::private(user_id).text("私聊消息").send();
+
+// API 0.4：显式选择 Bot，立即提交到该 Bot 的实时队列
+let status = BotApi::for_bot("qq-main")
+    .send_group_msg(group_id, "实时通知");
+let status = SendBuilder::channel(channel_id)
+    .guild_id(guild_id)
+    .bot("qq-reverse")
+    .text("频道通知")
+    .try_send();
 ```
 
 ### 运行时管理

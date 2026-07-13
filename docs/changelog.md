@@ -9,6 +9,7 @@
 - 新增 `BotApi::for_bot`、`SendBuilder::bot`、`try_send` 及稳定状态码，同时保留 API 0.1 至 0.3 的回调后 flush 路径。
 - 加固插件 shutdown、后台线程 join、Host API unbind 与动态库卸载顺序，避免热重载期间出现悬空回调。
 - 更新动态插件示例、项目模板、配置参考和独立 crates.io 插件开发文档。
+- `abi-stable-host-api 0.1.10` 与 `qimen-dynamic-plugin-derive 0.1.10` 已发布到 crates.io，仓库外插件无需依赖本地主框架源码。
 
 ---
 

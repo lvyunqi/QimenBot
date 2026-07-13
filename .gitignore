@@ -27,5 +27,6 @@ docs/.vitepress/cache/
 /GEMINI.md
 /CLAUDE.md
 /AGENTS.md
+/docs/DEVELOPMENT_MEMORY.md
 .github/copilot-instructions.md
 .github/instructions/
