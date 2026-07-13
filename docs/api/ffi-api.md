@@ -522,14 +522,37 @@ pub unsafe extern "C" fn qimen_plugin_flush_sends() -> RVec<SendAction>
 
 ## 向后兼容
 
-v0.4 FFI 接口向后兼容 v0.1、v0.2 和 v0.3：
+v0.5 FFI 接口向后兼容 v0.1、v0.2、v0.3 和 v0.4：
 
 - v0.1 的 `qimen_demo_plugin_descriptor` 符号名仍然支持
 - v0.1 的单命令/单路由字段仍然可用
 - 框架会优先尝试 v0.2+ 符号 `qimen_plugin_descriptor`，找不到再尝试 v0.1
 - v0.2 的 `CommandDescriptorEntry`（无 `scope` 字段）会自动使用 `scope = "all"` 默认值
 - 旧插件无 `qimen_plugin_flush_sends` 符号时宿主返回空 Vec，无副作用
+- API 0.5 没有向旧 `PluginDescriptor` 追加字段，而是使用单独的 Webhook 描述符导出，保持旧结构布局不变
 
 ::: info Host API v1 / 动态插件 API 0.4
 API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，并由过程宏生成 bind/unbind 导出。完整 ABI 生命周期、BotApi::for_bot、SendBuilder::try_send 和目标字段说明见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
 :::
+
+## API 0.5 Webhook 导出
+
+API 0.5 插件通过独立符号导出 Webhook 路由：
+
+```rust
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_webhook_descriptors_v1()
+    -> RVec<WebhookDescriptorEntry>;
+```
+
+`WebhookDescriptorEntry` 包含 `method`、插件局部 `path` 和 `callback_symbol`。宿主把局部路径挂载到 `{base_path}/{plugin_id}` 下，并验证路由是精确静态路径。
+
+回调 ABI：
+
+```rust
+pub unsafe extern "C" fn callback(request: &WebhookRequest) -> WebhookResponse;
+```
+
+`WebhookRequest` 包含 method、完整 path、原始 query、请求头 JSON、原始 body 和 peer address。`WebhookResponse` 包含 `u16` 状态码、响应头 JSON 和原始 body。宿主在回调返回、离开插件 FFI 之前复制所有字符串和字节，因此后续 HTTP 响应和动态库卸载不依赖插件侧内存。
+
+Webhook 回调使用同步 FFI，并在 blocking 线程执行。HTTP 超时不会强制终止正在执行的插件代码；宿主会继续持有动态库生命周期锁，直到回调真正返回。完整 Gateway 配置、安全模型和主动发送限制见 [API 0.5 Webhook Gateway](/advanced/dynamic-webhook-v05)。

@@ -61,6 +61,18 @@ queue_capacity = 256
 # How long a queued request may wait for its bot to reconnect; 0 drops immediately.
 offline_ttl_secs = 60
 
+# Dynamic plugin API 0.5 HTTP Webhook Gateway. Disabled and loopback-only by default.
+[official_host.webhook]
+enabled = false
+bind = "127.0.0.1:8088"
+# Plugin routes are exposed as: {base_path}/{plugin_id}/{plugin-local-path}.
+base_path = "/webhooks"
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+max_in_flight = 64
+# Optional global bearer token. Keep empty only when access is otherwise trusted.
+access_token = ""
+
 # ── Bot 实例配置 / Bot Instances ─────────────────────────────────────────
 # 每个 [[bots]] 块定义一个 Bot 实例，可以配置多个
 

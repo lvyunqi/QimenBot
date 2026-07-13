@@ -68,7 +68,23 @@ qimenbotd (应用入口)
 2. **命令路由** — 将命令匹配到对应的 `CommandPlugin`
 3. **系统事件路由** — 将通知/请求/元事件分发到 `SystemPlugin`
 4. **插件编排** — 管理插件的加载、卸载、优先级排序
-5. **运行时保护** — 限流、去重、ACL 等安全机制
+5. **Webhook Gateway** — 把 HTTP 请求安全地路由到 API 0.5 动态插件
+6. **运行时保护** — 限流、去重、ACL、FFI 生命周期屏障等安全机制
+
+### Webhook Gateway
+
+API 0.5 Webhook 不经过 Bot 事件解码流水线，而是由 Runtime 的独立 HTTP 入口直接调度：
+
+```text
+HTTP request
+    → Bearer token / body / concurrency checks
+    → method + namespaced exact-path lookup
+    → spawn_blocking synchronous FFI callback
+    → host-owned response copy
+    → HTTP response
+```
+
+插件只声明局部路径；宿主自动挂载为 `{base_path}/{plugin_id}{path}`。同步回调执行期间会持有动态库生命周期读锁，热重载和关闭取得写锁前必须等待所有回调真正返回，因此 HTTP 超时不会造成动态库被提前卸载。Webhook 中的 Bot 发送仍进入每 Bot 独立的主动发送队列，协议由 `bot_id` 对应配置决定。
 
 ### ProtocolAdapter（协议适配器）
 

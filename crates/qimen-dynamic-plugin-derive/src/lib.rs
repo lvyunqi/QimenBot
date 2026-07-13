@@ -9,7 +9,7 @@ use syn::{
 
 // ─── Plugin-level args ──────────────────────────────────────────────────
 
-// Parse: id = "...", version = "...", api = "0.4"
+// Parse: id = "...", version = "...", api = "0.5"
 struct PluginArgs {
     id: String,
     version: String,
@@ -40,8 +40,8 @@ impl Parse for PluginArgs {
         }
 
         let api = api.unwrap_or_else(|| "0.3".to_string());
-        if !matches!(api.as_str(), "0.1" | "0.2" | "0.3" | "0.4") {
-            return Err(input.error("api must be one of 0.1, 0.2, 0.3, or 0.4"));
+        if !matches!(api.as_str(), "0.1" | "0.2" | "0.3" | "0.4" | "0.5") {
+            return Err(input.error("api must be one of 0.1, 0.2, 0.3, 0.4, or 0.5"));
         }
 
         Ok(PluginArgs {
@@ -140,13 +140,65 @@ impl Parse for RouteArgs {
     }
 }
 
+// Parse: method = "POST", path = "/events"
+struct WebhookArgs {
+    method: String,
+    path: String,
+}
+
+impl Parse for WebhookArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut method = None;
+        let mut path = None;
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            let value: LitStr = input.parse()?;
+
+            match key.to_string().as_str() {
+                "method" => method = Some(value.value()),
+                "path" => path = Some(value.value()),
+                other => return Err(syn::Error::new(key.span(), format!("unknown key: {other}"))),
+            }
+
+            if !input.is_empty() {
+                input.parse::<Token![,]>()?;
+            }
+        }
+
+        let method = method
+            .ok_or_else(|| input.error("missing `method`"))?
+            .trim()
+            .to_ascii_uppercase();
+        if method.is_empty() || !method.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            return Err(input.error("webhook method must contain only ASCII letters"));
+        }
+
+        let path = path.ok_or_else(|| input.error("missing `path`"))?;
+        if !path.starts_with('/')
+            || path.contains('?')
+            || path.contains('#')
+            || path.contains('*')
+            || path.contains("//")
+            || path.split('/').any(|segment| matches!(segment, "." | ".."))
+        {
+            return Err(input.error(
+                "webhook path must be an exact absolute path without traversal, query, fragment, or wildcard",
+            ));
+        }
+
+        Ok(Self { method, path })
+    }
+}
+
 // ─── Macro entry point ──────────────────────────────────────────────────
 
 /// Attribute macro for declaring a dynamic plugin module.
 ///
 /// Usage:
 /// ```ignore
-/// #[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.4")]
+/// #[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.5")]
 /// mod my_plugin {
 ///     #[command(name = "greet", description = "Say hello", aliases = "hi,hello")]
 ///     fn greet(req: &CommandRequest) -> CommandResponse {
@@ -155,6 +207,9 @@ impl Parse for RouteArgs {
 ///
 ///     #[route(kind = "notice", events = "GroupPoke,PrivatePoke")]
 ///     fn on_poke(req: &NoticeRequest) -> NoticeResponse { ... }
+///
+///     #[webhook(method = "POST", path = "/events")]
+///     fn events(req: &WebhookRequest) -> WebhookResponse { ... }
 ///
 ///     #[init]
 ///     fn my_init(config: PluginInitConfig) -> PluginInitResult { ... }
@@ -188,6 +243,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
 
     let mut command_entries = Vec::new();
     let mut route_entries = Vec::new();
+    let mut webhook_entries = Vec::new();
     let mut init_fn: Option<String> = None;
     let mut shutdown_fn: Option<String> = None;
     let mut pre_handle_fn: Option<String> = None;
@@ -218,6 +274,48 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
                     make_extern_c(&mut func);
                     route_entries.push((fn_name, route_args));
                     transformed_items.push(syn::Item::Fn(func));
+                }
+                // Check for #[webhook(...)]
+                else if let Some((webhook_tokens, remaining_attrs)) =
+                    extract_attr(&func.attrs, "webhook")?
+                {
+                    if args.api != "0.5" {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "#[webhook] requires dynamic plugin API 0.5",
+                        ));
+                    }
+                    let webhook_args: WebhookArgs = syn::parse2(webhook_tokens)?;
+                    func.attrs = remaining_attrs;
+                    let fn_name = func.sig.ident.to_string();
+                    let export_ident = func.sig.ident.clone();
+                    let inner_ident = syn::Ident::new(
+                        &format!("__{fn_name}_webhook_inner"),
+                        func.sig.ident.span(),
+                    );
+                    func.sig.ident = inner_ident.clone();
+                    webhook_entries.push((fn_name, webhook_args));
+                    transformed_items.push(syn::Item::Fn(func));
+
+                    // Never allow a Rust panic to cross an `extern "C"` boundary.
+                    // The host can turn this stable fallback into an HTTP 500 response.
+                    let webhook_wrapper: syn::Item = syn::parse_quote! {
+                        #[unsafe(no_mangle)]
+                        pub unsafe extern "C" fn #export_ident(
+                            req: &::abi_stable_host_api::WebhookRequest,
+                        ) -> ::abi_stable_host_api::WebhookResponse {
+                            match ::std::panic::catch_unwind(
+                                ::std::panic::AssertUnwindSafe(|| #inner_ident(req)),
+                            ) {
+                                Ok(response) => response,
+                                Err(_) => ::abi_stable_host_api::WebhookResponse::text(
+                                    500,
+                                    "webhook callback panicked",
+                                ),
+                            }
+                        }
+                    };
+                    transformed_items.push(webhook_wrapper);
                 }
                 // Check for #[init]
                 else if has_bare_attr(&func.attrs, "init") {
@@ -387,6 +485,22 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         })
         .collect();
 
+    let webhook_registrations: Vec<TokenStream2> = webhook_entries
+        .iter()
+        .map(|(fn_name, webhook)| {
+            let method = &webhook.method;
+            let path = &webhook.path;
+            let callback = fn_name;
+            quote! {
+                ::abi_stable_host_api::WebhookDescriptorEntry {
+                    method: ::abi_stable::std_types::RString::from(#method),
+                    path: ::abi_stable::std_types::RString::from(#path),
+                    callback_symbol: ::abi_stable::std_types::RString::from(#callback),
+                }
+            }
+        })
+        .collect();
+
     // Generate interceptor registration if any interceptor hooks are present
     let interceptor_registration = if pre_handle_fn.is_some() || after_completion_fn.is_some() {
         let pre_sym = if pre_handle_fn.is_some() {
@@ -406,7 +520,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         quote! {}
     };
 
-    let host_api_exports = if args.api == "0.4" {
+    let host_api_exports = if matches!(args.api.as_str(), "0.4" | "0.5") {
         quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn qimen_plugin_bind_host_api_v1(
@@ -418,6 +532,18 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn qimen_plugin_unbind_host_api_v1() -> i32 {
                 ::abi_stable_host_api::unbind_host_api_v1()
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let webhook_descriptor_export = if args.api == "0.5" {
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn qimen_plugin_webhook_descriptors_v1(
+            ) -> ::abi_stable::std_types::RVec<::abi_stable_host_api::WebhookDescriptorEntry> {
+                vec![#(#webhook_registrations),*].into_iter().collect()
             }
         }
     } else {
@@ -440,6 +566,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         }
 
         #host_api_exports
+        #webhook_descriptor_export
 
         /// Drain all queued `SendAction`s produced by `BotApi` / `SendBuilder`
         /// during the most recent FFI callback.
@@ -529,9 +656,59 @@ mod tests {
     }
 
     #[test]
+    fn api_05_generates_webhook_descriptors_and_host_exports() {
+        let args =
+            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.5""#)
+                .expect("plugin args");
+        let module = syn::parse_str::<ItemMod>(
+            r#"
+            mod fixture {
+                #[webhook(method = "post", path = "/events")]
+                fn events(_req: &WebhookRequest) -> WebhookResponse {
+                    WebhookResponse::text(200, "ok")
+                }
+            }
+            "#,
+        )
+        .expect("module");
+        let output = expand_dynamic_plugin(args, module)
+            .expect("expand")
+            .to_string();
+
+        assert!(output.contains("with_api_version"));
+        assert!(output.contains("0.5"));
+        assert!(output.contains("qimen_plugin_webhook_descriptors_v1"));
+        assert!(output.contains("WebhookDescriptorEntry"));
+        assert!(output.contains("catch_unwind"));
+        assert!(output.contains("POST"));
+        assert!(output.contains("/events"));
+        assert!(output.contains("qimen_plugin_bind_host_api_v1"));
+    }
+
+    #[test]
+    fn webhook_requires_api_05() {
+        let args =
+            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.4""#)
+                .expect("plugin args");
+        let module = syn::parse_str::<ItemMod>(
+            r#"
+            mod fixture {
+                #[webhook(method = "POST", path = "/events")]
+                fn events(_req: &WebhookRequest) -> WebhookResponse {
+                    WebhookResponse::text(200, "ok")
+                }
+            }
+            "#,
+        )
+        .expect("module");
+
+        assert!(expand_dynamic_plugin(args, module).is_err());
+    }
+
+    #[test]
     fn unsupported_api_is_rejected() {
         let result =
-            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.5""#);
+            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.6""#);
         assert!(result.is_err());
     }
 }

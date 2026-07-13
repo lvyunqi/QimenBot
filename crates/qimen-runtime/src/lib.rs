@@ -11,6 +11,7 @@ pub mod permission;
 pub mod plugin_acl;
 pub mod proactive_send;
 pub mod rate_limiter;
+pub mod webhook_gateway;
 
 use self::command_dispatch::{CommandDispatchSignal, CommandDispatcher, render_help_text};
 use self::dynamic_runtime::{DynamicPluginRuntime, DynamicResponse};
@@ -19,6 +20,7 @@ use self::onebot11_dispatch::{OneBotSystemDispatchSignal, OneBotSystemDispatcher
 use self::permission::PermissionResolver;
 use self::proactive_send::{ProactiveSendHub, ProactiveSendSettings};
 use self::rate_limiter::TokenBucketLimiter;
+use self::webhook_gateway::WebhookGateway;
 use crate::dedup::MessageDedup;
 use crate::group_event_filter::GroupEventFilter;
 use crate::plugin_acl::PluginAclManager;
@@ -28,7 +30,8 @@ use qimen_adapter_qqbot::QqBotAdapter;
 use qimen_config::{AppConfig, qq_official_intents_value};
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
-    DynamicCommandDescriptor, DynamicInterceptorDescriptor, HostPluginReport, load_plugin_state,
+    DynamicCommandDescriptor, DynamicInterceptorDescriptor, DynamicPluginReportEntry,
+    HostPluginReport, load_plugin_state,
 };
 use qimen_message::Message;
 use qimen_plugin_api::{
@@ -431,6 +434,7 @@ pub struct Runtime {
     rate_limiters: Vec<TokenBucketLimiter>,
     qqbot_send_backoff_until: std::sync::Mutex<HashMap<String, Instant>>,
     proactive_send_hub: ProactiveSendHub,
+    webhook_gateway: Option<WebhookGateway>,
     pub dedup: Arc<MessageDedup>,
     pub group_event_filter: Arc<GroupEventFilter>,
     pub plugin_acl: Arc<PluginAclManager>,
@@ -460,6 +464,7 @@ impl Default for Runtime {
                     offline_ttl: Duration::from_secs(60),
                 },
             ),
+            webhook_gateway: None,
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
@@ -472,6 +477,9 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         // boot future 被取消时无法执行异步收尾；析构至少先拒绝新请求，并安全解绑后再卸载动态库。
         self.proactive_send_hub.shutdown();
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.pause_and_wait();
+        }
         if let Ok(mut runtime) = self.dynamic_runtime.lock() {
             runtime.unload_all();
         }
@@ -569,6 +577,14 @@ impl Runtime {
             interceptor_chain.add(interceptor.clone());
         }
 
+        let dynamic_runtime = Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new()));
+        let webhook_gateway = config.official_host.webhook.enabled.then(|| {
+            WebhookGateway::new(
+                config.official_host.webhook.clone(),
+                Arc::clone(&dynamic_runtime),
+            )
+        });
+
         Self {
             bots,
             command_plugins: plugins.command_plugins,
@@ -576,7 +592,7 @@ impl Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
-            dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
+            dynamic_runtime,
             dynamic_plugin_timeout: Duration::from_secs(
                 config.official_host.dynamic_plugin_timeout_secs,
             ),
@@ -585,6 +601,7 @@ impl Runtime {
             rate_limiters,
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
             proactive_send_hub,
+            webhook_gateway,
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
@@ -648,7 +665,10 @@ impl Runtime {
         self.proactive_send_hub.start_workers();
         let result = self.boot_inner().await;
 
-        // 先拒绝主动发送并等待宿主 worker 收尾，再让插件停止后台线程、解绑 Host API 并卸载动态库。
+        // Stop accepting webhook and proactive-send work before unloading plugin code.
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.pause_and_wait();
+        }
         self.proactive_send_hub.shutdown_and_wait().await;
         if let Ok(mut runtime) = self.dynamic_runtime.lock() {
             runtime.unload_all();
@@ -660,124 +680,27 @@ impl Runtime {
     }
 
     async fn boot_inner(&self) -> Result<()> {
-        // Call plugin init for all dynamic plugins
-        {
-            let report_clone = {
-                let report_guard = self.host_plugin_report.read().unwrap();
-                report_guard.clone()
-            };
-            if let Some(report) = report_clone.as_ref() {
-                // Use 2x timeout for init since initialization is typically slower
-                let init_timeout = self.dynamic_plugin_timeout * 2;
-
-                for entry in &report.dynamic_plugins {
-                    // Load plugin config from config/plugins/<plugin_id>.toml
-                    let config_path = format!("config/plugins/{}.toml", entry.plugin_id);
-                    let config_json = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
-                        // Parse TOML → serde_json::Value → JSON string
-                        match toml_str.parse::<toml::Value>() {
-                            Ok(toml_val) => {
-                                let json_val = toml_to_json(&toml_val);
-                                serde_json::to_string(&json_val).unwrap_or_default()
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    plugin = %entry.plugin_id,
-                                    path = %config_path,
-                                    error = %e,
-                                    "failed to parse plugin config TOML"
-                                );
-                                String::new()
-                            }
-                        }
-                    } else {
-                        String::new()
-                    };
-
-                    let plugin_dir = std::path::Path::new(&entry.path)
-                        .parent()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default();
-
-                    // Phase 1: get per-library handle
-                    let lib_handle = {
-                        let mut drt = self.dynamic_runtime.lock().map_err(|_| {
-                            QimenError::Runtime("dynamic runtime lock poisoned".to_string())
-                        })?;
-                        let handle = drt.get_library(&entry.path)?;
-                        if entry.api_version == "0.4"
-                            && let Err(err) = drt.bind_host_api_v1(
-                                &handle,
-                                &entry.path,
-                                self.proactive_send_hub.clone(),
-                            )
-                        {
-                            tracing::error!(
-                                plugin = %entry.plugin_id,
-                                path = %entry.path,
-                                error = %err,
-                                "dynamic plugin Host API v1 bind failed"
-                            );
-                            continue;
-                        }
-                        handle
-                    }; // outer lock released
-
-                    // Phase 2: spawn_blocking + timeout for init
-                    let path = entry.path.clone();
-                    let plugin_id = entry.plugin_id.clone();
-                    let plugin_dir_clone = plugin_dir.clone();
-                    let config_json_clone = config_json.clone();
-
-                    let init_result = tokio::time::timeout(
-                        init_timeout,
-                        tokio::task::spawn_blocking(move || {
-                            DynamicPluginRuntime::execute_init_on_handle(
-                                &lib_handle,
-                                &path,
-                                &plugin_id,
-                                &config_json_clone,
-                                &plugin_dir_clone,
-                                ".",
-                            )
-                        }),
-                    )
-                    .await;
-
-                    match init_result {
-                        Ok(Ok(Ok(()))) => {
-                            tracing::info!(
-                                plugin = %entry.plugin_id,
-                                "dynamic plugin init succeeded"
-                            );
-                        }
-                        Ok(Ok(Err(e))) => {
-                            tracing::error!(
-                                plugin = %entry.plugin_id,
-                                error = %e,
-                                "dynamic plugin init failed"
-                            );
-                        }
-                        Ok(Err(join_err)) => {
-                            tracing::error!(
-                                plugin = %entry.plugin_id,
-                                error = %join_err,
-                                "dynamic plugin init task panicked"
-                            );
-                        }
-                        Err(_) => {
-                            tracing::error!(
-                                plugin = %entry.plugin_id,
-                                timeout_secs = init_timeout.as_secs(),
-                                "dynamic plugin init timed out"
-                            );
-                            if let Ok(mut drt) = self.dynamic_runtime.lock() {
-                                drt.record_timeout(&entry.path);
-                            }
-                        }
-                    }
-                }
+        let dynamic_entries = self
+            .host_plugin_report
+            .read()
+            .map_err(|_| QimenError::Runtime("host plugin report lock poisoned".to_string()))?
+            .as_ref()
+            .map(|report| report.dynamic_plugins.clone())
+            .unwrap_or_default();
+        let initialized_entries = self.initialize_dynamic_plugins(&dynamic_entries).await?;
+        if initialized_entries.len() != dynamic_entries.len() {
+            let mut report = self
+                .host_plugin_report
+                .write()
+                .map_err(|_| QimenError::Runtime("host plugin report lock poisoned".to_string()))?;
+            if let Some(report) = report.as_mut() {
+                report.dynamic_plugins = initialized_entries.clone();
             }
+        }
+
+        if let Some(gateway) = &self.webhook_gateway {
+            let count = gateway.install_entries(&initialized_entries)?;
+            tracing::info!(routes = count, "webhook gateway routes installed");
         }
 
         // Spawn periodic dedup cleanup task
@@ -809,12 +732,17 @@ impl Runtime {
             bot_futures.push(self.run_bot(bot, &self.rate_limiters[idx]));
         }
 
-        if bot_futures.is_empty() {
+        if bot_futures.is_empty() && self.webhook_gateway.is_none() {
             tracing::warn!("no enabled bot transport loops were started");
             return Ok(());
         }
 
-        futures_util::future::try_join_all(bot_futures).await?;
+        let bots = futures_util::future::try_join_all(bot_futures);
+        if let Some(gateway) = &self.webhook_gateway {
+            tokio::try_join!(async { bots.await.map(|_| ()) }, gateway.serve())?;
+        } else {
+            bots.await?;
+        }
         Ok(())
     }
 
@@ -970,10 +898,131 @@ impl Runtime {
         Ok(command_dispatcher)
     }
 
+    async fn initialize_dynamic_plugins(
+        &self,
+        entries: &[DynamicPluginReportEntry],
+    ) -> Result<Vec<DynamicPluginReportEntry>> {
+        let mut initialized = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if self.initialize_dynamic_plugin(entry).await? {
+                initialized.push(entry.clone());
+            }
+        }
+        Ok(initialized)
+    }
+
+    async fn initialize_dynamic_plugin(&self, entry: &DynamicPluginReportEntry) -> Result<bool> {
+        let config_path = format!("config/plugins/{}.toml", entry.plugin_id);
+        let config_json = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
+            match toml_str.parse::<toml::Value>() {
+                Ok(toml_val) => serde_json::to_string(&toml_to_json(&toml_val)).unwrap_or_default(),
+                Err(err) => {
+                    tracing::warn!(
+                        plugin = %entry.plugin_id,
+                        path = %config_path,
+                        error = %err,
+                        "failed to parse plugin config TOML"
+                    );
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+        let plugin_dir = std::path::Path::new(&entry.path)
+            .parent()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let lib_handle = {
+            let mut runtime = self
+                .dynamic_runtime
+                .lock()
+                .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
+            let handle = match runtime.get_library(&entry.path) {
+                Ok(handle) => handle,
+                Err(err) => {
+                    tracing::error!(
+                        plugin = %entry.plugin_id,
+                        path = %entry.path,
+                        error = %err,
+                        "dynamic plugin load failed"
+                    );
+                    return Ok(false);
+                }
+            };
+            if matches!(entry.api_version.as_str(), "0.4" | "0.5")
+                && let Err(err) =
+                    runtime.bind_host_api_v1(&handle, &entry.path, self.proactive_send_hub.clone())
+            {
+                tracing::error!(
+                    plugin = %entry.plugin_id,
+                    path = %entry.path,
+                    error = %err,
+                    "dynamic plugin Host API v1 bind failed"
+                );
+                return Ok(false);
+            }
+            handle
+        };
+
+        let path = entry.path.clone();
+        let plugin_id = entry.plugin_id.clone();
+        let timeout = self.dynamic_plugin_timeout * 2;
+        let result = tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || {
+                DynamicPluginRuntime::execute_init_on_handle(
+                    &lib_handle,
+                    &path,
+                    &plugin_id,
+                    &config_json,
+                    &plugin_dir,
+                    ".",
+                )
+            }),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(Ok(()))) => {
+                tracing::info!(plugin = %entry.plugin_id, "dynamic plugin init succeeded");
+                Ok(true)
+            }
+            Ok(Ok(Err(err))) => {
+                tracing::error!(
+                    plugin = %entry.plugin_id,
+                    error = %err,
+                    "dynamic plugin init failed"
+                );
+                Ok(false)
+            }
+            Ok(Err(err)) => {
+                tracing::error!(
+                    plugin = %entry.plugin_id,
+                    error = %err,
+                    "dynamic plugin init task panicked"
+                );
+                Ok(false)
+            }
+            Err(_) => {
+                tracing::error!(
+                    plugin = %entry.plugin_id,
+                    timeout_secs = timeout.as_secs(),
+                    "dynamic plugin init timed out"
+                );
+                if let Ok(mut runtime) = self.dynamic_runtime.lock() {
+                    runtime.record_timeout(&entry.path);
+                }
+                Ok(false)
+            }
+        }
+    }
+
     /// Re-scan the plugin_bin_dir, unload all cached libraries, and update the
     /// host_plugin_report with freshly discovered dynamic plugins.
     /// Returns the number of dynamic plugins found.
-    fn rescan_dynamic_plugins(&self) -> Result<usize> {
+    async fn rescan_dynamic_plugins(&self) -> Result<usize> {
         let dir = match &self.plugin_bin_dir {
             Some(d) => d.clone(),
             None => return Ok(0),
@@ -981,25 +1030,50 @@ impl Runtime {
 
         tracing::info!(dir = %dir, "rescanning dynamic plugins");
 
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.pause_and_wait();
+        }
+
         // Unload all cached libraries so stale handles are dropped
         self.dynamic_runtime
             .lock()
             .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
             .unload_all();
 
-        let new_entries = dynamic_runtime::scan_dynamic_plugins(&dir)?;
-        let count = new_entries.len();
+        let new_entries = match dynamic_runtime::scan_dynamic_plugins(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                if let Some(gateway) = &self.webhook_gateway {
+                    let _ = gateway.install_entries(&[]);
+                }
+                return Err(err);
+            }
+        };
+        let initialized_entries = match self.initialize_dynamic_plugins(&new_entries).await {
+            Ok(entries) => entries,
+            Err(err) => {
+                if let Some(gateway) = &self.webhook_gateway {
+                    let _ = gateway.install_entries(&[]);
+                }
+                return Err(err);
+            }
+        };
+        let count = initialized_entries.len();
+
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.install_entries(&initialized_entries)?;
+        }
 
         // Update the report, preserving non-dynamic fields
         let mut report_guard = self.host_plugin_report.write().unwrap();
         if let Some(report) = report_guard.as_mut() {
-            report.dynamic_plugins = new_entries;
+            report.dynamic_plugins = initialized_entries;
         } else {
             *report_guard = Some(HostPluginReport {
                 builtin_modules: Vec::new(),
                 configured_plugins: Vec::new(),
                 persisted_states: std::collections::BTreeMap::new(),
-                dynamic_plugins: new_entries,
+                dynamic_plugins: initialized_entries,
             });
         }
 
@@ -1922,7 +1996,7 @@ impl Runtime {
                 command_dispatcher,
             )?)),
             Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsReload)) => {
-                match self.rescan_dynamic_plugins() {
+                match self.rescan_dynamic_plugins().await {
                     Ok(count) => {
                         let reply_msg = Message::text(format!(
                             "dynamic plugins reloaded: {} plugin(s) discovered, dispatchers will be rebuilt",

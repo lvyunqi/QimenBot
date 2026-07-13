@@ -23,6 +23,8 @@ pub struct DynamicPluginReportEntry {
     pub routes: Vec<DynamicRouteEntry>,
     /// Interceptor entries registered by this plugin.
     pub interceptors: Vec<DynamicInterceptorEntry>,
+    /// API 0.5 exact HTTP webhook routes exported by this plugin.
+    pub webhooks: Vec<DynamicWebhookEntry>,
 
     // ── v0.1 legacy fields (kept for backward compatibility) ──
     pub command_name: String,
@@ -63,6 +65,24 @@ pub struct DynamicRouteEntry {
 pub struct DynamicInterceptorEntry {
     pub pre_handle_symbol: String,
     pub after_completion_symbol: String,
+}
+
+/// A framework-hosted HTTP webhook exported by an API 0.5 dynamic plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicWebhookEntry {
+    pub method: String,
+    pub path: String,
+    pub callback_symbol: String,
+}
+
+/// Runtime-ready webhook descriptor including its owning library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicWebhookDescriptor {
+    pub plugin_id: String,
+    pub library_path: String,
+    pub method: String,
+    pub path: String,
+    pub callback_symbol: String,
 }
 
 /// Descriptor for a dynamic plugin interceptor, used by the runtime.

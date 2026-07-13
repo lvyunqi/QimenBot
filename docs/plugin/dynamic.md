@@ -10,6 +10,7 @@
 | API 访问 | 完整（async、OneBotActionClient 等） | FFI 接口（同步、C ABI） |
 | 消息构建 | `Message` + `MessageBuilder` | `ReplyBuilder` / `SendBuilder` / JSON 段 |
 | 主动发送 | `OneBotActionClient::send_*` | `BotApi::send_*` / `SendBuilder`（队列模式） |
+| HTTP Webhook | 由静态模块自行启动服务 | API 0.5 `#[webhook]`，由框架 Gateway 统一托管 |
 | 拦截器 | `MessageEventInterceptor` trait（async） | `#[pre_handle]` / `#[after_completion]`（同步 FFI） |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 生命周期 | `on_load` / `on_unload` | `#[init]` / `#[shutdown]` |
@@ -34,7 +35,7 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 | [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.10` | `#[dynamic_plugin]` 及其内部属性宏 |
 
 ::: info 两套版本不要混淆
-crate 的发布版本当前是 `0.1.10`；插件描述符中的最新动态插件 API 版本是 `0.4`。需要实时主动推送时必须显式声明 `api = "0.4"`；未声明 `api` 时过程宏仍自动生成 API `0.3` 插件。宿主同时兼容 API `0.1`、`0.2`、`0.3` 和 `0.4`。
+crates.io 当前发布版本是 `0.1.10`，支持到动态插件 API `0.4`。QimenBot v0.1.11 源码新增 API `0.5` Webhook；在 `0.1.11` crates 发布前，需要使用本仓库的本地 `path` 依赖。未声明 `api` 时过程宏仍自动生成 API `0.3` 插件。v0.1.11 宿主兼容 API `0.1` 至 `0.5`。
 :::
 
 ### 第 1 步：创建项目
@@ -875,4 +876,8 @@ fn notify(req: &CommandRequest) -> CommandResponse {
 
 ::: info API 0.4 实时主动推送
 QimenBot v0.1.10 支持动态插件后台线程实时发送，并要求显式指定 bot_id。完整接口、目标映射、返回状态和安全卸载示例见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。API 0.1 至 0.3 的回调后 flush 行为保持兼容。
+:::
+
+::: info API 0.5 Webhook Gateway
+QimenBot v0.1.11 支持 `#[webhook(method = "POST", path = "/events")]`。宿主统一提供 HTTP 监听、插件 URL 命名空间、Bearer token、body/并发/超时限制和热重载生命周期保护。完整配置、请求响应类型和安全说明见 [API 0.5 Webhook Gateway](/advanced/dynamic-webhook-v05)。
 :::

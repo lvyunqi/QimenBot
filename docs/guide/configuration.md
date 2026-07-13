@@ -316,6 +316,19 @@ plugin_modules  = ["example-plugin"]
 plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
 
+[official_host.proactive_send]
+queue_capacity = 256
+offline_ttl_secs = 60
+
+[official_host.webhook]
+enabled = false
+bind = "127.0.0.1:8088"
+base_path = "/webhooks"
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+max_in_flight = 64
+access_token = ""
+
 [[bots]]
 id        = "qq-main"
 protocol  = "onebot11"
@@ -349,3 +362,20 @@ offline_ttl_secs = 60
 ~~~
 
 queue_capacity 是每个启用 Bot 的独立队列容量，必须大于 0。offline_ttl_secs 是离线请求等待对应 Bot 上线的时间；设置为 0 会在离线时立即丢弃。详见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
+
+## 动态插件 Webhook Gateway
+
+```toml
+[official_host.webhook]
+enabled = false
+bind = "127.0.0.1:8088"
+base_path = "/webhooks"
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+max_in_flight = 64
+access_token = ""
+```
+
+网关默认关闭并监听本机。启用后，API 0.5 插件声明的局部路由会暴露为 `{base_path}/{plugin_id}{path}`。例如插件 `build-events` 的 `POST /events` 对应 `POST /webhooks/build-events/events`。
+
+`max_body_bytes`、`request_timeout_ms` 和 `max_in_flight` 必须大于 0。`access_token` 非空时，所有请求都必须携带完全匹配的 `Authorization: Bearer <token>`。第三方服务自己的 HMAC 和重放保护由插件验证。生产环境建议保持回环监听并由反向代理提供 TLS。详见 [API 0.5 Webhook Gateway](/advanced/dynamic-webhook-v05)。

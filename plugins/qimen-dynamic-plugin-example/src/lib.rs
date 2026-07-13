@@ -1,8 +1,8 @@
-//! QimenBot dynamic plugin example using API 0.4.
+//! QimenBot dynamic plugin example using API 0.5.
 //!
 //! This independent cdylib demonstrates commands, lifecycle hooks, interceptors,
-//! system-event routes, the legacy callback-flush send path, and real-time sends
-//! from a background thread.
+//! system-event routes, HTTP webhooks, the legacy callback-flush send path, and
+//! real-time sends from a background thread.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +12,7 @@ use std::time::Duration;
 use abi_stable_host_api::{
     BotApi, CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
     InterceptorResponse, NoticeRequest, NoticeResponse, PluginInitConfig, PluginInitResult,
-    SendBuilder, SendEnqueueStatus,
+    SendBuilder, SendEnqueueStatus, WebhookRequest, WebhookResponse,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
@@ -52,7 +52,7 @@ fn parse_background_push(config_json: &str) -> Option<BackgroundPushConfig> {
         message: push
             .get("message")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or("API 0.4 background push")
+            .unwrap_or("API 0.5 background push")
             .to_string(),
         interval: Duration::from_secs(
             push.get("interval_secs")
@@ -93,7 +93,7 @@ fn try_send_target(
     }
 }
 
-#[dynamic_plugin(id = "dynamic-example", version = "0.1.0", api = "0.4")]
+#[dynamic_plugin(id = "dynamic-example", version = "0.1.0", api = "0.5")]
 mod example {
     use super::*;
 
@@ -185,7 +185,7 @@ mod example {
     /// Real-time send with an explicit bot and protocol-neutral target.
     #[command(
         name = "proactive-send",
-        description = "Send immediately through API 0.4",
+        description = "Send immediately through API 0.5",
         category = "example",
         role = "admin"
     )]
@@ -200,6 +200,27 @@ mod example {
         let guild_id = (parts[3] != "-").then_some(parts[3]);
         let status = try_send_target(parts[0], parts[1], parts[2], guild_id, parts[4]);
         CommandResponse::text(&format!("Host enqueue status: {status:?}"))
+    }
+
+    /// Receive a framework-hosted HTTP webhook at
+    /// `/webhooks/dynamic-example/events` with the default gateway base path.
+    #[webhook(method = "POST", path = "/events")]
+    fn receive_event(req: &WebhookRequest) -> WebhookResponse {
+        let payload = serde_json::json!({
+            "accepted": true,
+            "method": req.method.as_str(),
+            "path": req.path.as_str(),
+            "query": req.query.as_str(),
+            "remote_addr": req.remote_addr.as_str(),
+            "headers": serde_json::from_str::<serde_json::Value>(req.headers_json.as_str())
+                .unwrap_or_else(|_| serde_json::json!({})),
+            "body": String::from_utf8_lossy(req.body.as_slice()),
+        })
+        .to_string();
+
+        WebhookResponse::text(200, &payload).with_headers_json(
+            r#"{"content-type":"application/json; charset=utf-8","x-qimen-plugin":"dynamic-example"}"#,
+        )
     }
 
     #[pre_handle]

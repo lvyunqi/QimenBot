@@ -11,6 +11,8 @@
 //! - **0.3** — Extended `CommandRequest` with sender nickname, message ID, and
 //!   timestamp. Added `ReplyBuilder` for fluent rich-media construction.
 //!   Added `PluginInitConfig` / `PluginInitResult` lifecycle hooks.
+//! - **0.4** - Added the versioned host API binding and real-time proactive sends.
+//! - **0.5** - Added framework-hosted HTTP webhook descriptors and callbacks.
 
 use abi_stable::std_types::{RString, RVec};
 use std::{
@@ -21,12 +23,12 @@ use std::{
 /// Current plugin API version. Dynamic plugins must declare the same version
 /// to be loaded by the host.
 pub fn expected_api_version() -> RString {
-    RString::from("0.4")
+    RString::from("0.5")
 }
 
-/// Also accept legacy 0.1-0.3 plugins for backward compatibility.
+/// Also accept legacy 0.1-0.4 plugins for backward compatibility.
 pub fn is_compatible_api_version(version: &str) -> bool {
-    matches!(version, "0.1" | "0.2" | "0.3" | "0.4")
+    matches!(version, "0.1" | "0.2" | "0.3" | "0.4" | "0.5")
 }
 
 // ─── Action constants ───────────────────────────────────────────────────
@@ -373,6 +375,71 @@ pub struct RouteDescriptorEntry {
     pub route: RString,
     /// Callback symbol name.
     pub callback_symbol: RString,
+}
+
+// Webhook descriptors are exported from a separate symbol instead of being
+// appended to PluginDescriptor. Keeping PluginDescriptor's layout unchanged is
+// required so hosts can continue loading API 0.1-0.4 dynamic libraries.
+
+/// Describes one exact HTTP webhook route exported by an API 0.5 plugin.
+#[repr(C)]
+#[derive(Clone)]
+pub struct WebhookDescriptorEntry {
+    /// Uppercase HTTP method such as `POST` or `GET`.
+    pub method: RString,
+    /// Plugin-local absolute path such as `/events`.
+    pub path: RString,
+    /// Callback symbol in the dynamic library.
+    pub callback_symbol: RString,
+}
+
+/// Host-owned HTTP request passed to an API 0.5 webhook callback.
+#[repr(C)]
+pub struct WebhookRequest {
+    pub method: RString,
+    pub path: RString,
+    /// Raw query string without the leading `?`.
+    pub query: RString,
+    /// JSON object whose values are strings or arrays of strings.
+    pub headers_json: RString,
+    pub body: RVec<u8>,
+    /// Socket peer address when available.
+    pub remote_addr: RString,
+}
+
+/// HTTP response returned by an API 0.5 webhook callback.
+#[repr(C)]
+pub struct WebhookResponse {
+    pub status_code: u16,
+    /// JSON object containing response header string values.
+    pub headers_json: RString,
+    pub body: RVec<u8>,
+}
+
+impl WebhookResponse {
+    /// Build a response with an empty header object.
+    pub fn new(status_code: u16, body: impl Into<RVec<u8>>) -> Self {
+        Self {
+            status_code,
+            headers_json: RString::from("{}"),
+            body: body.into(),
+        }
+    }
+
+    /// Build a UTF-8 text response.
+    pub fn text(status_code: u16, body: &str) -> Self {
+        Self {
+            status_code,
+            headers_json: RString::from(r#"{"content-type":"text/plain; charset=utf-8"}"#),
+            body: body.as_bytes().iter().copied().collect(),
+        }
+    }
+
+    /// Attach a JSON object of response headers.
+    pub fn with_headers_json(mut self, headers_json: &str) -> Self {
+        self.headers_json = RString::from(headers_json);
+        self
+    }
 }
 
 // ─── Plugin descriptor ──────────────────────────────────────────────────
@@ -1036,12 +1103,20 @@ mod tests {
     }
 
     #[test]
-    fn api_04_is_current_and_legacy_versions_remain_compatible() {
-        assert_eq!(expected_api_version().as_str(), "0.4");
-        for version in ["0.1", "0.2", "0.3", "0.4"] {
+    fn api_05_is_current_and_legacy_versions_remain_compatible() {
+        assert_eq!(expected_api_version().as_str(), "0.5");
+        for version in ["0.1", "0.2", "0.3", "0.4", "0.5"] {
             assert!(is_compatible_api_version(version));
         }
-        assert!(!is_compatible_api_version("0.5"));
+        assert!(!is_compatible_api_version("0.6"));
+    }
+
+    #[test]
+    fn webhook_text_response_owns_utf8_body_and_content_type() {
+        let response = WebhookResponse::text(202, "accepted");
+        assert_eq!(response.status_code, 202);
+        assert_eq!(response.body.as_slice(), b"accepted");
+        assert!(response.headers_json.contains("text/plain"));
     }
 
     #[test]

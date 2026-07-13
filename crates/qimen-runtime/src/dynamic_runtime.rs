@@ -5,19 +5,20 @@ use abi_stable_host_api::{
     ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY, CommandRequest, CommandResponse,
     DynamicActionResponse, HOST_API_V1_ABI_VERSION, HostApiV1, InterceptorRequest,
     InterceptorResponse, NoticeRequest, NoticeResponse, PluginDescriptor, PluginInitConfig,
-    PluginInitResult, SendAction, SendEnqueueStatus, is_compatible_api_version,
+    PluginInitResult, SendAction, SendEnqueueStatus, WebhookDescriptorEntry, WebhookRequest,
+    WebhookResponse, is_compatible_api_version,
 };
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
     DynamicCommandDescriptor, DynamicCommandEntry, DynamicInterceptorDescriptor,
     DynamicInterceptorEntry, DynamicMetaDescriptor, DynamicNoticeDescriptor,
     DynamicPluginReportEntry, DynamicRequestDescriptor, DynamicRouteEntry,
-    DynamicRuntimeHealthEntry,
+    DynamicRuntimeHealthEntry, DynamicWebhookDescriptor, DynamicWebhookEntry,
 };
 use qimen_message::Message;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_ERROR_HISTORY: usize = 10;
@@ -36,6 +37,7 @@ struct LibraryMeta {
 pub(crate) struct LoadedLibrary {
     library: libloading::Library,
     meta: Mutex<LibraryMeta>,
+    lifecycle: RwLock<()>,
 }
 
 // SAFETY: `libloading::Library` is `Send` but not `Sync`. However, the only
@@ -66,6 +68,14 @@ pub enum DynamicResponse {
     Approve(Option<String>),
     /// Reject a friend/group request.
     Reject(Option<String>),
+}
+
+/// Host-owned response copied before an API 0.5 webhook callback returns.
+pub(crate) struct OwnedWebhookResponse {
+    pub status_code: u16,
+    pub headers_json: String,
+    pub body: Vec<u8>,
+    pub queued_sends: Vec<SendAction>,
 }
 
 impl DynamicPluginRuntime {
@@ -418,6 +428,64 @@ impl DynamicPluginRuntime {
         })
     }
 
+    /// Execute an API 0.5 webhook callback and copy all plugin-owned buffers.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_webhook_on_handle(
+        handle: &LibraryHandle,
+        descriptor: &DynamicWebhookDescriptor,
+        method: &str,
+        path: &str,
+        query: &str,
+        headers_json: &str,
+        body: Vec<u8>,
+        remote_addr: &str,
+    ) -> Result<OwnedWebhookResponse> {
+        let callback = descriptor.callback_symbol.clone();
+        let library_path = descriptor.library_path.clone();
+        let method = method.to_string();
+        let path = path.to_string();
+        let query = query.to_string();
+        let headers_json = headers_json.to_string();
+        let remote_addr = remote_addr.to_string();
+
+        Self::with_handle(handle, &library_path.clone(), move |library| unsafe {
+            let symbol: libloading::Symbol<
+                unsafe extern "C" fn(&WebhookRequest) -> WebhookResponse,
+            > = library.get(callback.as_bytes()).map_err(|err| {
+                QimenError::Runtime(format!(
+                    "failed to load webhook callback '{}' from '{}': {err}",
+                    callback, library_path
+                ))
+            })?;
+            let request = WebhookRequest {
+                method: RString::from(method),
+                path: RString::from(path),
+                query: RString::from(query),
+                headers_json: RString::from(headers_json),
+                body: body.into_iter().collect(),
+                remote_addr: RString::from(remote_addr),
+            };
+            let response =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol(&request)))
+                    .map_err(|panic_info| {
+                        QimenError::Runtime(format!(
+                            "webhook callback '{}' in '{}' panicked: {}",
+                            callback,
+                            library_path,
+                            extract_panic_message(&panic_info)
+                        ))
+                    })?;
+            let owned = OwnedWebhookResponse {
+                status_code: response.status_code,
+                headers_json: response.headers_json.to_string(),
+                body: response.body.iter().copied().collect(),
+                queued_sends: flush_sends_from_library(library),
+            };
+            drop(response);
+            Ok(owned)
+        })
+    }
+
     // ─── Handle-based helper ────────────────────────────────────────────
 
     /// Check circuit breaker, execute an operation on the library, and update
@@ -447,6 +515,12 @@ impl DynamicPluginRuntime {
         } // meta lock released
 
         // Phase 2: execute FFI — NO lock held, concurrent calls allowed
+        let _lifecycle = handle.lifecycle.read().map_err(|_| {
+            QimenError::Runtime(format!(
+                "per-library lifecycle lock poisoned for '{}'",
+                path
+            ))
+        })?;
         let result = operation(&handle.library);
 
         // Phase 3: briefly lock metadata to update success/failure counters
@@ -655,20 +729,13 @@ impl DynamicPluginRuntime {
 
     /// Call the optional `qimen_plugin_shutdown` lifecycle hook before unloading.
     pub fn call_plugin_shutdown(&mut self, library_path: &str) -> bool {
-        if let Some(handle) = self.libraries.get(library_path) {
-            unsafe {
-                if let Ok(symbol) = handle
-                    .library
-                    .get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown")
-                {
-                    return std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        symbol();
-                    }))
-                    .is_ok();
-                }
-            }
-        }
-        true
+        let Some(handle) = self.libraries.get(library_path).cloned() else {
+            return true;
+        };
+        Self::with_handle(&handle, library_path, |library| {
+            Self::shutdown_library_unlocked(library, library_path)
+        })
+        .is_ok()
     }
 
     /// Call the API 0.4 Host API unbind hook and release the host context.
@@ -683,33 +750,8 @@ impl DynamicPluginRuntime {
                 library_path
             ))
         })?;
-        let path_for_error = library_path.to_string();
-        Self::with_handle(&handle, library_path, move |library| unsafe {
-            let symbol: libloading::Symbol<unsafe extern "C" fn() -> i32> = library
-                .get(b"qimen_plugin_unbind_host_api_v1")
-                .map_err(|err| {
-                    QimenError::Runtime(format!(
-                        "failed to load Host API unbind symbol from '{}': {err}",
-                        path_for_error
-                    ))
-                })?;
-
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol()));
-            let code = result.map_err(|_| {
-                QimenError::Runtime(format!(
-                    "plugin '{}' panicked while unbinding Host API v1",
-                    path_for_error
-                ))
-            })?;
-            let status = SendEnqueueStatus::from_code(code);
-            if status.is_accepted() {
-                Ok(())
-            } else {
-                Err(QimenError::Runtime(format!(
-                    "plugin '{}' rejected Host API v1 unbind with status {:?}",
-                    path_for_error, status
-                )))
-            }
+        Self::with_handle(&handle, library_path, |library| {
+            Self::unbind_host_api_v1_unlocked(library, library_path)
         })?;
 
         self.host_api_bindings.remove(library_path);
@@ -718,14 +760,29 @@ impl DynamicPluginRuntime {
 
     /// Unload a specific library by path (for hot reload).
     pub fn unload_library(&mut self, path: &str) {
-        if !self.call_plugin_shutdown(path) {
+        let Some(handle) = self.libraries.get(path).cloned() else {
+            self.host_api_bindings.remove(path);
+            return;
+        };
+        let lifecycle = match handle.lifecycle.write() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!(path = %path, "dynamic plugin lifecycle lock poisoned");
+                return;
+            }
+        };
+
+        if let Err(err) = Self::shutdown_library_unlocked(&handle.library, path) {
             tracing::error!(
                 path = %path,
+                error = %err,
                 "dynamic plugin shutdown panicked; keeping library resident for safety"
             );
             return;
         }
-        if let Err(err) = self.unbind_host_api_v1(path) {
+        if self.host_api_bindings.contains_key(path)
+            && let Err(err) = Self::unbind_host_api_v1_unlocked(&handle.library, path)
+        {
             tracing::error!(
                 path = %path,
                 error = %err,
@@ -733,7 +790,53 @@ impl DynamicPluginRuntime {
             );
             return;
         }
+        self.host_api_bindings.remove(path);
+        drop(lifecycle);
         self.libraries.remove(path);
+    }
+
+    fn shutdown_library_unlocked(library: &libloading::Library, path: &str) -> Result<()> {
+        unsafe {
+            let Ok(symbol) = library.get::<unsafe extern "C" fn()>(b"qimen_plugin_shutdown") else {
+                return Ok(());
+            };
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol())).map_err(|_| {
+                QimenError::Runtime(format!("plugin '{}' panicked during shutdown", path))
+            })?;
+        }
+        Ok(())
+    }
+
+    fn unbind_host_api_v1_unlocked(
+        library: &libloading::Library,
+        library_path: &str,
+    ) -> Result<()> {
+        unsafe {
+            let symbol: libloading::Symbol<unsafe extern "C" fn() -> i32> = library
+                .get(b"qimen_plugin_unbind_host_api_v1")
+                .map_err(|err| {
+                    QimenError::Runtime(format!(
+                        "failed to load Host API unbind symbol from '{}': {err}",
+                        library_path
+                    ))
+                })?;
+            let code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol()))
+                .map_err(|_| {
+                    QimenError::Runtime(format!(
+                        "plugin '{}' panicked while unbinding Host API v1",
+                        library_path
+                    ))
+                })?;
+            let status = SendEnqueueStatus::from_code(code);
+            if status.is_accepted() {
+                Ok(())
+            } else {
+                Err(QimenError::Runtime(format!(
+                    "plugin '{}' rejected Host API v1 unbind with status {:?}",
+                    library_path, status
+                )))
+            }
+        }
     }
 
     /// Unload all libraries (for reload).
@@ -764,6 +867,7 @@ impl DynamicPluginRuntime {
                         last_error: None,
                         recent_errors: VecDeque::new(),
                     }),
+                    lifecycle: RwLock::new(()),
                 }),
             );
         }
@@ -797,6 +901,45 @@ mod lifecycle_tests {
         drop(second);
         runtime.unload_library(TEST_LIBRARY);
 
+        assert!(!runtime.libraries.contains_key(TEST_LIBRARY));
+    }
+
+    #[test]
+    fn unload_waits_for_an_in_flight_callback() {
+        let mut runtime = DynamicPluginRuntime::new();
+        let handle = runtime.get_library(TEST_LIBRARY).unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+        let callback = std::thread::spawn(move || {
+            DynamicPluginRuntime::with_handle(&handle, TEST_LIBRARY, |_library| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        entered_rx.recv().unwrap();
+
+        let (unloaded_tx, unloaded_rx) = std::sync::mpsc::channel();
+        let unload = std::thread::spawn(move || {
+            runtime.unload_library(TEST_LIBRARY);
+            unloaded_tx.send(()).unwrap();
+            runtime
+        });
+
+        assert!(
+            unloaded_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "unload completed while a callback still held the lifecycle read lock"
+        );
+        release_tx.send(()).unwrap();
+        callback.join().unwrap();
+        unloaded_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let runtime = unload.join().unwrap();
         assert!(!runtime.libraries.contains_key(TEST_LIBRARY));
     }
 
@@ -1024,12 +1167,15 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2, 0.3 or 0.4)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 through 0.5)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
 
-        let is_v2_plus = matches!(descriptor.api_version.as_str(), "0.2" | "0.3" | "0.4");
+        let is_v2_plus = matches!(
+            descriptor.api_version.as_str(),
+            "0.2" | "0.3" | "0.4" | "0.5"
+        );
 
         // Parse v0.2+ multi-command entries
         let commands: Vec<DynamicCommandEntry> = if is_v2_plus && !descriptor.commands.is_empty() {
@@ -1125,6 +1271,35 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             })
             .collect();
 
+        let webhooks = if descriptor.api_version.as_str() == "0.5" {
+            let symbol: libloading::Symbol<unsafe extern "C" fn() -> RVec<WebhookDescriptorEntry>> =
+                library
+                    .get(b"qimen_plugin_webhook_descriptors_v1")
+                    .map_err(|err| {
+                        QimenError::Module(format!(
+                            "failed to load webhook descriptors from '{}': {err}",
+                            path.display()
+                        ))
+                    })?;
+            let entries = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol()))
+                .map_err(|_| {
+                    QimenError::Module(format!(
+                        "plugin '{}' panicked while exporting webhook descriptors",
+                        path.display()
+                    ))
+                })?;
+            entries
+                .iter()
+                .map(|entry| DynamicWebhookEntry {
+                    method: entry.method.to_string(),
+                    path: entry.path.to_string(),
+                    callback_symbol: entry.callback_symbol.to_string(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Ok(DynamicPluginReportEntry {
             path: path.display().to_string(),
             plugin_id: descriptor.plugin_id.to_string(),
@@ -1133,6 +1308,7 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             commands,
             routes,
             interceptors,
+            webhooks,
             // Legacy fields
             command_name: descriptor.command_name.to_string(),
             command_description: descriptor.command_description.to_string(),

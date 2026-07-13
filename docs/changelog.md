@@ -1,5 +1,18 @@
 # 更新日志
 
+## v0.1.11 (未发布)
+
+### 动态插件 Webhook Gateway
+
+- 新增动态插件 API 0.5 和 `#[webhook(method = "...", path = "...")]`，由 Runtime 统一提供 HTTP 监听和精确路由。
+- 新增插件 URL 命名空间、可选 Bearer token、请求体大小、并发数和同步回调超时限制。
+- 新增 ABI 稳定的 `WebhookRequest`、`WebhookResponse` 和独立 Webhook 描述符导出，不修改 API 0.1 至 0.4 使用的旧 `PluginDescriptor` 布局。
+- Webhook 回调在 blocking 线程执行，响应数据在离开 FFI 前复制为宿主持有内存；动态库生命周期锁防止超时回调或热重载造成提前卸载。
+- 热重载现在会重新绑定 Host API、读取插件配置并执行 `init`，只恢复初始化成功插件的命令、事件和 Webhook 路由。
+- 更新动态插件示例、默认配置、架构、FFI 和部署安全文档。
+
+---
+
 ## v0.1.10 (2026-07-13)
 
 ### 动态插件实时主动推送

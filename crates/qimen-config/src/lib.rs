@@ -44,6 +44,9 @@ pub struct OfficialHostConfig {
     /// Real-time proactive send queue settings for dynamic plugins.
     #[serde(default)]
     pub proactive_send: ProactiveSendConfig,
+    /// Framework-hosted HTTP webhook gateway for API 0.5 dynamic plugins.
+    #[serde(default)]
+    pub webhook: WebhookGatewayConfig,
 }
 
 impl Default for OfficialHostConfig {
@@ -55,6 +58,7 @@ impl Default for OfficialHostConfig {
             plugin_bin_dir: default_plugin_bin_dir(),
             dynamic_plugin_timeout_secs: default_dynamic_plugin_timeout_secs(),
             proactive_send: ProactiveSendConfig::default(),
+            webhook: WebhookGatewayConfig::default(),
         }
     }
 }
@@ -72,6 +76,38 @@ impl Default for ProactiveSendConfig {
         Self {
             queue_capacity: default_proactive_send_queue_capacity(),
             offline_ttl_secs: default_proactive_send_offline_ttl_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebhookGatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_webhook_bind")]
+    pub bind: String,
+    #[serde(default = "default_webhook_base_path")]
+    pub base_path: String,
+    #[serde(default = "default_webhook_max_body_bytes")]
+    pub max_body_bytes: usize,
+    #[serde(default = "default_webhook_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+    #[serde(default = "default_webhook_max_in_flight")]
+    pub max_in_flight: usize,
+    #[serde(default)]
+    pub access_token: String,
+}
+
+impl Default for WebhookGatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: default_webhook_bind(),
+            base_path: default_webhook_base_path(),
+            max_body_bytes: default_webhook_max_body_bytes(),
+            request_timeout_ms: default_webhook_request_timeout_ms(),
+            max_in_flight: default_webhook_max_in_flight(),
+            access_token: String::new(),
         }
     }
 }
@@ -149,6 +185,44 @@ impl AppConfig {
             return Err(QimenError::Config(
                 "official_host.proactive_send.queue_capacity must be greater than zero".to_string(),
             ));
+        }
+
+        let webhook = &self.official_host.webhook;
+        if webhook.max_body_bytes == 0 {
+            return Err(QimenError::Config(
+                "official_host.webhook.max_body_bytes must be greater than zero".to_string(),
+            ));
+        }
+        if webhook.request_timeout_ms == 0 {
+            return Err(QimenError::Config(
+                "official_host.webhook.request_timeout_ms must be greater than zero".to_string(),
+            ));
+        }
+        if webhook.max_in_flight == 0 {
+            return Err(QimenError::Config(
+                "official_host.webhook.max_in_flight must be greater than zero".to_string(),
+            ));
+        }
+        if !webhook.base_path.starts_with('/')
+            || webhook.base_path.contains('?')
+            || webhook.base_path.contains('#')
+            || webhook.base_path.contains('*')
+            || webhook.base_path.contains("//")
+            || webhook
+                .base_path
+                .split('/')
+                .any(|segment| matches!(segment, "." | ".."))
+            || (webhook.base_path.len() > 1 && webhook.base_path.ends_with('/'))
+        {
+            return Err(QimenError::Config(
+                "official_host.webhook.base_path must be an exact absolute path without traversal, wildcard, trailing slash, query, or fragment".to_string(),
+            ));
+        }
+        if webhook.enabled && webhook.bind.parse::<std::net::SocketAddr>().is_err() {
+            return Err(QimenError::Config(format!(
+                "official_host.webhook.bind '{}' is not a valid socket address",
+                webhook.bind
+            )));
         }
 
         if self.bots.is_empty() {
@@ -281,6 +355,26 @@ fn default_proactive_send_offline_ttl_secs() -> u64 {
     60
 }
 
+fn default_webhook_bind() -> String {
+    "127.0.0.1:8088".to_string()
+}
+
+fn default_webhook_base_path() -> String {
+    "/webhooks".to_string()
+}
+
+fn default_webhook_max_body_bytes() -> usize {
+    1024 * 1024
+}
+
+fn default_webhook_request_timeout_ms() -> u64 {
+    5_000
+}
+
+fn default_webhook_max_in_flight() -> usize {
+    64
+}
+
 fn expand_env_placeholders(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
@@ -314,6 +408,29 @@ fn expand_env_placeholders(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn valid_config() -> AppConfig {
+        toml::from_str(
+            r#"
+[runtime]
+env = "test"
+shutdown_timeout_secs = 5
+task_grace_secs = 2
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "127.0.0.1:9090"
+
+[[bots]]
+id = "test-bot"
+protocol = "onebot11"
+transport = "ws-forward"
+endpoint = "ws://127.0.0.1:3001"
+"#,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn parse_minimal_config() {
@@ -445,6 +562,85 @@ transport = "ws-forward"
         assert_eq!(config.official_host.plugin_bin_dir, "plugins/bin");
         assert_eq!(config.official_host.proactive_send.queue_capacity, 256);
         assert_eq!(config.official_host.proactive_send.offline_ttl_secs, 60);
+        assert!(!config.official_host.webhook.enabled);
+        assert_eq!(config.official_host.webhook.bind, "127.0.0.1:8088");
+        assert_eq!(config.official_host.webhook.base_path, "/webhooks");
+        assert_eq!(config.official_host.webhook.max_body_bytes, 1024 * 1024);
+        assert_eq!(config.official_host.webhook.request_timeout_ms, 5_000);
+        assert_eq!(config.official_host.webhook.max_in_flight, 64);
+        assert!(config.official_host.webhook.access_token.is_empty());
+    }
+
+    #[test]
+    fn parse_webhook_gateway_config() {
+        let mut config = valid_config();
+        config.official_host.webhook = toml::from_str(
+            r#"
+enabled = true
+bind = "0.0.0.0:9088"
+base_path = "/hooks"
+max_body_bytes = 4096
+request_timeout_ms = 1500
+max_in_flight = 8
+access_token = "test-token"
+"#,
+        )
+        .unwrap();
+
+        config.validate().unwrap();
+        let webhook = &config.official_host.webhook;
+        assert!(webhook.enabled);
+        assert_eq!(webhook.bind, "0.0.0.0:9088");
+        assert_eq!(webhook.base_path, "/hooks");
+        assert_eq!(webhook.max_body_bytes, 4096);
+        assert_eq!(webhook.request_timeout_ms, 1500);
+        assert_eq!(webhook.max_in_flight, 8);
+        assert_eq!(webhook.access_token, "test-token");
+    }
+
+    #[test]
+    fn validate_rejects_invalid_webhook_limits() {
+        for field in ["max_body_bytes", "request_timeout_ms", "max_in_flight"] {
+            let mut config = valid_config();
+            match field {
+                "max_body_bytes" => config.official_host.webhook.max_body_bytes = 0,
+                "request_timeout_ms" => config.official_host.webhook.request_timeout_ms = 0,
+                "max_in_flight" => config.official_host.webhook.max_in_flight = 0,
+                _ => unreachable!(),
+            }
+            let error = config.validate().unwrap_err().to_string();
+            assert!(
+                error.contains(field),
+                "unexpected validation error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_invalid_webhook_address_and_base_path() {
+        let mut config = valid_config();
+        config.official_host.webhook.enabled = true;
+        config.official_host.webhook.bind = "not-an-address".to_string();
+        assert!(config.validate().unwrap_err().to_string().contains("bind"));
+
+        for base_path in [
+            "webhooks",
+            "/webhooks/",
+            "/webhooks?token=x",
+            "/webhooks#x",
+            "/webhooks/*",
+            "/webhooks//events",
+            "/webhooks/../events",
+            "/webhooks/./events",
+        ] {
+            let mut config = valid_config();
+            config.official_host.webhook.base_path = base_path.to_string();
+            let error = config.validate().unwrap_err().to_string();
+            assert!(
+                error.contains("base_path"),
+                "unexpected validation error: {error}"
+            );
+        }
     }
 
     #[test]

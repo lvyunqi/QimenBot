@@ -1,12 +1,12 @@
 # QimenBot 动态插件示例
 
-本项目是一个独立构建的 Rust `cdylib`，演示 QimenBot 动态插件 API 0.4。生成物是 Linux 的 `.so`、Windows 的 `.dll` 或 macOS 的 `.dylib`，由 QimenBot 在运行时加载。
+本项目是一个独立构建的 Rust `cdylib`，演示 QimenBot 动态插件 API 0.5。生成物是 Linux 的 `.so`、Windows 的 `.dll` 或 macOS 的 `.dylib`，由 QimenBot 在运行时加载。
 
-示例同时覆盖 API 0.4 实时主动推送和 API 0.1 至 0.3 的兼容发送路径。
+示例同时覆盖框架托管 Webhook、实时主动推送和 API 0.1 至 0.3 的兼容发送路径。
 
 ## 在 QimenBot 仓库外开发
 
-动态插件不需要引用本地 QimenBot 源码。在任意目录创建独立 crate 后，可以直接使用 crates.io 依赖：
+动态插件不需要加入 QimenBot 主 workspace。API 0.5 对应的 `0.1.11` crates 发布前，可在任意目录创建独立 crate，并临时使用本地源码依赖：
 
 ```toml
 [package]
@@ -19,15 +19,15 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.10"
-qimen-dynamic-plugin-derive = "0.1.10"
+abi-stable-host-api = { path = "/path/to/QimenBot/crates/abi-stable-host-api" }
+qimen-dynamic-plugin-derive = { path = "/path/to/QimenBot/crates/qimen-dynamic-plugin-derive" }
 abi_stable = "0.11"
 serde_json = "1"
 ```
 
 仓库外项目不需要 `[workspace]`。如果把插件目录放在 QimenBot 仓库内、但不加入主 workspace，则像本示例一样增加一个空的 `[workspace]` 表。
 
-crate 发布版本 `0.1.10` 与动态插件 ABI API `0.4` 是两套版本。需要实时主动推送时必须显式写出 `api = "0.4"`；未声明 `api` 时，过程宏仍生成兼容旧宿主的 API 0.3 插件。
+crate 发布版本与动态插件 ABI API 是两套版本。crates.io 当前的 `0.1.10` 支持到 API 0.4；需要 Webhook 时必须使用当前 `0.1.11` 源码并显式写出 `api = "0.5"`。未声明 `api` 时，过程宏仍生成兼容旧宿主的 API 0.3 插件。`0.1.11` 发布后，可把两个本地 `path` 依赖替换为版本号 `"0.1.11"`。
 
 ## 快速开始
 
@@ -65,7 +65,8 @@ Copy-Item target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 |---|---|
 | `greet`（别名 `hi`、`hello`） | 读取命令发送者信息并返回文本 |
 | `legacy-notify` | 演示 API 0.1 至 0.3 的回调后 flush 发送路径 |
-| `proactive-send` | 显式指定 Bot 和目标，通过 API 0.4 实时入队 |
+| `proactive-send` | 显式指定 Bot 和目标，通过 Host API 实时入队 |
+| `POST /events` | 接收框架 Webhook Gateway 转发的 HTTP 请求 |
 | `#[pre_handle]` | 记录收到的消息并允许继续分发 |
 | `GroupPoke`、`PrivatePoke` | 演示动态系统事件路由 |
 | `#[init]` / `#[shutdown]` | 启动后台推送线程，并在卸载前停止和 `join` |
@@ -76,7 +77,7 @@ Copy-Item target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 use abi_stable_host_api::*;
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-#[dynamic_plugin(id = "dynamic-example", version = "0.1.0", api = "0.4")]
+#[dynamic_plugin(id = "dynamic-example", version = "0.1.0", api = "0.5")]
 mod example {
     use super::*;
 
@@ -87,7 +88,49 @@ mod example {
 }
 ```
 
-过程宏会生成插件描述符、命令和事件回调、生命周期函数，以及 API 0.4 所需的 Host API bind/unbind 导出。
+过程宏会生成插件描述符、命令和事件回调、生命周期函数、Host API bind/unbind 导出，以及 API 0.5 独立的 Webhook 描述符导出。
+
+## Webhook 示例
+
+示例插件声明了一个精确路由：
+
+```rust
+#[webhook(method = "POST", path = "/events")]
+fn receive_event(req: &WebhookRequest) -> WebhookResponse {
+    WebhookResponse::text(200, req.query.as_str())
+}
+```
+
+启用宿主网关后，完整地址由 `base_path + plugin_id + path` 组成，因此默认是：
+
+```text
+POST http://127.0.0.1:8088/webhooks/dynamic-example/events
+```
+
+可用下面的配置启动：
+
+```toml
+[official_host.webhook]
+enabled = true
+bind = "127.0.0.1:8088"
+base_path = "/webhooks"
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+max_in_flight = 64
+access_token = "change-me"
+```
+
+测试请求：
+
+```bash
+curl -i \
+  -H 'Authorization: Bearer change-me' \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"build.finished"}' \
+  'http://127.0.0.1:8088/webhooks/dynamic-example/events?source=demo'
+```
+
+第三方平台的 HMAC、时间戳和重放保护由插件回调验证。Webhook 回调是同步 FFI；若需要向 Bot 发消息，必须使用 `BotApi::for_bot("...")` 或 `.bot("...").try_send()` 明确指定 Bot，不能使用依赖回调结束后 flush 的旧队列。
 
 ## 配置后台实时推送
 
@@ -98,7 +141,7 @@ mod example {
 bot_id = "qq-main"
 kind = "group"
 target_id = "123456"
-message = "API 0.4 background push"
+message = "API 0.5 background push"
 interval_secs = 60
 ```
 
@@ -127,7 +170,7 @@ interval_secs = 60
 
 `config/plugins/*.toml` 是部署环境的本地配置，不应提交到框架仓库。
 
-## API 0.4 实时发送
+## API 0.4+ 实时发送
 
 纯文本私聊或群聊可以使用 `BotApi::for_bot`：
 
@@ -194,12 +237,13 @@ SendBuilder::private("10001")
 
 ## 后台线程和安全卸载
 
-API 0.4 的 Host API 在插件 `init` 前完成绑定，所以 `init` 创建的线程可以立即主动发送。插件必须在 `shutdown` 中通知线程退出并等待 `join` 完成；宿主随后才会 unbind Host API 并卸载动态库。
+API 0.4 和 0.5 的 Host API 在插件 `init` 前完成绑定，所以 `init` 创建的线程可以立即主动发送。插件必须在 `shutdown` 中通知线程退出并等待 `join` 完成；宿主随后才会 unbind Host API 并卸载动态库。
 
 本示例使用 `AtomicBool`、`thread::park_timeout` 和保存的 `JoinHandle` 实现这一顺序。不要让插件线程在 `shutdown` 返回后继续执行动态库中的代码。
 
 ## 参考文档
 
 - [动态插件开发](../../docs/plugin/dynamic.md)
+- [API 0.5 Webhook Gateway](../../docs/advanced/dynamic-webhook-v05.md)
 - [API 0.4 实时主动推送](../../docs/advanced/dynamic-proactive-send-v04.md)
 - [动态插件 FFI API](../../docs/api/ffi-api.md)

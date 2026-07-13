@@ -1,10 +1,11 @@
-use abi_stable_host_api::{PluginDescriptor, is_compatible_api_version};
+use abi_stable::std_types::RVec;
+use abi_stable_host_api::{PluginDescriptor, WebhookDescriptorEntry, is_compatible_api_version};
 use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
 use qimen_framework::Runtime;
 use qimen_host_types::{
     DynamicCommandEntry, DynamicInterceptorEntry, DynamicPluginReportEntry, DynamicRouteEntry,
-    HostPluginReport, PluginState, load_plugin_state,
+    DynamicWebhookEntry, HostPluginReport, PluginState, load_plugin_state,
 };
 use qimen_mod_admin::AdminModule;
 use qimen_mod_bridge::BridgeModule;
@@ -184,6 +185,7 @@ fn build_host_plugin_report(
                 commands: descriptor.commands.clone(),
                 routes: descriptor.routes.clone(),
                 interceptors: descriptor.interceptors.clone(),
+                webhooks: descriptor.webhooks.clone(),
                 // Legacy fields
                 command_name: descriptor.command_name.clone(),
                 command_description: descriptor.command_description.clone(),
@@ -221,6 +223,11 @@ fn print_host_startup_report(report: &HostPluginReport) {
             .iter()
             .map(|r| format!("{}:{}", r.kind, r.route))
             .collect();
+        let webhook_names: Vec<String> = descriptor
+            .webhooks
+            .iter()
+            .map(|route| format!("{} {}", route.method, route.path))
+            .collect();
         tracing::info!(
             path = %descriptor.path,
             plugin = %descriptor.plugin_id,
@@ -228,6 +235,7 @@ fn print_host_startup_report(report: &HostPluginReport) {
             api = %descriptor.api_version,
             commands = %command_names.join(","),
             routes = %route_names.join(","),
+            webhooks = %webhook_names.join(","),
             legacy_command = %descriptor.command_name,
             "dynamic plugin descriptor discovered"
         );
@@ -246,6 +254,8 @@ struct DynamicPluginDescriptor {
     routes: Vec<DynamicRouteEntry>,
     /// Interceptor entries.
     interceptors: Vec<DynamicInterceptorEntry>,
+    /// API 0.5 HTTP webhook entries.
+    webhooks: Vec<DynamicWebhookEntry>,
     // Legacy v0.1 fields
     command_name: String,
     command_description: String,
@@ -290,7 +300,7 @@ fn is_dynamic_library_path(path: &Path) -> bool {
 }
 
 fn uses_descriptor_collections(api_version: &str) -> bool {
-    matches!(api_version, "0.2" | "0.3" | "0.4")
+    matches!(api_version, "0.2" | "0.3" | "0.4" | "0.5")
 }
 
 fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
@@ -321,7 +331,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2, 0.3 or 0.4)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 through 0.5)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
@@ -423,6 +433,35 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             })
             .collect();
 
+        let webhooks = if descriptor.api_version.as_str() == "0.5" {
+            let symbol: libloading::Symbol<unsafe extern "C" fn() -> RVec<WebhookDescriptorEntry>> =
+                library
+                    .get(b"qimen_plugin_webhook_descriptors_v1")
+                    .map_err(|err| {
+                        QimenError::Module(format!(
+                            "failed to load webhook descriptors from '{}': {err}",
+                            path.display()
+                        ))
+                    })?;
+            let entries = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| symbol()))
+                .map_err(|_| {
+                    QimenError::Module(format!(
+                        "plugin '{}' panicked while exporting webhook descriptors",
+                        path.display()
+                    ))
+                })?;
+            entries
+                .iter()
+                .map(|entry| DynamicWebhookEntry {
+                    method: entry.method.to_string(),
+                    path: entry.path.to_string(),
+                    callback_symbol: entry.callback_symbol.to_string(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Ok(DynamicPluginDescriptor {
             path: path.display().to_string(),
             plugin_id: descriptor.plugin_id.to_string(),
@@ -431,6 +470,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             commands,
             routes,
             interceptors,
+            webhooks,
             // Legacy fields
             command_name: descriptor.command_name.to_string(),
             command_description: descriptor.command_description.to_string(),
@@ -450,8 +490,8 @@ mod tests {
     use super::uses_descriptor_collections;
 
     #[test]
-    fn api_v04_uses_multi_entry_descriptor_collections() {
-        for version in ["0.2", "0.3", "0.4"] {
+    fn api_v05_uses_multi_entry_descriptor_collections() {
+        for version in ["0.2", "0.3", "0.4", "0.5"] {
             assert!(uses_descriptor_collections(version));
         }
         assert!(!uses_descriptor_collections("0.1"));

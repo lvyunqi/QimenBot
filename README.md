@@ -494,6 +494,7 @@ impl MyPlugin { /* ... */ }
 | API 访问 | 完整（async、OneBotActionClient 等） | 同步 FFI（宏自动生成导出代码） |
 | 消息构建 | `MessageBuilder` 链式 | `CommandResponse::builder()` / `SendBuilder` |
 | 拦截器 | `MessageEventInterceptor` trait | `#[pre_handle]` / `#[after_completion]` |
+| HTTP Webhook | 由应用自行挂载 HTTP 服务 | API 0.5 `#[webhook]`，由框架统一提供网关 |
 | 生命周期 | 随框架启停 | `#[init]` / `#[shutdown]` 钩子 |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
@@ -519,6 +520,8 @@ abi_stable = "0.11"
 ```
 
 [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 的 crate 发布版本当前为 `0.1.10`。这与插件描述符中的 ABI API `0.4` 是两套版本；需要实时主动推送的插件应显式声明 `api = "0.4"`，未声明时过程宏仍生成兼容旧宿主的 API `0.3` 插件。
+
+当前仓库的 `0.1.11` 源码新增了动态插件 API `0.5` Webhook Gateway，但对应 crates 尚未发布。发布前测试 API 0.5 插件时，请将上述两个依赖临时改为指向本仓库对应 crate 的本地 `path`，不要把 `0.1.11` 写成已经可从 crates.io 获取的版本。
 
 仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
 
@@ -577,6 +580,40 @@ offline_ttl_secs = 60
 ```
 
 API 0.4 的 Host API 会在插件 `init` 前绑定，因此后台线程不需要等待命令、事件或 Heartbeat。插件必须在 `shutdown` 中停止并 `join` 自己创建的线程，然后宿主才会解绑 Host API 和卸载动态库。完整目标映射、状态码和线程示例见 [API 0.4 实时主动推送](docs/advanced/dynamic-proactive-send-v04.md)。
+
+### API 0.5 Webhook Gateway
+
+API `0.5` 动态插件可以声明同步 HTTP Webhook，由框架统一监听、鉴权、限制请求大小和并发量，并把请求精确路由到插件：
+
+```rust
+use abi_stable_host_api::{WebhookRequest, WebhookResponse};
+use qimen_dynamic_plugin_derive::dynamic_plugin;
+
+#[dynamic_plugin(id = "webhook-example", version = "0.1.0", api = "0.5")]
+mod webhook_example {
+    use super::*;
+
+    #[webhook(method = "POST", path = "/events")]
+    fn receive_event(request: &WebhookRequest) -> WebhookResponse {
+        WebhookResponse::text(200, format!("received {} bytes", request.body.len()))
+    }
+}
+```
+
+启用网关后，该处理器的完整地址是 `/webhooks/webhook-example/events`：
+
+```toml
+[official_host.webhook]
+enabled = true
+bind = "127.0.0.1:8088"
+base_path = "/webhooks"
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+max_in_flight = 64
+access_token = ""
+```
+
+网关默认关闭且只监听回环地址。生产部署建议配置 Bearer token、在反向代理处启用 TLS，并由插件按第三方协议验证 HMAC 签名和时间戳。Webhook 回调中如需主动发送消息，必须通过 `BotApi::for_bot(...)` 或 `.bot(...).try_send()` 明确指定 `bot_id`。完整配置、状态码、热重载和安全边界见 [API 0.5 动态插件 Webhook Gateway](docs/advanced/dynamic-webhook-v05.md)。
 
 ### 构建 & 部署
 
