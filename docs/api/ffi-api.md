@@ -4,7 +4,7 @@
 
 ## API 版本
 
-当前 API 版本为 **0.5**，兼容 0.1 至 0.4。API 0.5 是累积版本，包含 API 0.4 的实时主动发送能力并增加 Webhook Gateway。新插件推荐显式声明 `api = "0.5"`；`api = "0.4"` 继续作为不使用 Webhook 的兼容版本保留。`#[dynamic_plugin]` 未声明 `api` 时仍默认生成 API 0.3 插件，以兼容旧宿主。
+API **0.5** 兼容 0.1 至 0.4，并包含 API 0.4 的实时主动发送能力和 Webhook Gateway。新建插件应显式声明 `api = "0.5"`；`api = "0.4"` 作为不使用 Webhook 的兼容版本保留。`#[dynamic_plugin]` 未声明 `api` 时默认生成 API 0.3 插件，以兼容旧宿主。
 
 ```rust
 /// 获取当前 API 版本
@@ -405,7 +405,7 @@ pub unsafe extern "C" fn callback_name(req: &InterceptorRequest)
 ```
 
 ::: warning Rust 2024 Edition
-Rust 2024 Edition 要求写 `#[unsafe(no_mangle)]` 而不是旧版的 `#[no_mangle]`。如果你使用 `edition = "2024"`，必须使用新语法。
+Rust 2024 Edition 要求使用 `#[unsafe(no_mangle)]`，不能使用旧版 `#[no_mangle]` 语法。
 :::
 
 ## SendAction

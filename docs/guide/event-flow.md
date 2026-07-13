@@ -96,7 +96,7 @@ for interceptor in &interceptor_chain {
 匹配到的命令会被路由到对应的 `CommandPlugin`：
 
 ```rust
-// 框架调用你的插件方法
+// 框架调用插件方法
 let signal = plugin.on_command(&ctx, &invocation).await;
 ```
 

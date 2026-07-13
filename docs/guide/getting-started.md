@@ -1,8 +1,8 @@
 # 快速开始
 
-本指南手把手教你从零开始运行 QimenBot。全程大约 10 分钟。
+本指南说明 QimenBot 的安装、OneBot 连接配置和首次启动流程。
 
-## 你需要准备什么？
+## 环境准备
 
 QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与一个"中间人"通信。整体结构如下：
 
@@ -10,9 +10,9 @@ QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与
 用户消息 → QQ → OneBot 实现 → WebSocket → QimenBot → 处理 → 回复
 ```
 
-所以你需要两样东西：
+运行环境包含以下组件：
 
-| 组件 | 说明 | 你需要做的 |
+| 组件 | 说明 | 准备工作 |
 |------|------|----------|
 | **Rust 编译器** | 编译 QimenBot 框架 | 安装 Rust 1.89+ |
 | **OneBot 11 实现** | 充当 QQ 与 QimenBot 之间的桥梁 | 选择一个实现并部署 |
@@ -24,8 +24,8 @@ QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与
 | [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core) | C# | 基于 NTQQ 协议，稳定可靠 |
 | [NapCat](https://github.com/NapNeko/NapCatQQ) | TypeScript | 基于 NTQQ，配置简单 |
 
-::: tip 不了解 OneBot？
-简单来说，OneBot 是一个**标准协议**。不同的 OneBot 实现（Lagrange、NapCat 等）负责登录 QQ、收发消息，然后按统一格式把消息转发给你的 Bot 程序。这样你只需要关心业务逻辑，不需要操心底层通信。
+::: tip OneBot 的作用
+OneBot 是聊天平台实现与 Bot 框架之间的标准协议。Lagrange、NapCat 等实现负责登录 QQ 和收发消息，并按统一格式与 QimenBot 通信。
 :::
 
 ::: tip 使用官方 QQ Bot？
@@ -46,7 +46,7 @@ QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与
 
 ## 第 1 步：安装 Rust
 
-如果你还没有安装 Rust：
+未安装 Rust 时，执行：
 
 ```bash
 # Linux / macOS
@@ -71,7 +71,7 @@ cd QimenBot
 
 ## 第 3 步：修改配置
 
-编辑 `config/base.toml`，只需要改**两个地方**：
+编辑 `config/base.toml` 中的以下两项：
 
 ```toml
 [runtime]
@@ -88,18 +88,18 @@ plugin_modules  = ["example-plugin"]
 id        = "my-bot"
 protocol  = "onebot11"
 transport = "ws-forward"
-endpoint  = "ws://127.0.0.1:3001"  # ← 改成你的 OneBot WS 地址
+endpoint  = "ws://127.0.0.1:3001"  # ← OneBot WebSocket 地址
 enabled   = true
-owners    = ["你的QQ号"]             # ← 改成你自己的 QQ 号
+owners    = ["管理员QQ号"]           # ← 具有最高权限的 QQ 号
 ```
 
 ::: warning 必须修改
-- **`endpoint`** — 你的 OneBot 实现的 WebSocket 地址（部署 OneBot 时会看到）
-- **`owners`** — 你自己的 QQ 号（字符串格式），拥有最高权限
+- **`endpoint`** — OneBot 实现提供的 WebSocket 地址
+- **`owners`** — 具有最高权限的 QQ 号，使用字符串格式
 :::
 
 ::: tip 不确定 OneBot 的地址？
-不同的 OneBot 实现默认端口不同。常见的有 `3001`、`6700`、`8080` 等。请查看你所用 OneBot 实现的文档。
+不同 OneBot 实现的默认端口不同，常见端口包括 `3001`、`6700` 和 `8080`。具体值以对应实现的文档为准。
 :::
 
 ## 第 4 步：启动
@@ -126,7 +126,7 @@ INFO  qimen_runtime       > Bot [my-bot] 已就绪
 
 向 Bot 发送消息，看看它是否正常工作：
 
-| 你发送 | Bot 回复 | 说明 |
+| 发送内容 | Bot 回复 | 说明 |
 |--------|---------|------|
 | `/ping` | `pong!` | 基础连通性测试 |
 | `/echo hello` | `hello` | 回显命令 |
@@ -180,9 +180,9 @@ QimenBot 需要 Rust 1.89+（2024 Edition）。运行 `rustup update` 更新 Rus
 
 ## 下一步
 
-恭喜你成功运行了 QimenBot！接下来你可以：
+完成首次启动后，可继续阅读：
 
-- 🔌 [编写第一个插件](/plugin/overview) — 5 分钟上手插件开发
-- 📖 [配置详解](/guide/configuration) — 了解所有配置选项
-- 🏗️ [架构设计](/guide/architecture) — 理解框架的整体设计
-- 📡 [事件处理](/plugin/events) — 学习处理戳一戳、入群等系统事件
+- [插件开发概览](/plugin/overview) — 静态插件结构与注册流程
+- [配置详解](/guide/configuration) — 配置项和覆盖规则
+- [架构设计](/guide/architecture) — 框架分层与事件链路
+- [事件处理](/plugin/events) — 通知、请求和元事件处理

@@ -2,7 +2,7 @@
 
 除了命令之外，QimenBot 还可以处理 OneBot 协议的**系统事件**：通知（notice）、请求（request）、元事件（meta）。
 
-通过 `#[notice]`、`#[request]`、`#[meta]` 三个宏，你可以像写命令一样轻松地处理各种系统事件。
+`#[notice]`、`#[request]` 和 `#[meta]` 宏分别用于处理通知、请求和元事件。
 
 ## 事件处理器宏
 
@@ -62,7 +62,7 @@ async fn name(&self, ctx: &SystemPluginContext<'_>, route: &SystemNoticeRoute) -
 ```
 
 ::: tip 什么时候需要 route 参数？
-当你用一个处理器监听多个路由时（如 `#[notice(GroupPoke, PrivatePoke)]`），可以通过 `route` 参数判断当前触发的是哪个路由，从而做出不同处理。
+一个处理器监听多个路由时（如 `#[notice(GroupPoke, PrivatePoke)]`），可通过 `route` 参数区分当前路由。
 :::
 
 ---
@@ -269,7 +269,7 @@ async fn on_recall(&self, ctx: &SystemPluginContext<'_>) -> SystemPluginSignal {
 
 ### FriendRecall — 好友消息撤回
 
-当好友撤回了发给你的消息时触发。
+好友撤回发送给 Bot 的消息时触发。
 
 **路由名：** `FriendRecall`
 
@@ -847,7 +847,7 @@ async fn on_connect(&self) -> SystemPluginSignal {
 ::: tip Continue vs Block vs Ignore
 - `Continue` 和 `Reply` 会让后续插件继续处理同一事件。
 - `Block` 和 `Ignore` 会阻止后续插件处理同一事件（插件链提前终止）。
-- 如果你的插件是唯一处理某事件的插件，用哪个都可以；但在多插件协作时，选择正确的信号很重要。
+- 单个插件独占事件时两种信号均可；多个插件处理同一事件时，应按是否继续传播选择信号。
 :::
 
 ---

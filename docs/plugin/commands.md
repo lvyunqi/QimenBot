@@ -11,11 +11,11 @@ async fn ping(&self) -> &str {
 }
 ```
 
-用户发送 `/ping`，Bot 回复 `pong!`。就是这么简单。
+用户发送 `/ping` 后，Bot 回复 `pong!`。
 
 ## 命令名怎么来的？
 
-如果你没有手动指定命令名，宏会**自动从函数名推导**：
+未手动指定命令名时，宏会**从函数名自动推导**：
 
 | 函数名 | 推导出的命令名 | 用户输入 |
 |--------|--------------|---------|
@@ -26,7 +26,7 @@ async fn ping(&self) -> &str {
 
 规则很简单：下划线 `_` 变连字符 `-`。
 
-你也可以手动指定：
+也可显式指定：
 
 ```rust
 #[command(name = "greet", desc = "打招呼")]
@@ -128,7 +128,7 @@ async fn private_only(&self) -> &str { "这是私聊命令" }
 
 ## 方法签名
 
-宏根据你的方法参数**自动注入**所需内容。共四种写法：
+宏根据方法参数**自动注入**所需内容，共支持四种写法：
 
 ### 无参数 — 最简单
 
@@ -201,7 +201,7 @@ async fn cmd(&self, args: Vec<String>, ctx: &CommandPluginContext<'_>)
 
 ## CommandPluginContext 常用方法
 
-`ctx` 是你和框架交互的入口，以下是最常用的方法：
+`ctx` 提供命令处理函数与框架交互所需的方法：
 
 ### 发送者信息
 
@@ -251,7 +251,7 @@ let _ = client.send_group_msg(group_id, Message::text("hello")).await;
 
 ## 返回值
 
-命令处理函数支持多种返回值类型，框架自动帮你转换：
+命令处理函数支持多种返回值类型，框架负责转换：
 
 | 返回类型 | 效果 | 示例 |
 |---------|------|------|
@@ -263,7 +263,7 @@ let _ = client.send_group_msg(group_id, Message::text("hello")).await;
 
 ### CommandPluginSignal 详解
 
-当你需要精确控制行为时，返回 `CommandPluginSignal`：
+需要精确控制命令链行为时，返回 `CommandPluginSignal`：
 
 | 信号 | 效果 |
 |------|------|
@@ -273,7 +273,7 @@ let _ = client.send_group_msg(group_id, Message::text("hello")).await;
 | `Ignore` | 什么都不做，**终止**后续所有插件 |
 
 ::: tip 什么时候用 Block？
-当你想"独占"处理这个命令时，用 `Block` 可以防止后续插件也响应同一个命令。比如一个验证码插件，验证成功后不希望其他插件再处理这条消息。
+需要独占处理命令时，可返回 `Block`，阻止后续插件响应同一命令。例如，验证码插件完成验证后可终止后续处理。
 :::
 
 ## 完整示例

@@ -1,12 +1,12 @@
 # 动态插件 API 0.4+ 实时主动推送
 
-QimenBot v0.1.10 为动态插件 API 0.4 新增实时主动发送。当前 API 0.5 是累积版本，完整包含 API 0.4 的主动发送能力，并额外提供 Webhook Gateway。插件后台线程可以显式选择 Bot，并在没有命令、事件或 Heartbeat 的情况下立即把发送请求交给宿主。v0.1.12 又增加了按稳定账号标识选择 Bot 的接口，OneBot 部署可直接使用 Bot QQ / `self_id`，不再要求插件绑定可变的部署别名。
+QimenBot v0.1.10 在动态插件 API 0.4 中引入实时主动发送。API 0.5 完整包含该能力，并增加 Webhook Gateway。插件后台线程可显式选择 Bot，无需命令、事件或 Heartbeat 即可向宿主提交发送请求。v0.1.12 增加按稳定账号标识选择 Bot 的接口，OneBot 部署可使用 Bot QQ / `self_id`，避免插件绑定可变的部署别名。
 
 API 0.1 至 0.3 仍然兼容。旧的 BotApi::send_group_msg、BotApi::send_private_msg 和 SendBuilder::send 会继续进入插件本地队列，并在当前 FFI 回调结束后由宿主 flush。
 
 ## 启用 API 0.4+
 
-新插件推荐显式声明当前 API 0.5，它同时支持实时主动发送和 Webhook。已有的 `api = "0.4"` 插件继续兼容并可使用本文全部主动发送接口，但不能声明 `#[webhook]`。未声明 `api` 时，过程宏仍生成 API 0.3 插件。
+新建插件应显式声明 API 0.5，以同时使用实时主动发送和 Webhook。已有的 `api = "0.4"` 插件可继续使用本页列出的主动发送接口，但不能声明 `#[webhook]`。未声明 `api` 时，过程宏生成 API 0.3 插件。
 
 ~~~rust
 use qimen_dynamic_plugin_derive::dynamic_plugin;
@@ -194,7 +194,7 @@ fn shutdown() {
 
 仓库中的 plugins/qimen-dynamic-plugin-example 展示了：
 
-- 当前 API 0.5 显式声明，并兼容 API 0.4 主动发送语义；
+- API 0.5 声明方式及 API 0.4 主动发送兼容语义；
 - init 阶段启动后台实时发送线程；
 - shutdown 停止并 join 线程；
 - BotApi::for_bot / BotApi::for_account 和 SendBuilder::bot(...) / bot_account(...).try_send()；

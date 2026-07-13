@@ -1,8 +1,8 @@
 # 插件开发概览
 
-本页教你从零开始编写一个 QimenBot 插件。只需要 5 分钟，你就能理解整个插件开发流程。
+本页说明静态插件的目录结构、注册方式、命令定义和加载配置。
 
-## 你的第一个插件
+## 最小插件
 
 ```rust
 use qimen_plugin_api::prelude::*;
@@ -17,7 +17,7 @@ impl MyPlugin {
 }
 ```
 
-就这么简单！用户发送 `/ping`，Bot 回复 `pong!`。
+用户发送 `/ping` 后，Bot 回复 `pong!`。
 
 ### 这段代码做了什么？
 
@@ -29,14 +29,14 @@ impl MyPlugin {
 | `#[command("回复 pong")]` | 将 `ping` 函数注册为 `/ping` 命令 |
 | `-> &str` | 返回字符串，框架自动转为回复消息 |
 
-::: info 宏帮你做了什么？
-`#[module]` + `#[commands]` 宏在编译时自动帮你：
+::: info 过程宏生成的代码
+`#[module]` + `#[commands]` 宏在编译时自动完成：
 1. 创建 `struct MyPlugin;` 结构体
 2. 实现 `Module` trait（插件注册）
 3. 实现 `CommandPlugin` trait（命令处理）
 4. 生成命令注册代码
 
-你只需要专注于写业务逻辑，框架负责一切"胶水代码"。
+插件实现业务逻辑，过程宏负责生成注册和路由代码。
 :::
 
 ## 一个更完整的插件
@@ -122,9 +122,9 @@ impl MyPlugin {
 
 ## 注册插件到框架
 
-QimenBot 使用 `inventory` 机制实现**编译时自动注册**——`#[module]` 宏会在编译期间自动将你的插件注册到全局清单中，框架启动时通过 `inventory::iter` 发现所有已链接的插件。**你无需修改框架的任何源代码。**
+QimenBot 使用 `inventory` 机制实现**编译时自动注册**。`#[module]` 宏在编译期间将插件注册到全局清单，框架启动时通过 `inventory::iter` 发现所有已链接的插件，无需修改框架源码。
 
-整个流程只需 4 步：
+注册流程分为 4 步：
 
 ### 第 1 步：创建插件 Crate
 
@@ -167,12 +167,12 @@ impl MyPlugin {
 ```
 
 ::: info 不需要手动编辑 workspace members
-根 `Cargo.toml` 中的 `members` 已配置为 `"plugins/qimen-plugin-*"`，只要你的目录名以 `qimen-plugin-` 为前缀，Cargo 就能自动发现。
+根 `Cargo.toml` 的 `members` 已配置为 `"plugins/qimen-plugin-*"`。目录名使用 `qimen-plugin-` 前缀时，Cargo 会自动发现该 crate。
 :::
 
 ### 第 2 步：链接插件到主程序
 
-编辑 `apps/qimenbotd/Cargo.toml`，添加你的插件依赖：
+在 `apps/qimenbotd/Cargo.toml` 中添加插件依赖：
 
 ```toml
 [dependencies]
@@ -209,13 +209,13 @@ async fn main() -> Result<()> {
 ```toml
 # config/base.toml
 [official_host]
-plugin_modules = ["my-plugin"]  # ← 添加你的插件 module id
+plugin_modules = ["my-plugin"]  # ← 添加插件 module id
 ```
 
-这里的 `"my-plugin"` 对应 `#[module(id = "my-plugin")]` 中声明的 id。
+`"my-plugin"` 对应 `#[module(id = "my-plugin")]` 中声明的 id。
 
 ::: tip Bot 级别的模块控制
-每个 Bot 实例可以通过 `enabled_modules` 选择性启用模块。如果留空，则使用 `official_host.builtin_modules` 中的全部内置模块。插件模块只要在 `plugin_modules` 中列出即可对所有 Bot 生效。
+每个 Bot 实例可通过 `enabled_modules` 选择模块。该字段为空时，实例使用 `official_host.builtin_modules` 中的全部内置模块。列入 `plugin_modules` 的插件模块对所有 Bot 生效。
 :::
 
 ### 第 4 步：编译运行
@@ -230,7 +230,7 @@ cargo run
 INFO inventory plugin modules discovered, count=1, modules=my-plugin
 ```
 
-如果你的插件没有出现在日志中，检查：
+插件未出现在启动日志中时，检查以下项目：
 1. `apps/qimenbotd/Cargo.toml` 是否添加了依赖
 2. `main.rs` 中是否有 `extern crate` 和 `black_box` 两行
 3. 插件 crate 是否能通过 `cargo check -p qimen-plugin-myplugin` 编译通过
@@ -247,7 +247,7 @@ INFO inventory plugin modules discovered, count=1, modules=my-plugin
 **不需要修改 `qimen-official-host` 或框架中的任何其他代码。**
 
 ::: tip 不想重新编译？
-如果你希望修改插件后无需重新编译整个框架，可以考虑使用 [动态插件](/plugin/dynamic)。动态插件编译为独立的 `.so/.dll` 文件，通过 `/plugins reload` 热重载。
+需要在不重新编译框架的情况下更新插件时，可使用 [动态插件](/plugin/dynamic)。动态插件编译为独立的 `.so/.dll` 文件，并通过 `/plugins reload` 热重载。
 :::
 
 ## 下一步

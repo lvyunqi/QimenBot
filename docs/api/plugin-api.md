@@ -14,7 +14,7 @@ use qimen_plugin_api::prelude::*;
 
 ### Module — 插件模块
 
-每个 `#[module]` 宏自动实现此 trait，你通常不需要手动实现。
+`#[module]` 宏会自动实现此 trait，通常无需手动实现。
 
 ```rust
 #[async_trait]

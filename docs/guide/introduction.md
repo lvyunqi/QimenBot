@@ -4,9 +4,9 @@
 
 QimenBot 是一个用 **Rust** 编写的模块化、可扩展的聊天机器人框架。它通过协议适配器对接 OneBot 11 和官方 QQ Bot，并保留 OneBot 12、Satori 等后续扩展空间。
 
-与传统的 Bot 框架不同，QimenBot 将**可复用的框架层**与**参考 Host 实现**分离——你既可以直接部署官方 Host，也可以基于框架层构建自己的 Bot 平台。
+QimenBot 将**可复用的框架层**与**参考 Host 实现**分离，既可直接部署官方 Host，也可基于框架层构建独立的 Bot 平台。
 
-## 为什么选择 QimenBot？
+## 功能概览
 
 ### 性能卓越
 
@@ -19,7 +19,7 @@ QimenBot 基于 Rust + [Tokio](https://tokio.rs/) 异步运行时构建：
 
 ### 开发简单
 
-通过过程宏（proc macro），你只需要写几行代码就能完成一个功能完整的插件：
+过程宏（proc macro）负责生成插件注册、命令路由和参数注入代码：
 
 ```rust
 use qimen_plugin_api::prelude::*;
@@ -34,7 +34,7 @@ impl MyPlugin {
 }
 ```
 
-就这么简单——`#[module]` 声明插件，`#[command]` 定义命令，框架自动处理注册、路由、权限等一切细节。
+`#[module]` 声明插件，`#[command]` 定义命令；框架负责注册、路由和权限处理。
 
 ### 架构灵活
 

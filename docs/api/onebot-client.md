@@ -368,7 +368,7 @@ for friend in friends {
 
 > `client.delete_unidirectional_friend(user_id)`
 
-删除单向好友（对方已删除你但仍在你列表中的好友）。
+删除单向好友（对方已删除 Bot，但仍保留在 Bot 好友列表中）。
 
 **参数**
 

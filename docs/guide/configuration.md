@@ -36,10 +36,10 @@ config/base.toml
 └──────────────────────────┴──────────────────────────┘
 ```
 
-**简单来说：**
+两级配置的职责如下：
 - `[official_host]` 控制"加载哪些模块到内存"
 - `[[bots]].enabled_modules` 控制"这个 Bot 实际启用哪些模块"
-- 你可以全局加载 10 个模块，但某个 Bot 只启用其中 3 个
+- 全局可加载多个模块，各 Bot 通过 `enabled_modules` 选择实际启用的模块
 
 ## `[runtime]` — 运行时
 
@@ -113,7 +113,7 @@ plugin_bin_dir = "plugins/bin"
 # 框架自带的示例插件
 plugin_modules = ["example-plugin"]
 
-# 如果你开发了自己的插件
+# 自定义插件
 plugin_modules = ["example-plugin", "my-plugin"]
 ```
 
