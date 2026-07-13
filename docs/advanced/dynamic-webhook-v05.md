@@ -4,6 +4,15 @@ QimenBot v0.1.11 在 Runtime 中提供框架级 HTTP Webhook Gateway。动态插
 
 Webhook 不依赖 OneBot 或 QQ 官方 Gateway 收到新事件。即使没有 Bot 在线、没有 Heartbeat，也可以接收 HTTP 请求；只有插件要继续向 Bot 推送消息时，才要求目标 Bot 已配置并显式指定 `bot_id`。
 
+仓库外插件可以直接使用 crates.io `0.1.11`：
+
+```toml
+[dependencies]
+abi-stable-host-api = "0.1.11"
+qimen-dynamic-plugin-derive = "0.1.11"
+abi_stable = "0.11"
+```
+
 ## 启用网关
 
 网关默认关闭，并只建议先监听本机回环地址：

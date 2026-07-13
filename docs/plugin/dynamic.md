@@ -31,11 +31,11 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 
 | crate | 当前发布版本 | 用途 |
 |-------|-------------|------|
-| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.10` | 动态插件与宿主之间的 ABI 稳定类型和 API |
-| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.10` | `#[dynamic_plugin]` 及其内部属性宏 |
+| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.11` | 动态插件与宿主之间的 ABI 稳定类型和 API |
+| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.11` | `#[dynamic_plugin]` 及其内部属性宏 |
 
 ::: info 两套版本不要混淆
-crates.io 当前发布版本是 `0.1.10`，支持到动态插件 API `0.4`。QimenBot v0.1.11 源码新增 API `0.5` Webhook；在 `0.1.11` crates 发布前，需要使用本仓库的本地 `path` 依赖。未声明 `api` 时过程宏仍自动生成 API `0.3` 插件。v0.1.11 宿主兼容 API `0.1` 至 `0.5`。
+crates.io 当前发布版本是 `0.1.11`，支持动态插件 API `0.1` 至 `0.5`。实时主动推送使用 `api = "0.4"`，Webhook Gateway 使用 `api = "0.5"`；未声明 `api` 时过程宏仍自动生成 API `0.3` 插件。v0.1.11 宿主兼容 API `0.1` 至 `0.5`。
 :::
 
 ### 第 1 步：创建项目
@@ -60,8 +60,8 @@ rust-version = "1.89"
 crate-type = ["cdylib"]  # 编译为动态库
 
 [dependencies]
-abi-stable-host-api = "0.1.10"
-qimen-dynamic-plugin-derive = "0.1.10"
+abi-stable-host-api = "0.1.11"
+qimen-dynamic-plugin-derive = "0.1.11"
 abi_stable = "0.11"
 serde_json = "1"  # 可选，用于解析事件 JSON
 ```

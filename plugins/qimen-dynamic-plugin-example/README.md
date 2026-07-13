@@ -19,15 +19,15 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = { path = "/path/to/QimenBot/crates/abi-stable-host-api" }
-qimen-dynamic-plugin-derive = { path = "/path/to/QimenBot/crates/qimen-dynamic-plugin-derive" }
+abi-stable-host-api = "0.1.11"
+qimen-dynamic-plugin-derive = "0.1.11"
 abi_stable = "0.11"
 serde_json = "1"
 ```
 
 仓库外项目不需要 `[workspace]`。如果把插件目录放在 QimenBot 仓库内、但不加入主 workspace，则像本示例一样增加一个空的 `[workspace]` 表。
 
-crate 发布版本与动态插件 ABI API 是两套版本。crates.io 当前的 `0.1.10` 支持到 API 0.4；需要 Webhook 时必须使用当前 `0.1.11` 源码并显式写出 `api = "0.5"`。未声明 `api` 时，过程宏仍生成兼容旧宿主的 API 0.3 插件。`0.1.11` 发布后，可把两个本地 `path` 依赖替换为版本号 `"0.1.11"`。
+crate 发布版本与动态插件 ABI API 是两套版本。crates.io `0.1.11` 支持 API 0.1 至 0.5；需要 Webhook 时显式写出 `api = "0.5"`，需要实时主动推送时使用 `api = "0.4"`。未声明 `api` 时，过程宏仍生成兼容旧宿主的 API 0.3 插件。
 
 ## 快速开始
 

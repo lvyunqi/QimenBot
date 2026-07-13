@@ -1,6 +1,6 @@
 # 更新日志
 
-## v0.1.11 (未发布)
+## v0.1.11 (2026-07-13)
 
 ### 动态插件 Webhook Gateway
 
@@ -10,6 +10,7 @@
 - Webhook 回调在 blocking 线程执行，响应数据在离开 FFI 前复制为宿主持有内存；动态库生命周期锁防止超时回调或热重载造成提前卸载。
 - 热重载现在会重新绑定 Host API、读取插件配置并执行 `init`，只恢复初始化成功插件的命令、事件和 Webhook 路由。
 - 更新动态插件示例、默认配置、架构、FFI 和部署安全文档。
+- `abi-stable-host-api 0.1.11` 与 `qimen-dynamic-plugin-derive 0.1.11` 已发布到 crates.io，仓库外插件可以直接使用 API 0.5。
 
 ---
 
