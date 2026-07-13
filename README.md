@@ -501,7 +501,7 @@ impl MyPlugin { /* ... */ }
 
 ### 在主仓库外独立开发
 
-动态插件不需要加入 QimenBot 主 workspace。下面使用包含稳定账号选择接口的 `0.1.12` 版本；该版本发布到 crates.io 前，可以临时使用本仓库的 `path` 依赖：
+动态插件不需要加入 QimenBot 主 workspace。下面使用包含稳定账号选择接口的 crates.io `0.1.12` 版本：
 
 ```toml
 [package]
@@ -519,7 +519,7 @@ qimen-dynamic-plugin-derive = "0.1.12"
 abi_stable = "0.11"
 ```
 
-[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 当前已发布的 `0.1.11` 支持动态插件 API `0.1` 至 `0.5`；仓库源码 `0.1.12` 继续保持该 ABI 范围，并新增 `BotApi::for_account` 与 `SendBuilder::bot_account`。crate 发布版本与插件描述符中的 ABI API 是两套版本：实时主动推送使用 `api = "0.4"`，Webhook Gateway 使用 `api = "0.5"`；未声明 `api` 时过程宏仍生成兼容旧宿主的 API `0.3` 插件。
+[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) `0.1.12` 支持动态插件 API `0.1` 至 `0.5`，并新增 `BotApi::for_account` 与 `SendBuilder::bot_account`。crate 发布版本与插件描述符中的 ABI API 是两套版本。当前 API `0.5` 是累积版本，已经包含 API `0.4` 的实时主动发送能力；新插件统一推荐显式声明 `api = "0.5"`。`api = "0.4"` 继续用于兼容不需要 Webhook 的已有插件；未声明 `api` 时过程宏仍生成兼容旧宿主的 API `0.3` 插件。
 
 仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
 
@@ -544,9 +544,9 @@ mod my_plugin {
 
 宏自动生成 `qimen_plugin_descriptor()` 和所有 `extern "C" fn` 导出，你只需专注业务逻辑。
 
-### API 0.4 实时主动推送
+### API 0.4+ 实时主动推送
 
-需要从后台线程发送消息时，显式声明 API `0.4`，并为每次发送指定稳定的 Bot 账号或运行时实例别名。OneBot 推荐在 `[[bots]]` 中把 QQ / `self_id` 配置为 `account_id`：
+实时主动发送从 API `0.4` 开始提供，API `0.5` 继续完整包含该能力。新插件推荐显式声明当前 API `0.5`，并为每次发送指定稳定的 Bot 账号或运行时实例别名。OneBot 推荐在 `[[bots]]` 中把 QQ / `self_id` 配置为 `account_id`：
 
 ```toml
 [[bots]]
@@ -560,7 +560,7 @@ transport = "ws-reverse"
 use abi_stable_host_api::{BotApi, SendEnqueueStatus};
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-#[dynamic_plugin(id = "push-example", version = "0.1.0", api = "0.4")]
+#[dynamic_plugin(id = "push-example", version = "0.1.0", api = "0.5")]
 mod push_example {
     use super::*;
 
@@ -587,7 +587,7 @@ queue_capacity = 256
 offline_ttl_secs = 60
 ```
 
-API 0.4 的 Host API 会在插件 `init` 前绑定，因此后台线程不需要等待命令、事件或 Heartbeat。插件必须在 `shutdown` 中停止并 `join` 自己创建的线程，然后宿主才会解绑 Host API 和卸载动态库。完整目标映射、状态码和线程示例见 [API 0.4 实时主动推送](docs/advanced/dynamic-proactive-send-v04.md)。
+API 0.4/0.5 的 Host API 都会在插件 `init` 前绑定，因此后台线程不需要等待命令、事件或 Heartbeat。插件必须在 `shutdown` 中停止并 `join` 自己创建的线程，然后宿主才会解绑 Host API 和卸载动态库。完整目标映射、状态码和线程示例见 [API 0.4+ 实时主动推送](docs/advanced/dynamic-proactive-send-v04.md)。
 
 ### API 0.5 Webhook Gateway
 

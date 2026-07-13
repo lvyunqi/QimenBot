@@ -31,15 +31,15 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 
 | crate | 当前发布版本 | 用途 |
 |-------|-------------|------|
-| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.11` | 动态插件与宿主之间的 ABI 稳定类型和 API |
-| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.11` | `#[dynamic_plugin]` 及其内部属性宏 |
+| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.12` | 动态插件与宿主之间的 ABI 稳定类型和 API |
+| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.12` | `#[dynamic_plugin]` 及其内部属性宏 |
 
 ::: info 两套版本不要混淆
-crates.io 当前发布版本是 `0.1.11`，支持动态插件 API `0.1` 至 `0.5`。实时主动推送使用 `api = "0.4"`，Webhook Gateway 使用 `api = "0.5"`；未声明 `api` 时过程宏仍自动生成 API `0.3` 插件。v0.1.11 宿主兼容 API `0.1` 至 `0.5`。
+crates.io 发布版本 `0.1.12` 支持动态插件 API `0.1` 至 `0.5`。当前 API `0.5` 是累积版本，已经包含 API `0.4` 的实时主动发送能力并增加 Webhook Gateway，因此新插件统一推荐显式声明 `api = "0.5"`。`api = "0.4"` 继续兼容只使用主动发送的已有插件；未声明 `api` 时过程宏仍自动生成 API `0.3` 插件，以兼容旧宿主。
 :::
 
-::: info v0.1.12 源码接口
-仓库源码 `0.1.12` 在不改变 API 0.4/0.5 FFI 结构的前提下，增加了 `BotApi::for_account(...)` 与 `SendBuilder::bot_account(...)`。该版本发布前可使用本地 `path` 依赖；只使用 `for_bot` / `bot` 的插件继续兼容 `0.1.11`。
+::: info v0.1.12 稳定账号接口
+`0.1.12` 在不改变 API 0.4/0.5 FFI 结构的前提下，增加了 `BotApi::for_account(...)` 与 `SendBuilder::bot_account(...)`。只使用 `for_bot` / `bot` 的插件继续兼容 `0.1.11`。
 :::
 
 ### 第 1 步：创建项目
@@ -64,8 +64,8 @@ rust-version = "1.89"
 crate-type = ["cdylib"]  # 编译为动态库
 
 [dependencies]
-abi-stable-host-api = "0.1.11"
-qimen-dynamic-plugin-derive = "0.1.11"
+abi-stable-host-api = "0.1.12"
+qimen-dynamic-plugin-derive = "0.1.12"
 abi_stable = "0.11"
 serde_json = "1"  # 可选，用于解析事件 JSON
 ```
@@ -878,8 +878,8 @@ fn notify(req: &CommandRequest) -> CommandResponse {
 5. **每模块限制** — 最多一个 `#[init]`、一个 `#[shutdown]`、一个 `#[pre_handle]`、一个 `#[after_completion]` 函数
 :::
 
-::: info API 0.4 实时主动推送
-QimenBot v0.1.10 支持动态插件后台线程实时发送。v0.1.12 可在 `[[bots]]` 中配置稳定的 `account_id`（OneBot 通常是 Bot QQ / `self_id`），插件通过 `BotApi::for_account(...)` 或 `.bot_account(...)` 发送；原有按实例别名的 `for_bot` / `bot` 保持兼容。完整接口、目标映射、返回状态和安全卸载示例见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。API 0.1 至 0.3 的回调后 flush 行为保持兼容。
+::: info API 0.4+ 实时主动推送
+QimenBot v0.1.10 从 API 0.4 开始支持动态插件后台线程实时发送，当前 API 0.5 继续完整包含该能力。v0.1.12 可在 `[[bots]]` 中配置稳定的 `account_id`（OneBot 通常是 Bot QQ / `self_id`），插件通过 `BotApi::for_account(...)` 或 `.bot_account(...)` 发送；原有按实例别名的 `for_bot` / `bot` 保持兼容。完整接口、目标映射、返回状态和安全卸载示例见 [API 0.4+ 实时主动推送](/advanced/dynamic-proactive-send-v04)。API 0.1 至 0.3 的回调后 flush 行为保持兼容。
 :::
 
 ::: info API 0.5 Webhook Gateway

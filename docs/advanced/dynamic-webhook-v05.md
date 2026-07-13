@@ -4,12 +4,12 @@ QimenBot v0.1.11 在 Runtime 中提供框架级 HTTP Webhook Gateway。动态插
 
 Webhook 不依赖 OneBot 或 QQ 官方 Gateway 收到新事件。即使没有 Bot 在线、没有 Heartbeat，也可以接收 HTTP 请求；只有插件要继续向 Bot 推送消息时，才要求目标 Bot 已配置并通过 `account_id` 或实例 `bot_id` 显式选择。
 
-仓库外插件可以直接使用 crates.io `0.1.11`：
+仓库外插件可以直接使用 crates.io `0.1.12`：
 
 ```toml
 [dependencies]
-abi-stable-host-api = "0.1.11"
-qimen-dynamic-plugin-derive = "0.1.11"
+abi-stable-host-api = "0.1.12"
+qimen-dynamic-plugin-derive = "0.1.12"
 abi_stable = "0.11"
 ```
 
@@ -119,7 +119,7 @@ WebhookResponse::text(200, "ok").with_headers_json(
 
 ## 从 Webhook 主动发送 Bot 消息
 
-Webhook 没有“当前 Bot”上下文，因此必须明确选择 Bot。OneBot 推荐在宿主配置中设置稳定的 `account_id`（Bot QQ / `self_id`），避免插件依赖可变的实例别名。下面的账号选择接口从 crate `0.1.12` 开始提供；使用 `0.1.11` 时继续调用 `for_bot` / `bot`：
+Webhook 没有“当前 Bot”上下文，因此必须明确选择 Bot。OneBot 推荐在宿主配置中设置稳定的 `account_id`（Bot QQ / `self_id`），避免插件依赖可变的实例别名。下面的账号选择接口从 crate `0.1.12` 开始提供：
 
 ```rust
 use abi_stable_host_api::{BotApi, SendEnqueueStatus};
@@ -146,7 +146,7 @@ let status = SendBuilder::channel("channel-id")
 
 不要在 Webhook 回调中使用旧 `BotApi::send_group_msg(...)` 或 `SendBuilder::send()`。这些接口写入“回调结束后 flush”的旧队列，无法推断 Webhook 应使用哪个 Bot；宿主会丢弃这类发送并记录警告。
 
-`Accepted` 只表示宿主已复制并接受请求，不代表网络发送已经成功。实时发送的队列、离线 TTL 和协议目标映射见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
+`Accepted` 只表示宿主已复制并接受请求，不代表网络发送已经成功。实时发送的队列、离线 TTL 和协议目标映射见 [API 0.4+ 实时主动推送](/advanced/dynamic-proactive-send-v04)。
 
 ## 认证与第三方签名
 

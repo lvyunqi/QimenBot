@@ -4,11 +4,11 @@
 
 ## API 版本
 
-当前 API 版本为 **0.4**，兼容 0.1、0.2 和 0.3 版本。`#[dynamic_plugin]` 未声明 `api` 时仍默认生成 API 0.3 插件；只有显式声明 `api = "0.4"` 才会导出 Host API 绑定符号。
+当前 API 版本为 **0.5**，兼容 0.1 至 0.4。API 0.5 是累积版本，包含 API 0.4 的实时主动发送能力并增加 Webhook Gateway。新插件推荐显式声明 `api = "0.5"`；`api = "0.4"` 继续作为不使用 Webhook 的兼容版本保留。`#[dynamic_plugin]` 未声明 `api` 时仍默认生成 API 0.3 插件，以兼容旧宿主。
 
 ```rust
 /// 获取当前 API 版本
-pub fn expected_api_version() -> RString  // "0.4"
+pub fn expected_api_version() -> RString  // "0.5"
 
 /// 检查版本兼容性
 pub fn is_compatible_api_version(version: &str) -> bool
@@ -16,7 +16,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 // "0.2" → true
 // "0.3" → true
 // "0.4" → true
-// "0.5" → false
+// "0.5" → true
 ```
 
 ### 版本历史
@@ -27,6 +27,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 | **0.2** | 多命令/多路由 `RVec<CommandDescriptorEntry>`，富媒体 JSON 响应 |
 | **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段；`InterceptorRequest` / `InterceptorResponse` / `InterceptorDescriptorEntry` 拦截器支持 |
 | **0.4** | `ProactiveSendRequest`、`HostApiV1`、`SendEnqueueStatus`；按 Bot 实时主动发送；安全 bind/unbind 生命周期；私聊、群聊、频道和频道私信目标 |
+| **0.5** | 累积包含 API 0.4，并新增框架托管的 HTTP Webhook 描述符、回调和 Gateway |
 
 ## PluginDescriptor
 
@@ -532,7 +533,7 @@ v0.5 FFI 接口向后兼容 v0.1、v0.2、v0.3 和 v0.4：
 - API 0.5 没有向旧 `PluginDescriptor` 追加字段，而是使用单独的 Webhook 描述符导出，保持旧结构布局不变
 
 ::: info Host API v1 / 动态插件 API 0.4
-API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，并由过程宏生成 bind/unbind 导出。v0.1.12 的 `BotApi::for_account` / `SendBuilder::bot_account` 会把稳定账号选择器编码在既有 `bot_id` 字符串中，没有增加或重排 `ProactiveSendRequest` 字段，因此 API 0.4/0.5 ABI 布局保持不变。完整生命周期、选择方式和目标字段说明见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
+API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，API 0.5 累积保留这些接口，并由过程宏生成 bind/unbind 导出。v0.1.12 的 `BotApi::for_account` / `SendBuilder::bot_account` 会把稳定账号选择器编码在既有 `bot_id` 字符串中，没有增加或重排 `ProactiveSendRequest` 字段，因此 API 0.4/0.5 ABI 布局保持不变。完整生命周期、选择方式和目标字段说明见 [API 0.4+ 实时主动推送](/advanced/dynamic-proactive-send-v04)。
 :::
 
 ## API 0.5 Webhook 导出

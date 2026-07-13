@@ -84,7 +84,7 @@ export default defineConfig({
             { text: 'CommandResponse', link: '/plugin/dynamic#command-response' },
             { text: '拦截器', link: '/plugin/dynamic#pre-handle' },
             { text: '自定义发送 (BotApi)', link: '/plugin/dynamic#bot-api' },
-            { text: 'API 0.4 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
+            { text: 'API 0.4+ 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
             { text: 'API 0.5 Webhook Gateway', link: '/advanced/dynamic-webhook-v05' },
             { text: '插件配置', link: '/plugin/dynamic#config' },
             { text: '完整示例', link: '/plugin/dynamic#full-example' },
@@ -111,7 +111,7 @@ export default defineConfig({
           items: [
             { text: '运行时原理', link: '/advanced/runtime' },
             { text: '传输层', link: '/advanced/transport' },
-            { text: 'API 0.4 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
+            { text: 'API 0.4+ 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
             { text: '动态插件 Webhook Gateway', link: '/advanced/dynamic-webhook-v05' },
             { text: '部署指南', link: '/advanced/deployment' },
           ]
