@@ -8,3 +8,6 @@ version.workspace = true
 [dependencies]
 qimen-config = { path = "../../crates/qimen-config" }
 qimen-error = { path = "../../crates/qimen-error" }
+qimen-transport-ws = { path = "../../crates/qimen-transport-ws" }
+serde_json.workspace = true
+tokio.workspace = true

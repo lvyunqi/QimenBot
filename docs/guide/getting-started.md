@@ -144,6 +144,20 @@ QimenBot 支持多种方式触发命令：
 | **回复消息** | (回复 Bot 消息) `ping` | 群聊和私聊 |
 :::
 
+### 不连接 QQ 客户端进行内部链路测试
+
+如果当前 Bot 使用 `ws-reverse`，可以让 `qimenctl` 模拟 OneBot 11 客户端发送标准消息事件，并自动确认框架返回的 Action：
+
+```bash
+cargo run -p qimenctl -- simulate-onebot11 \
+  --bot qq-reverse \
+  --message /ping \
+  --user-id 10000 \
+  --self-id 10001
+```
+
+测试前请断开真实 OneBot 客户端，或使用独立测试 Bot。若 CLI 能打印 `send_msg` Action 并显示 `acknowledged`，说明 WebSocket、事件解码、命令匹配、插件回调和发送响应链路均已通过。群聊测试增加 `--group-id <群号>`；原始事件重放、Token 和超时选项见[传输层：使用 qimenctl 模拟 OneBot 11 客户端](/advanced/transport#使用-qimenctl-模拟-onebot-11-客户端)。
+
 ## 常见问题
 
 ### 连接失败：`WebSocket 连接失败`
@@ -162,6 +176,7 @@ QimenBot 需要 Rust 1.89+（2024 Edition）。运行 `rustup update` 更新 Rus
 - 确认 OneBot 实现是否正常登录
 - 查看终端日志是否有错误信息
 - 尝试在私聊中直接发送 `ping`（无需斜杠前缀）
+- 对于 `ws-reverse`，使用 `qimenctl simulate-onebot11` 区分客户端连接问题、命令未注册和插件回调问题
 
 ## 下一步
 

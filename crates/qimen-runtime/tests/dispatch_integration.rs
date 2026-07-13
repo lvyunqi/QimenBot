@@ -196,12 +196,10 @@ async fn system_dispatcher_ignores_poke_targeting_others() {
         .await;
 
     // AutoReplyPokeHandler should NOT emit a reply when target is not the bot
-    match result {
-        Some(OneBotSystemDispatchSignal::NoticeReply { .. }) => {
-            panic!("should not reply when poke targets another user");
-        }
-        _ => {} // Continue or other signals are fine
+    if let Some(OneBotSystemDispatchSignal::NoticeReply { .. }) = result {
+        panic!("should not reply when poke targets another user");
     }
+    // Continue or other signals are fine.
 }
 
 #[test]

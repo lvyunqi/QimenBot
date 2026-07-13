@@ -11,6 +11,12 @@
 - 更新动态插件示例、项目模板、配置参考和独立 crates.io 插件开发文档。
 - `abi-stable-host-api 0.1.10` 与 `qimen-dynamic-plugin-derive 0.1.10` 已发布到 crates.io，仓库外插件无需依赖本地主框架源码。
 
+### 内部链路诊断
+
+- 新增 `qimenctl simulate-onebot11`，可模拟标准 OneBot 11 反向 WebSocket 客户端发送私聊、群聊或原始 JSON 事件。
+- 模拟器自动完成 Token 鉴权、`lifecycle.connect` 上报、Action 展示和同 echo 成功回包，用于隔离客户端连接、命令注册、动态插件回调及发送链路问题。
+- 增加真实 WebSocket 握手、事件、Action 和 echo 往返测试，并支持脱离 `config/base.toml` 的显式端点模式。
+
 ---
 
 ## v0.1.9 (2026-07-12)

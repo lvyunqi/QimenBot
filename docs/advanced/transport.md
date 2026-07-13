@@ -99,6 +99,88 @@ QimenBot                    OneBot 实现
 - OneBot 实现断线后主动重连同一个监听地址
 - 防火墙只允许出站连接的环境
 
+## 使用 qimenctl 模拟 OneBot 11 客户端
+
+当命令没有回复时，可以让 `qimenctl` 临时充当 OneBot 11 实现端，不经过真实 QQ 客户端直接验证框架内部链路。模拟器会完成标准反向 WebSocket 握手、Token 鉴权、`lifecycle.connect` 上报、array 格式消息事件上报，并为框架发出的每个 Action 自动回写相同 `echo` 的成功响应。
+
+它覆盖的实际链路如下：
+
+```text
+qimenctl 模拟事件
+  -> 反向 WebSocket
+  -> OneBot 11 解码
+  -> Runtime 命令匹配
+  -> 静态或动态插件回调
+  -> send_msg Action
+  -> qimenctl echo 响应
+```
+
+::: warning 会话占用
+测试时应先断开真实 OneBot 客户端，或者为测试单独配置一个 `ws-reverse` Bot、端口和路径。不要让模拟器和真实客户端同时承担同一个 Bot 的反向 WebSocket 会话。
+:::
+
+### 按 Bot 配置测试
+
+先启动 `qimenbotd`，再在另一个终端发送私聊事件：
+
+```bash
+cargo run -p qimenctl -- simulate-onebot11 \
+  --bot qq-reverse \
+  --message /ping \
+  --user-id 10000 \
+  --self-id 10001
+```
+
+`--bot` 会从 `config/base.toml` 读取对应 Bot。监听地址为 `0.0.0.0` 或 `[::]` 时，CLI 会自动改用本机回环地址连接；Bot 必须启用并使用 `protocol = "onebot11"`、`transport = "ws-reverse"`。
+
+群聊事件增加 `--group-id`：
+
+```bash
+cargo run -p qimenctl -- simulate-onebot11 \
+  --bot qq-reverse \
+  --message /ping \
+  --user-id 10000 \
+  --self-id 10001 \
+  --group-id 20000
+```
+
+### 按显式端点测试
+
+显式端点模式不读取 `config/base.toml`，适合从独立目录使用已构建的 `qimenctl`，或连接专用测试监听器。Token 建议通过环境变量读取，避免出现在命令历史和进程参数中：
+
+```bash
+export QQ_REVERSE_TOKEN='replace-me'
+./qimenctl simulate-onebot11 \
+  --endpoint ws://127.0.0.1:6710/onebot/qimenbot \
+  --access-token-env QQ_REVERSE_TOKEN \
+  --message /ping \
+  --user-id 10000 \
+  --self-id 10001
+```
+
+也可以精确重放一个 OneBot 11 JSON 对象：
+
+```bash
+./qimenctl simulate-onebot11 \
+  --endpoint ws://127.0.0.1:6710/onebot/qimenbot \
+  --raw-event ./test-event.json \
+  --no-lifecycle
+```
+
+`--message` 与 `--raw-event` 二选一；`--bot` 与 `--endpoint` 也二选一。默认等待首个 Action 10 秒，收到首个 Action 后继续收集 750 毫秒，可通过 `--timeout-secs` 和 `--idle-millis` 调整。
+
+### 如何看测试结果
+
+| 现象 | 优先检查 |
+|------|----------|
+| WebSocket 握手失败 | 监听端口、路径、Token、防火墙，以及服务是否已启动 |
+| 框架日志没有 `received OneBot event` | 事件未进入 Runtime，检查连接和事件 JSON |
+| 有事件日志但没有命令命中日志 | 命令名、前缀、作用域、插件描述符中的 commands/aliases |
+| 已命中命令但 CLI 收不到 Action | 插件回调、FFI 调用、返回值或发送队列 |
+| CLI 打印 Action 并显示 acknowledged | 从事件到发送响应的完整框架链路已通过 |
+
+该工具故意不新增公网调试 HTTP 接口，因此不会在生产服务上额外暴露事件注入入口。
+
 ## HTTP 传输
 
 HTTP 模式将事件接收和 API 调用分为两个方向。
