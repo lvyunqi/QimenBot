@@ -111,6 +111,7 @@ export default defineConfig({
           items: [
             { text: '运行时原理', link: '/advanced/runtime' },
             { text: '传输层', link: '/advanced/transport' },
+            { text: 'API 0.4 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
             { text: '动态插件 Webhook Gateway', link: '/advanced/dynamic-webhook-v05' },
             { text: '部署指南', link: '/advanced/deployment' },
           ]
