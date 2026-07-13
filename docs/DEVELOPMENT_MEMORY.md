@@ -7,27 +7,34 @@
 - Enabled bots own bounded proactive queues and online protocol executors for OneBot 11 and QQ official sends.
 - OneBot 11 and QQ official targets cover private, group, channel, and channel-private routes.
 - Runtime shutdown rejects new sends, finishes the active send, drops queued work, then shuts down, unbinds, and unloads plugins.
-- Framework source for 0.1.10 is pushed to upstream/main, but crates.io publish is blocked by a missing cargo registry token.
-- The status plugin has a local API 0.4 proactive-send migration verified with command-level local crate patches; it is not pushed because the 0.1.10 crates are not published yet.
+- `abi-stable-host-api 0.1.10` and `qimen-dynamic-plugin-derive 0.1.10` are published and visible on crates.io.
+- The registry-only external plugin verification and Linux dynamic-library lifecycle smoke both pass.
+- The status plugin API 0.4 migration is pushed to its main branch with explicit `[[push.targets]]` and collector-driven real-time sends.
+- Framework release commits are on upstream/main; only the final `v0.1.10` tag remains.
 
 ## Recent Completion
 
-- Migrated C:\projects\newapi-status-bot locally to API 0.4 Host API sends with explicit [[push.targets]] and collector-driven push.
-- Updated the status plugin README and config example to remove Heartbeat-driven push guidance.
-- Verified the status plugin with fmt, unit tests, Clippy, and release build using local 0.1.10 crate patches.
-- Bumped all workspace crates and both publishable dynamic-plugin crates to 0.1.10.
-- Regenerated the root and independent dynamic-example lockfiles at 0.1.10.
+- Published both public dynamic-plugin crates at 0.1.10 and confirmed they are not yanked.
+- Verified a crates.io-only external `cdylib` can load, bind, send immediately after init, shut down, unbind, and release its Windows loader handle.
+- Migrated the status plugin to API 0.4 and pushed explicit multi-bot proactive targets, documentation, and crates.io lockfile updates to its main branch.
+- Added an Ubuntu FFI smoke that loads the real plugin `.so`, receives a proactive send without events, shuts down, unbinds, rejects post-unbind callbacks, and closes the loader handle.
+- Completed the status plugin CI across Check, Linux, Windows, and macOS in GitHub Actions run 29217151875.
 
 ## Next Step
 
-- Publish abi-stable-host-api 0.1.10 with a cargo registry token, then publish qimen-dynamic-plugin-derive 0.1.10.
+- Create and push the framework `v0.1.10` tag after confirming all release worktrees are clean.
 
 ## Verification Baseline
 
+- cargo metadata --locked (C:\projects\newapi-status-bot)
 - cargo fmt --all -- --check (C:\projects\newapi-status-bot)
-- cargo test --config "patch.crates-io.abi-stable-host-api.path='C:/projects/QimenBot/crates/abi-stable-host-api'" --config "patch.crates-io.qimen-dynamic-plugin-derive.path='C:/projects/QimenBot/crates/qimen-dynamic-plugin-derive'" (C:\projects\newapi-status-bot)
-- cargo clippy --config "patch.crates-io.abi-stable-host-api.path='C:/projects/QimenBot/crates/abi-stable-host-api'" --config "patch.crates-io.qimen-dynamic-plugin-derive.path='C:/projects/QimenBot/crates/qimen-dynamic-plugin-derive'" --all-targets -- -D warnings (C:\projects\newapi-status-bot)
-- cargo build --release --config "patch.crates-io.abi-stable-host-api.path='C:/projects/QimenBot/crates/abi-stable-host-api'" --config "patch.crates-io.qimen-dynamic-plugin-derive.path='C:/projects/QimenBot/crates/qimen-dynamic-plugin-derive'" (C:\projects\newapi-status-bot)
+- cargo test --locked (C:\projects\newapi-status-bot; 48 passed, 1 ignored)
+- cargo clippy --locked --all-targets -- -D warnings (C:\projects\newapi-status-bot)
+- cargo build --release --locked (C:\projects\newapi-status-bot)
+- cargo check --manifest-path tools/ffi-smoke/Cargo.toml --locked (C:\projects\newapi-status-bot)
+- cargo clippy --manifest-path tools/ffi-smoke/Cargo.toml --locked -- -D warnings (C:\projects\newapi-status-bot)
+- GitHub Actions run 29217151875: Check, Linux FFI smoke, Windows build, and macOS build passed.
+- registry-only API 0.4 load/send/unbind/unload verification passed with crates.io 0.1.10 dependencies.
 - cargo check --offline (plugins/qimen-dynamic-plugin-example)
 - cargo fmt --all -- --check
 - cargo clippy --workspace --offline -- -D warnings
