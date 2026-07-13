@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "abi-stable-host-api"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "abi_stable",
 ]
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-dynamic-plugin-derive"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "proc-macro2",
  "quote",

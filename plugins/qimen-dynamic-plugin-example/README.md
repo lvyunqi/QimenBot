@@ -6,7 +6,7 @@
 
 ## 在 QimenBot 仓库外开发
 
-动态插件不需要加入 QimenBot 主 workspace。API 0.5 对应的 `0.1.11` crates 发布前，可在任意目录创建独立 crate，并临时使用本地源码依赖：
+动态插件不需要加入 QimenBot 主 workspace。下面示例使用包含稳定账号选择接口的 `0.1.12` crates；如果该版本尚未发布到 crates.io，可临时改用本仓库中的本地 `path` 依赖：
 
 ```toml
 [package]
@@ -19,15 +19,15 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.11"
-qimen-dynamic-plugin-derive = "0.1.11"
+abi-stable-host-api = "0.1.12"
+qimen-dynamic-plugin-derive = "0.1.12"
 abi_stable = "0.11"
 serde_json = "1"
 ```
 
 仓库外项目不需要 `[workspace]`。如果把插件目录放在 QimenBot 仓库内、但不加入主 workspace，则像本示例一样增加一个空的 `[workspace]` 表。
 
-crate 发布版本与动态插件 ABI API 是两套版本。crates.io `0.1.11` 支持 API 0.1 至 0.5；需要 Webhook 时显式写出 `api = "0.5"`，需要实时主动推送时使用 `api = "0.4"`。未声明 `api` 时，过程宏仍生成兼容旧宿主的 API 0.3 插件。
+crate 发布版本与动态插件 ABI API 是两套版本。`0.1.12` 继续支持 API 0.1 至 0.5，并为 API 0.4/0.5 插件增加按 `account_id` 选择 Bot 的 Rust 接口；需要 Webhook 时显式写出 `api = "0.5"`，只需要实时主动推送时可使用 `api = "0.4"`。未声明 `api` 时，过程宏仍生成兼容旧宿主的 API 0.3 插件。
 
 ## 快速开始
 
@@ -65,7 +65,7 @@ Copy-Item target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 |---|---|
 | `greet`（别名 `hi`、`hello`） | 读取命令发送者信息并返回文本 |
 | `legacy-notify` | 演示 API 0.1 至 0.3 的回调后 flush 发送路径 |
-| `proactive-send` | 显式指定 Bot 和目标，通过 Host API 实时入队 |
+| `proactive-send` | 通过实例 `bot_id` 或 `account:QQ` 指定 Bot 和目标，实时入队 |
 | `POST /events` | 接收框架 Webhook Gateway 转发的 HTTP 请求 |
 | `#[pre_handle]` | 记录收到的消息并允许继续分发 |
 | `GroupPoke`、`PrivatePoke` | 演示动态系统事件路由 |
@@ -138,14 +138,14 @@ curl -i \
 
 ```toml
 [background_push]
-bot_id = "qq-main"
+account_id = "2733944636"
 kind = "group"
 target_id = "123456"
 message = "API 0.5 background push"
 interval_secs = 60
 ```
 
-`bot_id` 必须对应 QimenBot 配置中的一个启用 Bot。示例线程在 `init` 后立即尝试发送，此后按 `interval_secs` 间隔继续发送，不依赖命令、事件或 Heartbeat。
+`account_id` 应对应 QimenBot `[[bots]]` 中配置的稳定账号标识；OneBot 通常就是 Bot QQ / `self_id`。也可以改用 `bot_id = "qq-main"` 精确选择部署实例别名，但 `bot_id` 和 `account_id` 必须二选一，不能同时填写。示例线程在 `init` 后立即尝试发送，此后按 `interval_secs` 间隔继续发送，不依赖命令、事件或 Heartbeat。
 
 `kind` 支持以下目标：
 
@@ -160,7 +160,7 @@ OneBot 频道示例：
 
 ```toml
 [background_push]
-bot_id = "qq-reverse"
+account_id = "2733944636"
 kind = "channel"
 target_id = "channel-100"
 guild_id = "guild-200"
@@ -172,12 +172,12 @@ interval_secs = 60
 
 ## API 0.4+ 实时发送
 
-纯文本私聊或群聊可以使用 `BotApi::for_bot`：
+纯文本私聊或群聊推荐使用稳定账号选择：
 
 ```rust
 use abi_stable_host_api::{BotApi, SendEnqueueStatus};
 
-let status = BotApi::for_bot("qq-main")
+let status = BotApi::for_account("2733944636")
     .send_group_msg("123456", "实时通知");
 
 if status != SendEnqueueStatus::Accepted {
@@ -190,12 +190,12 @@ if status != SendEnqueueStatus::Accepted {
 ```rust
 let status = SendBuilder::channel("channel-100")
     .guild_id("guild-200")
-    .bot("qq-reverse")
+    .bot_account("2733944636")
     .text("频道通知")
     .try_send();
 ```
 
-`try_send()` 必须先调用 `.bot(...)`。宿主不会选择最近事件的 Bot，也不会在多个 Bot 中自动挑选一个。
+`try_send()` 必须先调用 `.bot(...)` 或 `.bot_account(...)`。按实例别名发送的旧接口仍然保留；宿主不会选择最近事件的 Bot，也不会在多个 Bot 中自动挑选一个。
 
 实时接口返回以下稳定状态：
 
@@ -204,7 +204,7 @@ let status = SendBuilder::channel("channel-100")
 | `Accepted` | 宿主已经复制请求并接受入队 |
 | `HostUnavailable` | Host API 尚未绑定或当前不可用 |
 | `InvalidRequest` | 请求字段、目标类型或 JSON 无效 |
-| `BotNotFound` | `bot_id` 不存在 |
+| `BotNotFound` | `bot_id` 或 `account_id` 不存在 |
 | `BotDisabled` | Bot 已配置但被禁用 |
 | `QueueFull` | 对应 Bot 的有界队列已满 |
 | `HostShuttingDown` | Runtime 正在关闭，不再接受新请求 |
@@ -233,7 +233,7 @@ SendBuilder::private("10001")
     .send();
 ```
 
-这两个调用写入插件侧旧队列，宿主在当前动态插件回调结束后通过 `qimen_plugin_flush_sends` 取走并发送。后台线程需要实时发送时，应使用 `BotApi::for_bot(...)` 或 `.bot(...).try_send()`。
+这两个调用写入插件侧旧队列，宿主在当前动态插件回调结束后通过 `qimen_plugin_flush_sends` 取走并发送。后台线程需要实时发送时，应使用 `BotApi::for_account(...)` / `BotApi::for_bot(...)`，或 `.bot_account(...)` / `.bot(...).try_send()`。
 
 ## 后台线程和安全卸载
 

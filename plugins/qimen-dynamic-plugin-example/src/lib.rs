@@ -21,7 +21,7 @@ static BACKGROUND_THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 #[derive(Clone)]
 struct BackgroundPushConfig {
-    bot_id: String,
+    bot: BotSelector,
     kind: String,
     target_id: String,
     guild_id: Option<String>,
@@ -29,18 +29,38 @@ struct BackgroundPushConfig {
     interval: Duration,
 }
 
+#[derive(Clone)]
+enum BotSelector {
+    Id(String),
+    Account(String),
+}
+
 fn parse_background_push(config_json: &str) -> Option<BackgroundPushConfig> {
     let root: serde_json::Value = serde_json::from_str(config_json).ok()?;
     let push = root.get("background_push")?;
-    let bot_id = push.get("bot_id")?.as_str()?.trim().to_string();
+    let bot_id = push
+        .get("bot_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let account_id = push
+        .get("account_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let bot = match (bot_id, account_id) {
+        (Some(bot_id), None) => BotSelector::Id(bot_id.to_string()),
+        (None, Some(account_id)) => BotSelector::Account(account_id.to_string()),
+        _ => return None,
+    };
     let kind = push.get("kind")?.as_str()?.trim().to_string();
     let target_id = push.get("target_id")?.as_str()?.trim().to_string();
-    if bot_id.is_empty() || target_id.is_empty() {
+    if target_id.is_empty() {
         return None;
     }
 
     Some(BackgroundPushConfig {
-        bot_id,
+        bot,
         kind,
         target_id,
         guild_id: push
@@ -64,32 +84,57 @@ fn parse_background_push(config_json: &str) -> Option<BackgroundPushConfig> {
 }
 
 fn try_send_target(
-    bot_id: &str,
+    bot: &BotSelector,
     kind: &str,
     target_id: &str,
     guild_id: Option<&str>,
     message: &str,
 ) -> SendEnqueueStatus {
     match kind {
-        "private" => BotApi::for_bot(bot_id).send_private_msg(target_id, message),
-        "group" => BotApi::for_bot(bot_id).send_group_msg(target_id, message),
+        "private" => match bot {
+            BotSelector::Id(bot_id) => BotApi::for_bot(bot_id).send_private_msg(target_id, message),
+            BotSelector::Account(account_id) => {
+                BotApi::for_account(account_id).send_private_msg(target_id, message)
+            }
+        },
+        "group" => match bot {
+            BotSelector::Id(bot_id) => BotApi::for_bot(bot_id).send_group_msg(target_id, message),
+            BotSelector::Account(account_id) => {
+                BotApi::for_account(account_id).send_group_msg(target_id, message)
+            }
+        },
         "channel" => {
-            let builder = SendBuilder::channel(target_id).bot(bot_id).text(message);
+            let builder = select_bot(SendBuilder::channel(target_id), bot).text(message);
             match guild_id {
                 Some(guild_id) => builder.guild_id(guild_id).try_send(),
                 None => builder.try_send(),
             }
         }
         "channel_private" => {
-            let builder = SendBuilder::channel_private(target_id)
-                .bot(bot_id)
-                .text(message);
+            let builder = select_bot(SendBuilder::channel_private(target_id), bot).text(message);
             match guild_id {
                 Some(guild_id) => builder.guild_id(guild_id).try_send(),
                 None => builder.try_send(),
             }
         }
         _ => SendEnqueueStatus::InvalidRequest,
+    }
+}
+
+fn select_bot(builder: SendBuilder, bot: &BotSelector) -> SendBuilder {
+    match bot {
+        BotSelector::Id(bot_id) => builder.bot(bot_id),
+        BotSelector::Account(account_id) => builder.bot_account(account_id),
+    }
+}
+
+fn parse_command_bot_selector(value: &str) -> Option<BotSelector> {
+    let value = value.trim();
+    if let Some(account_id) = value.strip_prefix("account:") {
+        let account_id = account_id.trim();
+        (!account_id.is_empty()).then(|| BotSelector::Account(account_id.to_string()))
+    } else {
+        (!value.is_empty()).then(|| BotSelector::Id(value.to_string()))
     }
 }
 
@@ -109,7 +154,7 @@ mod example {
         let handle = thread::spawn(move || {
             while !STOP_BACKGROUND.load(Ordering::Acquire) {
                 let status = try_send_target(
-                    &push.bot_id,
+                    &push.bot,
                     &push.kind,
                     &push.target_id,
                     push.guild_id.as_deref(),
@@ -193,12 +238,15 @@ mod example {
         let parts: Vec<&str> = req.args.as_str().trim().splitn(5, ' ').collect();
         if parts.len() != 5 {
             return CommandResponse::text(
-                "Usage: proactive-send <bot_id> <private|group|channel|channel_private> <target_id> <guild_id|-> <message>",
+                "Usage: proactive-send <bot_id|account:QQ> <private|group|channel|channel_private> <target_id> <guild_id|-> <message>",
             );
         }
 
+        let Some(bot) = parse_command_bot_selector(parts[0]) else {
+            return CommandResponse::text("Bot selector cannot be empty");
+        };
         let guild_id = (parts[3] != "-").then_some(parts[3]);
-        let status = try_send_target(parts[0], parts[1], parts[2], guild_id, parts[4]);
+        let status = try_send_target(&bot, parts[1], parts[2], guild_id, parts[4]);
         CommandResponse::text(&format!("Host enqueue status: {status:?}"))
     }
 
