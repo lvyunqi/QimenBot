@@ -289,6 +289,10 @@ fn is_dynamic_library_path(path: &Path) -> bool {
     )
 }
 
+fn uses_descriptor_collections(api_version: &str) -> bool {
+    matches!(api_version, "0.2" | "0.3" | "0.4")
+}
+
 fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
     unsafe {
         let library = libloading::Library::new(path).map_err(|err| {
@@ -317,13 +321,12 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2 or 0.3)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1, 0.2, 0.3 or 0.4)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
 
-        let is_v2_plus =
-            descriptor.api_version.as_str() == "0.2" || descriptor.api_version.as_str() == "0.3";
+        let is_v2_plus = uses_descriptor_collections(descriptor.api_version.as_str());
 
         // Parse v0.2+ multi-command entries
         let commands: Vec<DynamicCommandEntry> = if is_v2_plus && !descriptor.commands.is_empty() {
@@ -439,5 +442,18 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             meta_route: descriptor.meta_route.to_string(),
             meta_callback_symbol: "qimen_demo_plugin_handle_notice".to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uses_descriptor_collections;
+
+    #[test]
+    fn api_v04_uses_multi_entry_descriptor_collections() {
+        for version in ["0.2", "0.3", "0.4"] {
+            assert!(uses_descriptor_collections(version));
+        }
+        assert!(!uses_descriptor_collections("0.1"));
     }
 }

@@ -17,6 +17,10 @@
 - 模拟器自动完成 Token 鉴权、`lifecycle.connect` 上报、Action 展示和同 echo 成功回包，用于隔离客户端连接、命令注册、动态插件回调及发送链路问题。
 - 增加真实 WebSocket 握手、事件、Action 和 echo 往返测试，并支持脱离 `config/base.toml` 的显式端点模式。
 
+### 修复
+
+- 修复 official host 预扫描 API 0.4 动态插件时丢弃多命令和路由描述符的问题；`commands`、`aliases` 和事件 routes 现在会正确注册到 Runtime。
+
 ---
 
 ## v0.1.9 (2026-07-12)
