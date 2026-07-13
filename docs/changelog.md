@@ -1,5 +1,18 @@
 # 更新日志
 
+## v0.1.12（待发布）
+
+### 主动发送稳定账号选择
+
+- `[[bots]]` 新增可选 `account_id`，OneBot 可填写固定的 Bot QQ / `self_id`，与可调整的部署实例 `id` 分离。
+- 新增 `BotApi::for_account(...)`、`SendBuilder::bot_account(...)` 和 `ProactiveSendRequest::for_account(...)`；原有按 `bot_id` 发送保持兼容。
+- 稳定账号选择器编码在既有 `ProactiveSendRequest.bot_id` 字符串内，不改变 API 0.4/0.5 的 FFI 结构布局。
+- Runtime 为启用 Bot 建立账号索引，入队后规范化为实际实例 `id`；补充未找到、禁用、重复账号和实例改名测试。
+- 配置校验拒绝空账号、多个启用 Bot 的重复账号及占用宿主保留选择器前缀的实例 ID。
+- 更新动态插件示例、后台推送配置、Webhook、FFI、配置和 API 0.4 文档。
+
+---
+
 ## v0.1.11 (2026-07-13)
 
 ### 动态插件 Webhook Gateway

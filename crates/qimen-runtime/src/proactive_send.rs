@@ -1,4 +1,6 @@
-use abi_stable_host_api::{ProactiveSendRequest, SendEnqueueStatus};
+use abi_stable_host_api::{
+    PROACTIVE_BOT_ACCOUNT_SELECTOR_PREFIX, ProactiveSendRequest, SendEnqueueStatus,
+};
 use async_trait::async_trait;
 use qimen_adapter_onebot11::OneBot11Adapter;
 use qimen_adapter_qqbot::QqBotAdapter;
@@ -48,6 +50,9 @@ struct ProactiveSendHubInner {
     settings: ProactiveSendSettings,
     states: HashMap<String, Arc<BotQueueState>>,
     disabled_bots: HashSet<String>,
+    account_states: HashMap<String, Arc<BotQueueState>>,
+    disabled_accounts: HashSet<String>,
+    ambiguous_accounts: HashSet<String>,
     shutting_down: AtomicBool,
     active_workers: AtomicUsize,
     workers_stopped: Notify,
@@ -78,24 +83,42 @@ impl ProactiveSendHub {
     pub fn new(bots: &[BotRuntimeInfo], settings: ProactiveSendSettings) -> Self {
         let mut states = HashMap::new();
         let mut disabled_bots = HashSet::new();
+        let mut account_states = HashMap::new();
+        let mut disabled_accounts = HashSet::new();
+        let mut ambiguous_accounts = HashSet::new();
         let capacity = settings.queue_capacity.max(1);
 
         for bot in bots {
+            let account_id = bot
+                .account_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|account_id| !account_id.is_empty());
             if bot.enabled {
                 let (sender, receiver) = mpsc::channel(capacity);
-                states.insert(
-                    bot.id.clone(),
-                    Arc::new(BotQueueState {
-                        bot: bot.clone(),
-                        sender,
-                        receiver: std::sync::Mutex::new(Some(receiver)),
-                        executor: Mutex::new(None),
-                        notify: Notify::new(),
-                        next_registration_id: AtomicU64::new(1),
-                    }),
-                );
+                let state = Arc::new(BotQueueState {
+                    bot: bot.clone(),
+                    sender,
+                    receiver: std::sync::Mutex::new(Some(receiver)),
+                    executor: Mutex::new(None),
+                    notify: Notify::new(),
+                    next_registration_id: AtomicU64::new(1),
+                });
+                states.insert(bot.id.clone(), Arc::clone(&state));
+                if let Some(account_id) = account_id
+                    && !ambiguous_accounts.contains(account_id)
+                    && account_states
+                        .insert(account_id.to_string(), state)
+                        .is_some()
+                {
+                    account_states.remove(account_id);
+                    ambiguous_accounts.insert(account_id.to_string());
+                }
             } else {
                 disabled_bots.insert(bot.id.clone());
+                if let Some(account_id) = account_id {
+                    disabled_accounts.insert(account_id.to_string());
+                }
             }
         }
 
@@ -104,6 +127,9 @@ impl ProactiveSendHub {
                 settings,
                 states,
                 disabled_bots,
+                account_states,
+                disabled_accounts,
+                ambiguous_accounts,
                 shutting_down: AtomicBool::new(false),
                 active_workers: AtomicUsize::new(0),
                 workers_stopped: Notify::new(),
@@ -157,21 +183,42 @@ impl ProactiveSendHub {
             return SendEnqueueStatus::HostShuttingDown;
         }
 
-        let request = match OwnedProactiveSendRequest::from_ffi(request) {
+        let mut request = match OwnedProactiveSendRequest::from_ffi(request) {
             Ok(request) => request,
             Err(status) => return status,
         };
 
-        let state = match self.inner.states.get(&request.bot_id) {
-            Some(state) => state,
-            None => {
-                return if self.inner.disabled_bots.contains(&request.bot_id) {
-                    SendEnqueueStatus::BotDisabled
-                } else {
-                    SendEnqueueStatus::BotNotFound
-                };
+        let state = if let Some(account_id) = request
+            .bot_id
+            .strip_prefix(PROACTIVE_BOT_ACCOUNT_SELECTOR_PREFIX)
+        {
+            if account_id.is_empty() || self.inner.ambiguous_accounts.contains(account_id) {
+                return SendEnqueueStatus::InvalidRequest;
+            }
+            match self.inner.account_states.get(account_id) {
+                Some(state) => state,
+                None => {
+                    return if self.inner.disabled_accounts.contains(account_id) {
+                        SendEnqueueStatus::BotDisabled
+                    } else {
+                        SendEnqueueStatus::BotNotFound
+                    };
+                }
+            }
+        } else {
+            match self.inner.states.get(&request.bot_id) {
+                Some(state) => state,
+                None => {
+                    return if self.inner.disabled_bots.contains(&request.bot_id) {
+                        SendEnqueueStatus::BotDisabled
+                    } else {
+                        SendEnqueueStatus::BotNotFound
+                    };
+                }
             }
         };
+
+        request.bot_id.clone_from(&state.bot.id);
 
         match state.sender.try_send(request) {
             Ok(()) => SendEnqueueStatus::Accepted,
@@ -880,6 +927,7 @@ mod tests {
     fn test_bot(id: &str, enabled: bool, protocol: ProtocolId) -> BotRuntimeInfo {
         BotRuntimeInfo {
             id: id.to_string(),
+            account_id: None,
             protocol,
             transport: TransportMode::WsReverse,
             capabilities: CapabilitySet::default(),
@@ -965,6 +1013,66 @@ mod tests {
         assert_eq!(
             hub.enqueue_from_ffi(&text_request("missing", "group", "1")),
             SendEnqueueStatus::BotNotFound
+        );
+    }
+
+    #[test]
+    fn account_selector_survives_bot_alias_changes_and_normalizes_queue_identity() {
+        let mut enabled = test_bot("deployment-alias", true, ProtocolId::OneBot11);
+        enabled.account_id = Some("2733944636".to_string());
+        let mut disabled = test_bot("disabled-alias", false, ProtocolId::OneBot11);
+        disabled.account_id = Some("10001".to_string());
+        let hub = ProactiveSendHub::new(
+            &[enabled, disabled],
+            ProactiveSendSettings {
+                queue_capacity: 4,
+                offline_ttl: Duration::ZERO,
+            },
+        );
+
+        let mut request = ProactiveSendRequest::for_account("2733944636", "group", "835684778");
+        request.message = RString::from("hello");
+        assert_eq!(hub.enqueue_from_ffi(&request), SendEnqueueStatus::Accepted);
+
+        let state = hub.inner.states.get("deployment-alias").unwrap();
+        let mut receiver = state.receiver.lock().unwrap().take().unwrap();
+        let queued = receiver.try_recv().unwrap();
+        assert_eq!(queued.bot_id, "deployment-alias");
+
+        let mut disabled_request = ProactiveSendRequest::for_account("10001", "group", "835684778");
+        disabled_request.message = RString::from("hello");
+        assert_eq!(
+            hub.enqueue_from_ffi(&disabled_request),
+            SendEnqueueStatus::BotDisabled
+        );
+
+        let mut missing_request = ProactiveSendRequest::for_account("99999", "group", "835684778");
+        missing_request.message = RString::from("hello");
+        assert_eq!(
+            hub.enqueue_from_ffi(&missing_request),
+            SendEnqueueStatus::BotNotFound
+        );
+    }
+
+    #[test]
+    fn duplicate_enabled_account_is_rejected_defensively() {
+        let mut first = test_bot("bot-a", true, ProtocolId::OneBot11);
+        first.account_id = Some("2733944636".to_string());
+        let mut second = test_bot("bot-b", true, ProtocolId::OneBot11);
+        second.account_id = Some("2733944636".to_string());
+        let hub = ProactiveSendHub::new(
+            &[first, second],
+            ProactiveSendSettings {
+                queue_capacity: 4,
+                offline_ttl: Duration::ZERO,
+            },
+        );
+        let mut request = ProactiveSendRequest::for_account("2733944636", "group", "835684778");
+        request.message = RString::from("hello");
+
+        assert_eq!(
+            hub.enqueue_from_ffi(&request),
+            SendEnqueueStatus::InvalidRequest
         );
     }
 

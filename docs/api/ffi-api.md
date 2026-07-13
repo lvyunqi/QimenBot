@@ -532,7 +532,7 @@ v0.5 FFI 接口向后兼容 v0.1、v0.2、v0.3 和 v0.4：
 - API 0.5 没有向旧 `PluginDescriptor` 追加字段，而是使用单独的 Webhook 描述符导出，保持旧结构布局不变
 
 ::: info Host API v1 / 动态插件 API 0.4
-API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，并由过程宏生成 bind/unbind 导出。完整 ABI 生命周期、BotApi::for_bot、SendBuilder::try_send 和目标字段说明见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
+API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，并由过程宏生成 bind/unbind 导出。v0.1.12 的 `BotApi::for_account` / `SendBuilder::bot_account` 会把稳定账号选择器编码在既有 `bot_id` 字符串中，没有增加或重排 `ProactiveSendRequest` 字段，因此 API 0.4/0.5 ABI 布局保持不变。完整生命周期、选择方式和目标字段说明见 [API 0.4 实时主动推送](/advanced/dynamic-proactive-send-v04)。
 :::
 
 ## API 0.5 Webhook 导出

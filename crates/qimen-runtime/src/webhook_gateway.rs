@@ -265,7 +265,7 @@ fn render_plugin_response(
         tracing::warn!(
             plugin = %descriptor.plugin_id,
             count = response.queued_sends.len(),
-            "discarding legacy queued sends from webhook callback; use BotApi::for_bot(...).try_send()"
+            "discarding legacy queued sends from webhook callback; use BotApi::for_account(...) or BotApi::for_bot(...) with a real-time send method"
         );
     }
     let status = StatusCode::from_u16(response.status_code).unwrap_or(StatusCode::BAD_GATEWAY);

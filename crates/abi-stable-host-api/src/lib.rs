@@ -606,6 +606,13 @@ pub struct SendAction {
 /// Current proactive send request schema version.
 pub const PROACTIVE_SEND_SCHEMA_VERSION: u32 = 1;
 
+/// Reserved selector prefix used to address a runtime bot by its stable
+/// account identifier (for example, a OneBot `self_id` / Bot QQ number).
+///
+/// The selector is encoded in the existing `bot_id` field so API 0.4 and 0.5
+/// keep the exact same FFI layout.
+pub const PROACTIVE_BOT_ACCOUNT_SELECTOR_PREFIX: &str = "qimen:account:";
+
 /// Host API v1 function table version.
 pub const HOST_API_V1_ABI_VERSION: u32 = 1;
 
@@ -674,6 +681,24 @@ impl ProactiveSendRequest {
             segments_json: RString::new(),
             options_json: RString::from("{}"),
         }
+    }
+
+    /// Build a v1 request addressed by a stable Bot account identifier.
+    pub fn for_account(account_id: &str, target_kind: &str, target_id: &str) -> Self {
+        Self::new(
+            &proactive_bot_account_selector(account_id),
+            target_kind,
+            target_id,
+        )
+    }
+}
+
+fn proactive_bot_account_selector(account_id: &str) -> String {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        String::new()
+    } else {
+        format!("{PROACTIVE_BOT_ACCOUNT_SELECTOR_PREFIX}{account_id}")
     }
 }
 
@@ -785,6 +810,16 @@ impl BotApi {
     pub fn for_bot(bot_id: &str) -> ProactiveBotApi {
         ProactiveBotApi {
             bot_id: bot_id.to_string(),
+        }
+    }
+
+    /// Select a runtime bot by its stable account identifier.
+    ///
+    /// For OneBot 11 this should match the configured `account_id`, normally
+    /// the Bot QQ number reported as `self_id` by the OneBot implementation.
+    pub fn for_account(account_id: &str) -> ProactiveBotApi {
+        ProactiveBotApi {
+            bot_id: proactive_bot_account_selector(account_id),
         }
     }
 
@@ -983,6 +1018,15 @@ impl SendBuilder {
         self
     }
 
+    /// Select the runtime bot by its stable account identifier.
+    ///
+    /// Calling this after `bot`, or calling `bot` after this method, makes the
+    /// last selector win.
+    pub fn bot_account(mut self, account_id: &str) -> Self {
+        self.bot_id = Some(proactive_bot_account_selector(account_id));
+        self
+    }
+
     /// Attach the OneBot guild identifier required by channel sends.
     pub fn guild_id(mut self, guild_id: &str) -> Self {
         self.context_json = format!(r#"{{"guild_id":"{}"}}"#, escape_json_string(guild_id));
@@ -1152,6 +1196,58 @@ mod tests {
         assert_eq!(output[0].target_id.as_str(), "channel-1");
         assert_eq!(output[0].context_json.as_str(), r#"{"guild_id":"guild-1"}"#);
         assert!(output[0].segments_json.as_str().contains("hello"));
+    }
+
+    #[test]
+    fn account_scoped_apis_encode_selector_without_changing_request_layout() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
+        assert_eq!(
+            BotApi::for_account("   ").send_group_msg("group-1", "hello"),
+            SendEnqueueStatus::InvalidRequest
+        );
+
+        let output = Box::new(Mutex::new(Vec::<ProactiveSendRequest>::new()));
+        let context = (&*output as *const Mutex<Vec<ProactiveSendRequest>>)
+            .cast_mut()
+            .cast::<c_void>();
+        let api = HostApiV1 {
+            abi_version: HOST_API_V1_ABI_VERSION,
+            context,
+            enqueue_send: Some(record_send),
+        };
+        // SAFETY: api and output remain alive until unbind returns.
+        assert_eq!(
+            unsafe { bind_host_api_v1(&api) },
+            SendEnqueueStatus::Accepted.code()
+        );
+
+        assert_eq!(
+            BotApi::for_account(" 2733944636 ").send_group_msg("group-1", "hello"),
+            SendEnqueueStatus::Accepted
+        );
+        assert_eq!(
+            SendBuilder::group("group-2")
+                .bot("old-alias")
+                .bot_account("2733944636")
+                .text("hello")
+                .try_send(),
+            SendEnqueueStatus::Accepted
+        );
+        assert_eq!(
+            SendBuilder::group("group-3")
+                .bot_account("2733944636")
+                .bot("new-alias")
+                .text("hello")
+                .try_send(),
+            SendEnqueueStatus::Accepted
+        );
+        assert_eq!(unbind_host_api_v1(), SendEnqueueStatus::Accepted.code());
+
+        let output = output.lock().expect("output");
+        assert_eq!(output.len(), 3);
+        assert_eq!(output[0].bot_id.as_str(), "qimen:account:2733944636");
+        assert_eq!(output[1].bot_id.as_str(), "qimen:account:2733944636");
+        assert_eq!(output[2].bot_id.as_str(), "new-alias");
     }
 
     struct BlockingContext {

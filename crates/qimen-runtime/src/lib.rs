@@ -199,6 +199,7 @@ impl NormalizedActionExecutor for OneBotRuntimeContext<'_> {
 #[derive(Debug, Clone)]
 pub struct BotRuntimeInfo {
     pub id: String,
+    pub account_id: Option<String>,
     pub protocol: ProtocolId,
     pub transport: TransportMode,
     pub capabilities: CapabilitySet,
@@ -497,6 +498,7 @@ impl Runtime {
             .iter()
             .map(|bot| BotRuntimeInfo {
                 id: bot.id.clone(),
+                account_id: bot.account_id.clone(),
                 protocol: parse_protocol(&bot.protocol),
                 transport: parse_transport(&bot.transport),
                 capabilities: CapabilitySet::default(),
@@ -4067,6 +4069,7 @@ path = "/onebot/reverse"
     fn qq_official_bot() -> BotRuntimeInfo {
         BotRuntimeInfo {
             id: "qq-official".to_string(),
+            account_id: Some("qq-official-account".to_string()),
             protocol: ProtocolId::QqOfficial,
             transport: TransportMode::Gateway,
             capabilities: CapabilitySet::default(),

@@ -2,7 +2,7 @@
 
 QimenBot v0.1.11 在 Runtime 中提供框架级 HTTP Webhook Gateway。动态插件可以声明精确的 HTTP 路由，由宿主统一监听端口、限制请求大小和并发数，并把请求转换成 ABI 稳定的 `WebhookRequest` 调用插件。
 
-Webhook 不依赖 OneBot 或 QQ 官方 Gateway 收到新事件。即使没有 Bot 在线、没有 Heartbeat，也可以接收 HTTP 请求；只有插件要继续向 Bot 推送消息时，才要求目标 Bot 已配置并显式指定 `bot_id`。
+Webhook 不依赖 OneBot 或 QQ 官方 Gateway 收到新事件。即使没有 Bot 在线、没有 Heartbeat，也可以接收 HTTP 请求；只有插件要继续向 Bot 推送消息时，才要求目标 Bot 已配置并通过 `account_id` 或实例 `bot_id` 显式选择。
 
 仓库外插件可以直接使用 crates.io `0.1.11`：
 
@@ -119,12 +119,12 @@ WebhookResponse::text(200, "ok").with_headers_json(
 
 ## 从 Webhook 主动发送 Bot 消息
 
-Webhook 没有“当前 Bot”上下文，因此必须明确选择 Bot：
+Webhook 没有“当前 Bot”上下文，因此必须明确选择 Bot。OneBot 推荐在宿主配置中设置稳定的 `account_id`（Bot QQ / `self_id`），避免插件依赖可变的实例别名。下面的账号选择接口从 crate `0.1.12` 开始提供；使用 `0.1.11` 时继续调用 `for_bot` / `bot`：
 
 ```rust
 use abi_stable_host_api::{BotApi, SendEnqueueStatus};
 
-let status = BotApi::for_bot("qq-reverse")
+let status = BotApi::for_account("2733944636")
     .send_group_msg("123456", "Webhook received");
 
 if status != SendEnqueueStatus::Accepted {
@@ -137,10 +137,12 @@ if status != SendEnqueueStatus::Accepted {
 ```rust
 let status = SendBuilder::channel("channel-id")
     .guild_id("guild-id")
-    .bot("qq-reverse")
+    .bot_account("2733944636")
     .text("Webhook received")
     .try_send();
 ```
+
+按部署实例选择的 `BotApi::for_bot(...)` 和 `.bot(...)` 继续兼容，适合确实需要区分同一账号不同传输实例的情况。
 
 不要在 Webhook 回调中使用旧 `BotApi::send_group_msg(...)` 或 `SendBuilder::send()`。这些接口写入“回调结束后 flush”的旧队列，无法推断 Webhook 应使用哪个 Bot；宿主会丢弃这类发送并记录警告。
 

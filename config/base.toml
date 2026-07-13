@@ -78,8 +78,10 @@ access_token = ""
 
 # ── Bot 1：正向 WebSocket 连接 ──
 [[bots]]
-# Bot 唯一标识，不可重复
+# Bot 部署实例别名，不可重复；可以按部署需要调整
 id = "qq-main"
+# 主动发送使用的可选稳定账号；OneBot 填 Bot QQ / self_id
+# account_id = "123456789"
 
 # 通信协议："onebot11"（生产就绪）| "onebot12"（计划中）| "satori"（计划中）
 protocol = "onebot11"
@@ -162,6 +164,8 @@ auto_reply_poke_message = "别戳了，我在忙。"
 # ── Bot 2：反向 WebSocket（由 OneBot 实现端主动连接框架）──
 [[bots]]
 id = "qq-reverse"
+# 可与禁用的备用传输实例相同，但多个启用 Bot 之间必须唯一
+# account_id = "123456789"
 protocol = "onebot11"
 transport = "ws-reverse"
 
@@ -183,6 +187,8 @@ admins = []
 # ── Bot 3：OneBot 12 预留 ──
 [[bots]]
 id = "future-ob12"
+# 可选的稳定外部账号 / self_id
+# account_id = "123456789"
 protocol = "onebot12"
 transport = "ws-forward"
 endpoint = "ws://127.0.0.1:6710"

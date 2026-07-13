@@ -1,8 +1,11 @@
 use qimen_error::{QimenError, Result};
 use qimen_plugin_api::RateLimiterConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+const RESERVED_BOT_SELECTOR_PREFIX: &str = "qimen:account:";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -115,6 +118,10 @@ impl Default for WebhookGatewayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotConfig {
     pub id: String,
+    /// Stable external account identifier used by proactive sends.
+    /// For OneBot this is normally the Bot QQ number reported as `self_id`.
+    #[serde(default)]
+    pub account_id: Option<String>,
     pub protocol: String,
     pub transport: String,
     pub endpoint: Option<String>,
@@ -231,9 +238,34 @@ impl AppConfig {
             ));
         }
 
+        let mut enabled_accounts = HashMap::<String, String>::new();
         for bot in &self.bots {
             if bot.id.trim().is_empty() {
                 return Err(QimenError::Config("bot id cannot be empty".to_string()));
+            }
+            if bot.id.starts_with(RESERVED_BOT_SELECTOR_PREFIX) {
+                return Err(QimenError::Config(format!(
+                    "bot id '{}' uses the reserved proactive-send selector prefix '{}'",
+                    bot.id, RESERVED_BOT_SELECTOR_PREFIX
+                )));
+            }
+            if let Some(account_id) = bot.account_id.as_deref() {
+                let account_id = account_id.trim();
+                if account_id.is_empty() {
+                    return Err(QimenError::Config(format!(
+                        "bot '{}' account_id cannot be empty",
+                        bot.id
+                    )));
+                }
+                if bot.enabled
+                    && let Some(existing_bot) =
+                        enabled_accounts.insert(account_id.to_string(), bot.id.clone())
+                {
+                    return Err(QimenError::Config(format!(
+                        "enabled bots '{}' and '{}' declare the same account_id '{}'",
+                        existing_bot, bot.id, account_id
+                    )));
+                }
             }
             if bot.protocol.trim().is_empty() {
                 return Err(QimenError::Config(format!(
@@ -735,6 +767,152 @@ transport = "ws-forward"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn parse_and_validate_stable_bot_account_id() {
+        let toml_str = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "changeable-alias"
+account_id = "2733944636"
+protocol = "onebot11"
+transport = "ws-forward"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.bots[0].account_id.as_deref(), Some("2733944636"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_and_duplicate_enabled_account_ids() {
+        let empty_account = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "bot-a"
+account_id = "   "
+protocol = "onebot11"
+transport = "ws-forward"
+"#;
+        let config: AppConfig = toml::from_str(empty_account).unwrap();
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("account_id")
+        );
+
+        let duplicate_account = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "bot-a"
+account_id = "2733944636"
+protocol = "onebot11"
+transport = "ws-forward"
+
+[[bots]]
+id = "bot-b"
+account_id = "2733944636"
+protocol = "onebot11"
+transport = "ws-forward"
+"#;
+        let config: AppConfig = toml::from_str(duplicate_account).unwrap();
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("same account_id")
+        );
+    }
+
+    #[test]
+    fn validate_allows_disabled_alternative_for_same_account() {
+        let toml_str = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "forward"
+account_id = "2733944636"
+protocol = "onebot11"
+transport = "ws-forward"
+enabled = false
+
+[[bots]]
+id = "reverse"
+account_id = "2733944636"
+protocol = "onebot11"
+transport = "ws-reverse"
+bind = "127.0.0.1:6701"
+path = "/onebot/reverse"
+enabled = true
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_reserved_bot_id_selector_prefix() {
+        let toml_str = r#"
+[runtime]
+env = "development"
+shutdown_timeout_secs = 10
+task_grace_secs = 5
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "0.0.0.0:9090"
+
+[[bots]]
+id = "qimen:account:2733944636"
+protocol = "onebot11"
+transport = "ws-forward"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("reserved")
+        );
     }
 
     #[test]

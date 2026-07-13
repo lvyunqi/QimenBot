@@ -501,7 +501,7 @@ impl MyPlugin { /* ... */ }
 
 ### 在主仓库外独立开发
 
-动态插件不需要引用本地 QimenBot 源码。两个 QimenBot 专用依赖已发布到 crates.io，插件可以是任意目录中的独立 Rust 项目：
+动态插件不需要加入 QimenBot 主 workspace。下面使用包含稳定账号选择接口的 `0.1.12` 版本；该版本发布到 crates.io 前，可以临时使用本仓库的 `path` 依赖：
 
 ```toml
 [package]
@@ -514,12 +514,12 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.11"
-qimen-dynamic-plugin-derive = "0.1.11"
+abi-stable-host-api = "0.1.12"
+qimen-dynamic-plugin-derive = "0.1.12"
 abi_stable = "0.11"
 ```
 
-[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 的 crate 发布版本当前为 `0.1.11`，支持动态插件 API `0.1` 至 `0.5`。crate 发布版本与插件描述符中的 ABI API 是两套版本：实时主动推送使用 `api = "0.4"`，Webhook Gateway 使用 `api = "0.5"`；未声明 `api` 时过程宏仍生成兼容旧宿主的 API `0.3` 插件。
+[`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) 当前已发布的 `0.1.11` 支持动态插件 API `0.1` 至 `0.5`；仓库源码 `0.1.12` 继续保持该 ABI 范围，并新增 `BotApi::for_account` 与 `SendBuilder::bot_account`。crate 发布版本与插件描述符中的 ABI API 是两套版本：实时主动推送使用 `api = "0.4"`，Webhook Gateway 使用 `api = "0.5"`；未声明 `api` 时过程宏仍生成兼容旧宿主的 API `0.3` 插件。
 
 仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
 
@@ -546,7 +546,15 @@ mod my_plugin {
 
 ### API 0.4 实时主动推送
 
-需要从后台线程发送消息时，显式声明 API `0.4`，并为每次发送指定运行时中的 `bot_id`：
+需要从后台线程发送消息时，显式声明 API `0.4`，并为每次发送指定稳定的 Bot 账号或运行时实例别名。OneBot 推荐在 `[[bots]]` 中把 QQ / `self_id` 配置为 `account_id`：
+
+```toml
+[[bots]]
+id = "qq-reverse"
+account_id = "2733944636"
+protocol = "onebot11"
+transport = "ws-reverse"
+```
 
 ```rust
 use abi_stable_host_api::{BotApi, SendEnqueueStatus};
@@ -557,7 +565,7 @@ mod push_example {
     use super::*;
 
     fn push_now() {
-        match BotApi::for_bot("qq-main")
+        match BotApi::for_account("2733944636")
             .send_group_msg("123456", "后台实时通知")
         {
             SendEnqueueStatus::Accepted => {}
@@ -566,6 +574,8 @@ mod push_example {
     }
 }
 ```
+
+`BotApi::for_bot("qq-main")` 和 `.bot("qq-main")` 仍然可用，适合必须精确选择某个部署实例的场景；一般业务插件优先使用稳定账号，这样部署侧修改 `id` 后无需重新编译插件。
 
 `Accepted` 仅表示宿主已复制请求并接受入队，不表示网络发送已经成功。`try_send()` 还可能返回 `HostUnavailable`、`InvalidRequest`、`BotNotFound`、`BotDisabled`、`QueueFull` 或 `HostShuttingDown`。实时接口支持私聊、群聊、频道和频道私信；OneBot 频道目标通过 `SendBuilder::guild_id(...)` 补充 `guild_id`。
 
@@ -611,7 +621,7 @@ max_in_flight = 64
 access_token = ""
 ```
 
-网关默认关闭且只监听回环地址。生产部署建议配置 Bearer token、在反向代理处启用 TLS，并由插件按第三方协议验证 HMAC 签名和时间戳。Webhook 回调中如需主动发送消息，必须通过 `BotApi::for_bot(...)` 或 `.bot(...).try_send()` 明确指定 `bot_id`。完整配置、状态码、热重载和安全边界见 [API 0.5 动态插件 Webhook Gateway](docs/advanced/dynamic-webhook-v05.md)。
+网关默认关闭且只监听回环地址。生产部署建议配置 Bearer token、在反向代理处启用 TLS，并由插件按第三方协议验证 HMAC 签名和时间戳。Webhook 回调中如需主动发送消息，必须通过 `BotApi::for_account(...)` / `BotApi::for_bot(...)` 或 `.bot_account(...)` / `.bot(...).try_send()` 明确选择 Bot。完整配置、状态码、热重载和安全边界见 [API 0.5 动态插件 Webhook Gateway](docs/advanced/dynamic-webhook-v05.md)。
 
 ### 构建 & 部署
 
@@ -677,12 +687,12 @@ CommandResponse::builder()
 BotApi::send_group_msg(group_id, "通知内容");
 SendBuilder::private(user_id).text("私聊消息").send();
 
-// API 0.4：显式选择 Bot，立即提交到该 Bot 的实时队列
-let status = BotApi::for_bot("qq-main")
+// API 0.4：按稳定账号选择 Bot，立即提交到对应实例的实时队列
+let status = BotApi::for_account("2733944636")
     .send_group_msg(group_id, "实时通知");
 let status = SendBuilder::channel(channel_id)
     .guild_id(guild_id)
-    .bot("qq-reverse")
+    .bot_account("2733944636")
     .text("频道通知")
     .try_send();
 ```
