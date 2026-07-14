@@ -54,33 +54,51 @@ plugin_state_path = "config/plugin-state.toml"
 # 动态插件（.so/.dll/.dylib）的扫描目录
 plugin_bin_dir = "plugins/bin"
 
-# Dynamic plugin API 0.4 real-time proactive send queues.
+# 单次动态插件 FFI 回调的执行超时时间（秒）
+# 超时后宿主会记录错误并停止等待该次调用，避免插件长期阻塞事件分发
+dynamic_plugin_timeout_secs = 30
+
+# ── 动态插件实时主动发送（API 0.4）──
 [official_host.proactive_send]
-# Maximum accepted requests waiting for each enabled bot.
+# 每个已启用 Bot 的待发送队列容量；必须大于 0
 queue_capacity = 256
-# How long a queued request may wait for its bot to reconnect; 0 drops immediately.
+
+# Bot 离线时，请求在队列中等待重连的最长时间（秒）
+# 设为 0 时，离线请求立即丢弃；实际开始发送后失败不会自动重试
 offline_ttl_secs = 60
 
-# Dynamic plugin API 0.5 HTTP Webhook Gateway. Disabled and loopback-only by default.
+# ── 动态插件 HTTP Webhook 网关（API 0.5）──
+# 默认关闭且仅监听本机。启用后，宿主统一接收 HTTP 请求并路由给动态插件
 [official_host.webhook]
 enabled = false
 bind = "127.0.0.1:8088"
-# Plugin routes are exposed as: {base_path}/{plugin_id}/{plugin-local-path}.
+
+# 完整路由格式：{base_path}/{plugin_id}/{插件声明的局部路径}
+# 例如插件 alpha 声明 POST /events 时，对外地址为 /webhooks/alpha/events
 base_path = "/webhooks"
+
+# 单个请求体上限（字节）、插件回调超时（毫秒）和全局并发请求上限
 max_body_bytes = 1048576
 request_timeout_ms = 5000
 max_in_flight = 64
-# Optional global bearer token. Keep empty only when access is otherwise trusted.
+
+# 可选的全局 Bearer Token；客户端需发送 Authorization: Bearer TOKEN
+# 对公网开放时应设置 Token，并通过带 TLS 的反向代理限制来源；仅在可信网络中留空
+# 支持环境变量占位符，例如：access_token = "${QIMEN_WEBHOOK_TOKEN}"
 access_token = ""
 
 # ── Bot 实例配置 / Bot Instances ─────────────────────────────────────────
 # 每个 [[bots]] 块定义一个 Bot 实例，可以配置多个
+# id 是部署实例名，可按环境调整；插件可以用 BotApi::for_bot(id) 选择实例
+# account_id 是可选的稳定账号标识，OneBot 通常填写 Bot QQ / self_id
+# 插件可用 BotApi::for_account(account_id) 按账号选择 Bot，避免实例名调整后修改插件配置
+# 多个已启用 Bot 的 id 和 account_id 都必须分别唯一；禁用的备用传输实例可复用 account_id
 
 # ── Bot 1：正向 WebSocket 连接 ──
 [[bots]]
-# Bot 部署实例别名，不可重复；可以按部署需要调整
+# Bot 部署实例别名
 id = "qq-main"
-# 主动发送使用的可选稳定账号；OneBot 填 Bot QQ / self_id
+# 使用按账号主动发送时，取消注释并填写真实 Bot QQ / self_id
 # account_id = "123456789"
 
 # 通信协议："onebot11"（生产就绪）| "onebot12"（计划中）| "satori"（计划中）
@@ -164,7 +182,7 @@ auto_reply_poke_message = "别戳了，我在忙。"
 # ── Bot 2：反向 WebSocket（由 OneBot 实现端主动连接框架）──
 [[bots]]
 id = "qq-reverse"
-# 可与禁用的备用传输实例相同，但多个启用 Bot 之间必须唯一
+# 同一 QQ 的正向、反向传输可配置相同 account_id，但只能同时启用其中一个实例
 # account_id = "123456789"
 protocol = "onebot11"
 transport = "ws-reverse"
@@ -187,7 +205,7 @@ admins = []
 # ── Bot 3：OneBot 12 预留 ──
 [[bots]]
 id = "future-ob12"
-# 可选的稳定外部账号 / self_id
+# 使用按账号主动发送时，填写协议实现上报的稳定账号 / self_id
 # account_id = "123456789"
 protocol = "onebot12"
 transport = "ws-forward"
