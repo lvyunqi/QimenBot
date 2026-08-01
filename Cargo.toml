@@ -41,7 +41,7 @@ resolver = "2"
 edition = "2024"
 license = "MIT"
 rust-version = "1.89"
-version = "0.1.13"
+version = "0.1.14"
 
 [workspace.dependencies]
 abi_stable = "0.11"
