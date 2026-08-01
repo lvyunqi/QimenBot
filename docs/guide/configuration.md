@@ -77,6 +77,23 @@ metrics_bind = "127.0.0.1:9090"   # Metrics 暴露地址（预留）
 - **生产环境** → `warn`（只记录警告和错误）
 :::
 
+## `[admin_web]` — Web 管理面板
+
+QimenBot 自带本地 Web 管理面板，默认访问地址是 `http://127.0.0.1:3210`。它可以查看 Bot 状态和实时日志，管理动态插件，并在校验通过后编辑配置。
+
+```toml
+[admin_web]
+enabled = true
+bind = "127.0.0.1:3210"
+access_token = "${QIMEN_ADMIN_TOKEN}"
+log_capacity = 2000
+audit_path = "config/admin-audit.jsonl"
+```
+
+本机只监听回环地址时可以不配置 Token。只要 `bind` 使用非回环地址，就必须提供 `access_token`。面板中的管理 Token 和 Webhook Token 只写不读，页面只显示“已配置”或“未配置”徽标；留空保存会保留原值。
+
+配置页分为运行时、面板安全、模块与插件、Webhook、配置版本五个分区。保存前会先校验 TOML 并备份当前版本，涉及监听地址、鉴权或启动期模块的修改会标记为“需要重启”。完整操作说明见 [Web 管理面板](/guide/web-admin)。
+
 ## `[official_host]` — 全局模块加载
 
 这个区块决定框架启动时**加载哪些模块到内存**，是全局共享的。

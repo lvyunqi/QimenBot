@@ -10,6 +10,8 @@ plugins/bin/
 *.db
 *.db-shm
 *.db-wal
+config/admin-audit.jsonl
+config/.qimen-revisions/
 
 # 本地参考项目
 参考项目/

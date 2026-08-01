@@ -1,5 +1,6 @@
 use abi_stable::std_types::RVec;
 use abi_stable_host_api::{PluginDescriptor, WebhookDescriptorEntry, is_compatible_api_version};
+use qimen_admin_web::AdminServer;
 use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
 use qimen_framework::Runtime;
@@ -11,11 +12,12 @@ use qimen_mod_admin::AdminModule;
 use qimen_mod_bridge::BridgeModule;
 use qimen_mod_command::CommandModule;
 use qimen_mod_scheduler::SchedulerModule;
-use qimen_observability::init;
+use qimen_observability::{LogStore, init_with_log_store};
 use qimen_plugin_api::Module;
 use qimen_plugin_host::ModuleRegistry;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 const HOST_PLUGIN_API_VERSION: &str = "0.1";
 const HOST_FRAMEWORK_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -49,7 +51,12 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
     }
 
     let config = AppConfig::load_from_path(config_path)?;
-    init(&config.observability.level, config.observability.json_logs)?;
+    let log_store = LogStore::new(config.admin_web.log_capacity);
+    init_with_log_store(
+        &config.observability.level,
+        config.observability.json_logs,
+        config.admin_web.enabled.then_some(log_store.clone()),
+    )?;
 
     tracing::info!("starting qimen official host");
 
@@ -70,10 +77,16 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
 
     let plugins = modules.collect_plugins();
 
-    let runtime =
-        Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report);
+    let runtime = Arc::new(
+        Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report),
+    );
     tracing::info!(bots = runtime.bots().len(), "official host initialized");
-    runtime.boot().await?;
+    if config.admin_web.enabled {
+        let admin = AdminServer::new(config_path, &config, Arc::clone(&runtime), log_store);
+        tokio::try_join!(runtime.boot(), admin.serve())?;
+    } else {
+        runtime.boot().await?;
+    }
     tracing::info!("official host stopped");
     Ok(())
 }

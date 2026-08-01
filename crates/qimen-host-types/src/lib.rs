@@ -173,13 +173,20 @@ impl PluginState {
         }
         let mut root = toml::map::Map::new();
         root.insert("modules".to_string(), toml::Value::Table(table));
-        let tmp_path = format!("{}.tmp", path);
+        let tmp_path = format!("{}.{}.tmp", path, std::process::id());
         fs::write(
             &tmp_path,
             toml::to_string(&toml::Value::Table(root))
                 .map_err(|err| QimenError::Config(err.to_string()))?,
         )?;
-        fs::rename(&tmp_path, path)?;
+        if let Err(first_error) = fs::rename(&tmp_path, path) {
+            if target.exists() {
+                fs::remove_file(target)?;
+                fs::rename(&tmp_path, path)?;
+            } else {
+                return Err(first_error.into());
+            }
+        }
         Ok(())
     }
 

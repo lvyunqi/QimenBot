@@ -1,0 +1,24 @@
+[package]
+name = "qimen-admin-web"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+mime_guess.workspace = true
+qimen-config = { path = "../qimen-config" }
+qimen-error = { path = "../qimen-error" }
+qimen-host-types = { path = "../qimen-host-types" }
+qimen-observability = { path = "../qimen-observability" }
+qimen-runtime = { path = "../qimen-runtime" }
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+tracing.workspace = true

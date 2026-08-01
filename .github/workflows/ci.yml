@@ -19,6 +19,19 @@ jobs:
         with:
           components: clippy
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+
+      - name: Build admin web
+        working-directory: web/admin
+        run: |
+          npm ci
+          npm run build
+
       - name: Cargo check
         run: cargo check --workspace
 
