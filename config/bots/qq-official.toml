@@ -11,10 +11,10 @@ secret = "${QQBOT_SECRET}"
 sandbox = false
 
 # Common public-bot MVP intents:
-# - public_messages: QQ group @ messages and QQ C2C messages
-# - public_guild_messages: channel @ messages
-# - direct_message: channel private messages
-intents = ["public_messages", "public_guild_messages", "direct_message"]
+# - GROUP_AND_C2C_EVENT: QQ group @/full messages and QQ C2C messages
+# - PUBLIC_GUILD_MESSAGES: channel @ messages
+# - DIRECT_MESSAGE: channel private messages
+intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
 
 enabled_modules = ["command", "admin"]
 owners = []

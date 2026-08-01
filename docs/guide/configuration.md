@@ -171,10 +171,10 @@ appid = "${QQBOT_APPID}"
 secret = "${QQBOT_SECRET}"
 sandbox = false
 
-# public_messages: QQ 群 @ 消息和 QQ 单聊 C2C 消息
-# public_guild_messages: 频道 @ 消息
-# direct_message: 频道私信消息
-intents = ["public_messages", "public_guild_messages", "direct_message"]
+# GROUP_AND_C2C_EVENT: QQ 群 @/全量消息和 QQ 单聊 C2C 消息
+# PUBLIC_GUILD_MESSAGES: 频道 @ 消息
+# DIRECT_MESSAGE: 频道私信消息
+intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
 
 enabled_modules = ["command", "admin"]
 owners = []
@@ -188,6 +188,32 @@ admins = []
 - `config/bots/qq-official.toml` 只是参考模板；运行时仍以 `config/base.toml` 和环境覆盖配置为准。
 - 完整接入流程见 [官方 QQ Bot 接入](/guide/qq-official-quickstart)。
 :::
+
+官方 Bot 字段：
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `appid` | 无 | QQ 开放平台 AppID，启用时不能为空 |
+| `secret` | 无 | QQ 开放平台 AppSecret，启用时不能为空 |
+| `sandbox` | `false` | 是否使用官方沙箱 OpenAPI 基地址 |
+| `intents` | `[]` | Gateway Identify 时申请的事件位掩码 |
+| `account_id` | 无 | 主动发送使用的稳定账号选择器，可填写长期不变的应用账号标识 |
+
+常用 intent：
+
+| 名称 | 用途 |
+|------|------|
+| `GROUP_AND_C2C_EVENT` | QQ 群 @、获准使用的全量群消息、QQ 单聊 C2C |
+| `PUBLIC_GUILD_MESSAGES` | 公域频道 @ 和相关频道消息 |
+| `DIRECT_MESSAGE` | 频道私信 |
+| `INTERACTION` | 按钮和快捷菜单互动 |
+| `MESSAGE_AUDIT` | 消息审核结果 |
+| `GUILDS` / `GUILD_MEMBERS` | 频道及频道成员事件 |
+| `GUILD_MESSAGE_REACTIONS` | 频道消息表情回应 |
+| `FORUMS_EVENT` / `OPEN_FORUM_EVENT` | 论坛事件 |
+| `AUDIO_ACTION` / `AUDIO_OR_LIVE_CHANNEL_MEMBER` | 音频和直播子频道事件 |
+
+名称不区分大小写，未知名称会在配置校验阶段报错。`public_messages` 是 `GROUP_AND_C2C_EVENT` 的兼容别名，`forums` 是 `FORUMS_EVENT` 的兼容别名。平台授权和本地 `intents` 必须同时满足；填写 intent 本身不会开通平台权限。
 
 **反向 WebSocket 示例**（框架等待连接）：
 

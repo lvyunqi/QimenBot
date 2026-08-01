@@ -23,7 +23,7 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 
 ## 特性
 
-- **多协议支持** — OneBot 11（生产就绪）、官方 QQ Bot（预览）、OneBot 12 / Satori（预留扩展点）
+- **多协议支持** — OneBot 11、官方 QQ Bot，OneBot 12 / Satori 预留扩展点
 - **多传输模式** — 正向 WebSocket、反向 WebSocket、HTTP API、HTTP POST、官方 Gateway + OpenAPI
 - **声明式插件开发** — `#[module]` / `#[commands]` / `#[notice]` 宏生成注册与路由代码
 - **拦截器链** — `pre_handle` / `after_completion`，支持黑名单、权限校验、快捷指令改写等
@@ -33,7 +33,7 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 - **动态插件** — `#[dynamic_plugin]` 宏声明式开发，`dlopen` 热重载，ABI 稳定
 - **请求自动化** — 好友/群邀请的自动审批，基于白名单、黑名单、关键词过滤
 - **完善的 OneBot 11 API** — 消息、群管理、文件、频道、表情回应等 40+ 操作封装
-- **官方 QQ Bot 接入** — 支持 QQ 群 @、QQ 单聊 C2C、频道 @、频道私信和 Markdown / Keyboard 等消息能力
+- **官方 QQ Bot 接入** — 支持群 @ 与全量群消息、C2C、频道和 DMS，包含 Markdown / Keyboard、媒体上传、撤回、互动 ACK、心跳与断线恢复
 
 ## 架构
 
@@ -65,7 +65,7 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 - Rust 1.89+（2024 Edition）
 - 一个 OneBot 11 实现（如 [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core)、[NapCat](https://github.com/NapNeko/NapCatQQ) 等）
 
-如果接入官方 QQ Bot，不需要 OneBot 实现端，请参考 [官方 QQ Bot 接入](docs/guide/qq-official-quickstart.md)。
+如果接入官方 QQ Bot，不需要 OneBot 实现端。凭据、事件权限、群内 @ 测试和常见错误见 [官方 QQ Bot 接入](docs/guide/qq-official-quickstart.md)，插件开发见 [官方 QQ Bot 插件适配](docs/plugin/qq-official.md)。
 
 ### 构建 & 运行
 
@@ -772,7 +772,7 @@ QimenBot/
 | 协议 | 状态 | 传输模式 |
 |------|------|---------|
 | OneBot 11 | ✅ 生产就绪 | WS 正向、WS 反向、HTTP API、HTTP POST |
-| 官方 QQ Bot | 🧪 预览 | Gateway + OpenAPI |
+| 官方 QQ Bot | ✅ 已支持 | Gateway + OpenAPI |
 | OneBot 12 | 🔲 计划中 | — |
 | Satori | 🔲 计划中 | — |
 

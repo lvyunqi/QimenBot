@@ -20,7 +20,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Notify, mpsc};
 
-use crate::{BotRuntimeInfo, build_echo, upload_qqbot_media, value_to_optional_string};
+use crate::{
+    BotRuntimeInfo, QqBotMediaUploadOutcome, build_echo, upload_qqbot_media,
+    value_to_optional_string,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProactiveSendSettings {
@@ -730,17 +733,19 @@ async fn execute_qq_official_packet(
                 .get("file_type")
                 .and_then(Value::as_i64)
                 .unwrap_or(1),
-            url: payload
-                .get("url")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot upload media missing url".to_string())
-                })?,
+            url: payload.get("url").and_then(value_to_optional_string),
             srv_send_msg: payload
                 .get("srv_send_msg")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            file_name: payload.get("file_name").and_then(value_to_optional_string),
+            upload_id: payload.get("upload_id").and_then(value_to_optional_string),
         };
+        if file_payload.url.is_none() && file_payload.upload_id.is_none() {
+            return Err(QimenError::Protocol(
+                "qqbot upload media missing url or upload_id".to_string(),
+            ));
+        }
         return match route {
             "group_file" => {
                 let group_openid = payload
@@ -765,16 +770,24 @@ async fn execute_qq_official_packet(
     }
 
     let media_upload = payload.get("media_upload").cloned();
+    let message_id = payload.get("msg_id").and_then(value_to_optional_string);
+    let msg_seq = payload.get("msg_seq").and_then(Value::as_i64).or_else(|| {
+        (message_id.is_some() && matches!(route, "group_message" | "c2c_message")).then_some(1)
+    });
     let mut message_payload = SendMessagePayload {
         msg_type: payload.get("msg_type").and_then(Value::as_i64),
         content: payload.get("content").and_then(value_to_optional_string),
-        msg_id: payload.get("msg_id").and_then(value_to_optional_string),
-        msg_seq: payload.get("msg_seq").and_then(Value::as_i64),
+        msg_id: message_id,
+        msg_seq,
         event_id: payload.get("event_id").and_then(value_to_optional_string),
+        is_wakeup: payload.get("is_wakeup").and_then(Value::as_bool),
         markdown: payload.get("markdown").cloned(),
         keyboard: payload.get("keyboard").cloned(),
         ark: payload.get("ark").cloned(),
         embed: payload.get("embed").cloned(),
+        card: payload.get("card").cloned(),
+        input_notify: payload.get("input_notify").cloned(),
+        message_reference: payload.get("message_reference").cloned(),
         media: payload.get("media").cloned(),
         image: payload.get("image").and_then(value_to_optional_string),
     };
@@ -801,8 +814,10 @@ async fn execute_qq_official_packet(
             if let Some(upload) = media_upload.as_ref()
                 && message_payload.media.is_none()
             {
-                message_payload.media =
-                    Some(upload_qqbot_media(client, "group_file", &group_openid, upload).await?);
+                match upload_qqbot_media(client, "group_file", &group_openid, upload).await? {
+                    QqBotMediaUploadOutcome::Media(media) => message_payload.media = Some(media),
+                    QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
+                }
                 message_payload.msg_type = Some(7);
                 message_payload.image = None;
             }
@@ -820,8 +835,10 @@ async fn execute_qq_official_packet(
             if let Some(upload) = media_upload.as_ref()
                 && message_payload.media.is_none()
             {
-                message_payload.media =
-                    Some(upload_qqbot_media(client, "c2c_file", &openid, upload).await?);
+                match upload_qqbot_media(client, "c2c_file", &openid, upload).await? {
+                    QqBotMediaUploadOutcome::Media(media) => message_payload.media = Some(media),
+                    QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
+                }
                 message_payload.msg_type = Some(7);
                 message_payload.image = None;
             }

@@ -21,7 +21,7 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 
 ## Features
 
-- **Multi-protocol** — OneBot 11 (production-ready), Official QQ Bot (preview), OneBot 12 / Satori (extension points reserved)
+- **Multi-protocol** — OneBot 11 and Official QQ Bot, with extension points reserved for OneBot 12 / Satori
 - **Multiple transports** — Forward WebSocket, Reverse WebSocket, HTTP API, HTTP POST, Official Gateway + OpenAPI
 - **Declarative plugin development** — Write a full plugin in ~7 lines with `#[module]` / `#[commands]` / `#[notice]` macros
 - **Interceptor chain** — `pre_handle` / `after_completion` hooks for blacklists, permission checks, shortcut rewriting, etc.
@@ -31,7 +31,7 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 - **Dynamic plugins** — Load ABI-stable shared libraries via `dlopen` at runtime
 - **Request automation** — Auto-approve/reject friend & group requests with whitelist/blacklist/keyword filters
 - **Comprehensive OneBot 11 API** — 40+ wrapped operations: messaging, group admin, files, guilds, reactions, and more
-- **Official QQ Bot integration** — QQ group mentions, C2C private chats, guild channel mentions, DMS, and Markdown / Keyboard messages
+- **Official QQ Bot integration** — Group mentions and full group messages, C2C, channels and DMS, plus Markdown / Keyboard, media upload, recall, interaction ACK, heartbeat, and session resume
 
 ## Architecture
 
@@ -63,7 +63,7 @@ QimenBot is a modular, extensible chatbot framework written in Rust. It separate
 - Rust 1.89+ (2024 Edition)
 - An OneBot 11 implementation (e.g., [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core), [NapCat](https://github.com/NapNeko/NapCatQQ), etc.)
 
-For Official QQ Bot, you do not need a OneBot implementation. See [Official QQ Bot integration](docs/guide/qq-official-quickstart.md).
+Official QQ Bot does not require a OneBot implementation. See [Official QQ Bot integration](docs/guide/qq-official-quickstart.md) for credentials, event permissions, group mention tests, and troubleshooting.
 
 ### Build & Run
 
@@ -250,7 +250,7 @@ QimenBot/
 | Protocol | Status | Transports |
 |----------|--------|-----------|
 | OneBot 11 | ✅ Production-ready | WS Forward, WS Reverse, HTTP API, HTTP POST |
-| Official QQ Bot | 🧪 Preview | Gateway + OpenAPI |
+| Official QQ Bot | ✅ Supported | Gateway + OpenAPI |
 | OneBot 12 | 🔲 Planned | — |
 | Satori | 🔲 Planned | — |
 

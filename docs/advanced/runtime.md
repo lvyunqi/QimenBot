@@ -83,9 +83,64 @@ OneBot 11 和官方 QQ Bot 共用这条消息流水线。差异只保留在协�
 | 协议 | 事件入口 | 回复出口 | 说明 |
 |------|----------|----------|------|
 | `onebot11` | WebSocket/HTTP OneBot 事件 | OneBot action | 支持 OneBot 11 完整动作模型 |
-| `qq-official` | 官方 Gateway Dispatch | 官方 OpenAPI | 支持 QQ 群 @、QQ 单聊、频道 @、频道私信 |
+| `qq-official` | 官方 Gateway Dispatch | 官方 OpenAPI | 支持 QQ 群 @/全量消息、QQ 单聊、频道消息、频道私信 |
 
-官方 QQ Bot 的发送失败会返回 `ActionStatus::Failed` 并记录错误分类。429 频控会按 bot + route 做短期 backoff，避免主动发送失败导致 Gateway 会话被重启。
+官方 QQ Bot 的发送失败会返回 `ActionStatus::Failed` 并记录错误分类。OpenAPI 发送错误不会重启 Gateway 会话；429 频控会按 bot + route 做短期 backoff。
+
+### 官方 QQ 消息归一化
+
+Gateway Dispatch 到达后，`qimen-adapter-qqbot` 按事件类型建立稳定的消息上下文：
+
+| 原始事件 | `chat.kind` | `actor.id` | `chat.id` |
+|----------|-------------|------------|-----------|
+| `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` | `group` | `member_openid` | `group_openid` |
+| `C2C_MESSAGE_CREATE` | `private` | `user_openid` | `user_openid` |
+| `AT_MESSAGE_CREATE` / `MESSAGE_CREATE` | `channel` | 频道用户 ID | `channel_id` |
+| `DIRECT_MESSAGE_CREATE` | `channel_private` | 频道用户 ID | `guild_id` |
+
+官方 ID 和消息 ID 都按字符串保留。`NormalizedEvent::message_id_str()` 可以无损读取；`message_id()`、`user_id()`、`group_id_i64()` 只在原始字段确实是数字时有值。
+
+归一化后的 `raw_json` 包含通用字段：
+
+```json
+{
+  "post_type": "message",
+  "message_type": "group",
+  "message_id": "ROBOT1.0_...",
+  "user_id": "member_openid",
+  "group_id": "group_openid",
+  "to_me": true,
+  "qqbot_payload": {}
+}
+```
+
+原始 Gateway `d` 对象完整放在 `qqbot_payload`。`event_type`、`event_id`、Gateway `sequence`、`msg_idx`、`message_scene` 等常用值还会复制到 `extensions`，插件不必反复解析原始结构。
+
+### 群消息中的 @
+
+全量群消息不能只靠事件名判断是否指向机器人。运行时接受适配器计算的 `to_me`：
+
+1. `GROUP_AT_MESSAGE_CREATE` 和 `AT_MESSAGE_CREATE` 直接视为指向机器人。
+2. `GROUP_MESSAGE_CREATE` 检查 `mentions[].is_you`。
+3. 文本中的 `<qqbot-at-user id="..." />`、`<@id>` 和 `<@!id>` 转成有序 At 段。
+4. 命令前的机器人提及和空白从纯文本命令中清理。
+
+`NormalizedEvent::is_at_self()` 同时检查 `raw_json.to_me` 和消息段中的自身 ID，供插件统一使用。
+
+### 官方回复执行
+
+插件产生回复后，`QqOfficialRuntimeContext` 负责构建 action：
+
+```text
+chat.kind=group           -> send_group_msg
+chat.kind=private         -> send_private_msg
+chat.kind=channel         -> send_channel_msg
+chat.kind=channel_private -> send_dms
+```
+
+有 `message_id` 时使用 `msg_id`；只有没有消息 ID 的事件才使用 `event_id`。群和 C2C 在实际发送前按 `bot + route + msg_id` 分配递增 `msg_seq`，同一状态一小时未更新后清理。这样一个命令产生多条回复时，不会重复使用 `msg_seq = 1`。
+
+`msg_id`、`event_id` 和 `is_wakeup=true` 在编码层再次检查互斥关系。媒体回复会先完成 `/files` 上传，再把 `file_info` 放入消息请求。
 
 ## 命令路由
 
@@ -160,9 +215,26 @@ notice_type + sub_type → SystemNoticeRoute
 
 ### 官方 QQ Bot 非消息事件
 
-官方 QQ Bot 的非消息事件先由 `qimen-adapter-qqbot` 归一化为 `EventKind::Notice` 或 `EventKind::Meta`，并在 `raw_json.notice_type` 中保留稳定路由名。当前已覆盖 QQ 群管理、QQ 单聊管理、频道消息删除、频道成员、互动、审核、论坛、音频和直播子频道成员事件。
+官方 QQ Bot 的非消息 Dispatch 会先转换为 `EventKind::Notice`、`EventKind::Meta` 或 `EventKind::Internal`，再进入通用系统事件 dispatcher。`raw_json.notice_type` 使用稳定的小写名称，`raw_json.qqbot_payload` 保留官方原始 `d` 对象。
 
-这些事件先进入通用事件记录和插件可见的 `NormalizedEvent`，后续如需与 OneBot 的 `SystemPlugin` 路由完全打通，可以在 runtime 中增加官方事件专用 dispatcher。
+当前 Notice 覆盖：
+
+| 类别 | Gateway 事件 |
+|------|--------------|
+| 频道和子频道 | `GUILD_CREATE/UPDATE/DELETE`、`CHANNEL_CREATE/UPDATE/DELETE` |
+| 频道成员 | `GUILD_MEMBER_ADD/UPDATE/REMOVE` |
+| 消息删除和回应 | `MESSAGE_DELETE`、`PUBLIC_MESSAGE_DELETE`、`DIRECT_MESSAGE_DELETE`、`MESSAGE_REACTION_ADD/REMOVE` |
+| QQ 群机器人状态 | `GROUP_ADD_ROBOT`、`GROUP_DEL_ROBOT`、`GROUP_MSG_REJECT/RECEIVE` |
+| C2C 和好友状态 | `FRIEND_ADD/DEL`、`GROUP_MEMBER_ADD/REMOVE`、`C2C_MSG_REJECT/RECEIVE` |
+| 互动和审核 | `INTERACTION_CREATE`、`MESSAGE_AUDIT_PASS/REJECT`、`SUBSCRIBE_MESSAGE_STATUS` |
+| 音频和直播 | `AUDIO_START/FINISH/ON_MIC/OFF_MIC`、音视频或直播成员进出 |
+| 论坛 | 私域 Forum 和 Open Forum 的主题、帖子、回复创建/更新/删除事件 |
+
+`READY` 和 `RESUMED` 映射为 Meta；未知的官方事件不会被伪装成已有 OneBot notice，而是保留为 `EventKind::Internal(原事件名)`。
+
+`INTERACTION_CREATE` 的类型 11、12 在插件分发前自动调用官方 ACK 接口，避免客户端一直显示等待。ACK 失败只记录警告，原事件仍继续进入系统分发。
+
+通用 dispatcher 可以把稳定 route 交给静态或动态系统插件。OneBot 专属的好友申请、群邀请审批 action 不会自动套用到官方 QQ Bot；对应信号只记录为当前协议没有自动动作映射。
 
 ## 运行时保护机制
 
@@ -180,7 +252,7 @@ notice_type + sub_type → SystemNoticeRoute
 
 ### 消息去重
 
-基于 `message_id` 的滑动窗口去重：
+基于 Bot、协议、会话和 `message_id` 的滑动窗口去重：
 
 ```
 收到 msg_id=12345
@@ -188,6 +260,14 @@ notice_type + sub_type → SystemNoticeRoute
 收到 msg_id=12345 (重复)
     → 检查缓存 → 已存在 → 丢弃
 ```
+
+官方 QQ 全量消息还可能提供 `msg_idx` 或 `msg_seq`。运行时优先把该投递索引加入去重键：
+
+```text
+bot + protocol + chat.kind + chat.id + message_id + msg_idx
+```
+
+因此同一 `message_id`、不同 `msg_idx` 的投递可以分别处理；完全相同的重投仍会被丢弃。没有投递索引时退回普通消息 ID 去重。
 
 ### 拦截器链
 

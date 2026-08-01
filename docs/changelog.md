@@ -1,5 +1,40 @@
 # 更新日志
 
+## v0.1.13 (2026-08-01)
+
+### 官方 QQ Bot 消息接入
+
+- 增加 `GROUP_MESSAGE_CREATE` 全量群消息支持，并保留 `GROUP_AT_MESSAGE_CREATE`、`C2C_MESSAGE_CREATE`、频道消息和频道私信的统一处理。
+- 兼容当前 `<qqbot-at-user id="..." />`、旧版 `<@id>` / `<@!id>` 及 `mentions[].is_you`，按原顺序恢复 At/Text 段，修复全量群消息中 @ 机器人后命令不回复的问题。
+- 官方用户、群、频道和消息 ID 全程按字符串保存；动态插件命令和拦截器不再丢失官方字符串消息 ID。
+- 解析附件、`msg_elements`、`message_scene`、`msg_idx`、成员角色和 RFC 3339 时间；原始 Gateway `d` 对象保存在 `raw_json.qqbot_payload`。
+- 扩充频道、群/C2C 管理、消息删除、互动、审核、论坛、音频和直播子频道成员事件映射；`READY`、`RESUMED` 作为 Meta 事件保留。
+
+### 回复和 OpenAPI
+
+- 群、C2C、频道和 DMS 回复进入同一命令、权限、限流、拦截器及静态/动态插件流水线，并按会话类型选择对应 OpenAPI endpoint。
+- 群和 C2C 回复优先使用原始 `msg_id`，自动为同一来信分配递增 `msg_seq`；没有消息 ID 的事件使用 `event_id`，并校验 `msg_id`、`event_id`、`is_wakeup=true` 互斥。
+- 支持群/C2C 文本、Markdown、Keyboard、媒体、群 Card 和 C2C Input notify；支持频道/DMS 文本、Markdown、Keyboard、Ark、Embed 和图片。
+- 群/C2C 图片、语音、视频和文件先调用 `/files`，再使用返回的 `file_info` 发送 `msg_type = 7`；补齐群、C2C、频道和 DMS 消息撤回。
+- `INTERACTION_CREATE` 中需要确认的互动由运行时自动调用 ACK 接口，避免客户端持续等待。
+- OpenAPI 错误保留 HTTP 状态、官方错误码、`retry_after` 和 `trace_id`，并区分鉴权、权限、频控、请求、资源和服务端错误；429 按 Bot 与路由退避。
+
+### Gateway 会话
+
+- access token 按 `expires_in` 缓存并提前刷新，Gateway 地址通过 `/gateway/bot` 获取。
+- 完整处理 Hello、Identify、READY、Heartbeat、Heartbeat ACK、Reconnect、Invalid Session 和 Resume。
+- Dispatch 成功处理后再提交序号；断线后携带 `session_id` 和最后序号恢复，无效会话自动清空状态并重新 Identify。
+- 校验 Gateway 建议分片数，当前单连接模式在平台建议多分片时给出明确警告。
+
+### 运行时与文档
+
+- QQ 全量消息去重键加入 `msg_idx` / `msg_seq`，允许同一消息 ID 的不同投递片段分别处理。
+- 增加 Gateway 原始 payload 到命令回复的端到端回归测试，覆盖群 @、全量群消息、C2C、频道、DMS、富消息、媒体、撤回、互动 ACK、错误分类和会话恢复。
+- 重写官方 QQ Bot 新手接入和插件适配文档，补齐平台权限、配置、测试顺序、字符串 ID、回复配额、媒体流程和排错方法；同步传输层、运行时、配置及 README。
+- 动态插件 API 仍为 0.5，ABI 和 Host API 布局未改变；现有仓库外动态插件无需因本次 QQ 官方协议更新重新编译或升级 crates.io 依赖。
+
+---
+
 ## v0.1.12 (2026-07-14)
 
 ### 主动发送稳定账号选择

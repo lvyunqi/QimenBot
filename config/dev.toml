@@ -30,7 +30,7 @@ enabled = true
 appid = "${QQBOT_APPID}"
 secret = "${QQBOT_SECRET}"
 sandbox = false
-intents = ["public_messages", "public_guild_messages", "direct_message"]
+intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
 
 enabled_modules = ["command", "admin", "scheduler"]
 owners = []

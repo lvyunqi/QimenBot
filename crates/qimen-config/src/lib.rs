@@ -330,7 +330,8 @@ pub fn qq_official_intents_value(intents: &[String]) -> Result<u64> {
 }
 
 pub fn qq_official_intent_bit(intent: &str) -> Result<u64> {
-    let bit = match intent {
+    let normalized = intent.trim().to_ascii_lowercase();
+    let bit = match normalized.as_str() {
         "guilds" => 1_u64 << 0,
         "guild_members" => 1_u64 << 1,
         "guild_messages" => 1_u64 << 9,
@@ -338,16 +339,16 @@ pub fn qq_official_intent_bit(intent: &str) -> Result<u64> {
         "direct_message" => 1_u64 << 12,
         "open_forum_event" => 1_u64 << 18,
         "audio_or_live_channel_member" => 1_u64 << 19,
-        "public_messages" => 1_u64 << 25,
+        "group_and_c2c_event" | "public_messages" => 1_u64 << 25,
         "interaction" => 1_u64 << 26,
         "message_audit" => 1_u64 << 27,
-        "forums" => 1_u64 << 28,
+        "forums_event" | "forums" => 1_u64 << 28,
         "audio_action" => 1_u64 << 29,
         "public_guild_messages" => 1_u64 << 30,
-        other => {
+        _ => {
             return Err(QimenError::Config(format!(
                 "unknown qq-official intent '{}'",
-                other
+                intent
             )));
         }
     };
@@ -1020,6 +1021,21 @@ sandbox = true
             (1_u64 << 25) | (1_u64 << 30) | (1_u64 << 12)
         );
         assert!(config.bots[0].sandbox);
+    }
+
+    #[test]
+    fn qq_official_intents_accept_canonical_names_case_insensitively() {
+        let intents = vec![
+            " GROUP_AND_C2C_EVENT ".to_string(),
+            "PUBLIC_GUILD_MESSAGES".to_string(),
+            "DIRECT_MESSAGE".to_string(),
+            "FORUMS_EVENT".to_string(),
+        ];
+
+        assert_eq!(
+            qq_official_intents_value(&intents).unwrap(),
+            (1_u64 << 25) | (1_u64 << 30) | (1_u64 << 12) | (1_u64 << 28)
+        );
     }
 
     #[test]

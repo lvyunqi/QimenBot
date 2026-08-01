@@ -65,7 +65,7 @@ struct CachedAccessToken {
 #[derive(Debug, Clone, Deserialize)]
 struct TokenResponse {
     access_token: String,
-    expires_in: String,
+    expires_in: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,6 +98,8 @@ pub struct SendMessagePayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_wakeup: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub markdown: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keyboard: Option<Value>,
@@ -105,6 +107,12 @@ pub struct SendMessagePayload {
     pub ark: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embed: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_notify: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_reference: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,10 +127,14 @@ impl SendMessagePayload {
             msg_id: None,
             msg_seq: None,
             event_id: None,
+            is_wakeup: None,
             markdown: None,
             keyboard: None,
             ark: None,
             embed: None,
+            card: None,
+            input_notify: None,
+            message_reference: None,
             media: None,
             image: None,
         }
@@ -132,8 +144,13 @@ impl SendMessagePayload {
 #[derive(Debug, Clone, Serialize)]
 pub struct UploadFilePayload {
     pub file_type: i64,
-    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub srv_send_msg: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +161,7 @@ pub struct QqBotApiError {
     pub message: String,
     pub category: QqBotApiErrorCategory,
     pub retry_after_ms: Option<u64>,
+    pub trace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +189,9 @@ impl std::fmt::Display for QqBotApiError {
         write!(f, ", category {:?}: {}", self.category, self.message)?;
         if let Some(retry_after_ms) = self.retry_after_ms {
             write!(f, ", retry_after_ms={retry_after_ms}")?;
+        }
+        if let Some(trace_id) = self.trace_id.as_deref() {
+            write!(f, ", trace_id={trace_id}")?;
         }
         Ok(())
     }
@@ -276,6 +297,44 @@ impl QqBotOpenApiClient {
         .await
     }
 
+    pub async fn recall_group_message(
+        &self,
+        group_openid: &str,
+        message_id: &str,
+    ) -> Result<Value> {
+        self.delete_json(
+            &format!("/v2/groups/{group_openid}/messages/{message_id}"),
+            &[],
+        )
+        .await
+    }
+
+    pub async fn recall_c2c_message(&self, openid: &str, message_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v2/users/{openid}/messages/{message_id}"), &[])
+            .await
+    }
+
+    pub async fn recall_dms_message(
+        &self,
+        guild_id: &str,
+        message_id: &str,
+        hidetip: bool,
+    ) -> Result<Value> {
+        self.delete_json(
+            &format!("/dms/{guild_id}/messages/{message_id}"),
+            &[("hidetip", hidetip.to_string())],
+        )
+        .await
+    }
+
+    pub async fn acknowledge_interaction(&self, interaction_id: &str, code: i64) -> Result<Value> {
+        self.put_json(
+            &format!("/interactions/{interaction_id}"),
+            &json!({ "code": code }),
+        )
+        .await
+    }
+
     async fn fetch_access_token(&self) -> Result<CachedAccessToken> {
         let response = self
             .http
@@ -302,12 +361,16 @@ impl QqBotOpenApiClient {
         }
 
         let parsed: TokenResponse = serde_json::from_str(&body)?;
-        let ttl_secs = parsed.expires_in.parse::<u64>().map_err(|err| {
-            QimenError::Transport(format!(
-                "qqbot token response has invalid expires_in '{}': {err}",
-                parsed.expires_in
-            ))
-        })?;
+        let ttl_secs = parsed
+            .expires_in
+            .as_u64()
+            .or_else(|| parsed.expires_in.as_str()?.parse::<u64>().ok())
+            .ok_or_else(|| {
+                QimenError::Transport(format!(
+                    "qqbot token response has invalid expires_in '{}'",
+                    parsed.expires_in
+                ))
+            })?;
         let refresh_after = ttl_secs.saturating_sub(60).max(1);
 
         Ok(CachedAccessToken {
@@ -347,6 +410,24 @@ impl QqBotOpenApiClient {
             .send()
             .await
             .map_err(|err| QimenError::Transport(format!("qqbot POST {path} failed: {err}")))?;
+
+        decode_response(response, path).await
+    }
+
+    async fn put_json<T>(&self, path: &str, payload: &T) -> Result<Value>
+    where
+        T: Serialize + ?Sized,
+    {
+        let token = self.bot_authorization().await?;
+        let response = self
+            .http
+            .put(format!("{}{}", self.config.base_url(), path))
+            .header("Authorization", token)
+            .header("X-Union-Appid", self.config.appid.as_str())
+            .json(payload)
+            .send()
+            .await
+            .map_err(|err| QimenError::Transport(format!("qqbot PUT {path} failed: {err}")))?;
 
         decode_response(response, path).await
     }
@@ -393,6 +474,7 @@ fn build_api_error(path: &str, status: u16, body: &str) -> QqBotApiError {
     let parsed = serde_json::from_str::<Value>(body).unwrap_or(Value::Null);
     let code = parsed
         .get("code")
+        .or_else(|| parsed.get("err_code"))
         .or_else(|| parsed.get("errcode"))
         .and_then(Value::as_i64);
     let message = parsed
@@ -405,7 +487,15 @@ fn build_api_error(path: &str, status: u16, body: &str) -> QqBotApiError {
     let retry_after_ms = parsed
         .get("retry_after")
         .or_else(|| parsed.get("retry_after_ms"))
-        .and_then(Value::as_u64);
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str()?.parse::<u64>().ok())
+        });
+    let trace_id = parsed
+        .get("trace_id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
 
     QqBotApiError {
         path: path.to_string(),
@@ -414,22 +504,50 @@ fn build_api_error(path: &str, status: u16, body: &str) -> QqBotApiError {
         category: classify_api_error(status, code, &message),
         message,
         retry_after_ms,
+        trace_id,
     }
 }
 
 fn classify_api_error(status: u16, code: Option<i64>, message: &str) -> QqBotApiErrorCategory {
     let lower = message.to_ascii_lowercase();
-    if status == 401 || status == 403 && lower.contains("token") {
+    if status == 401
+        || status == 403 && lower.contains("token")
+        || matches!(
+            code,
+            Some(100007 | 100016 | 11241 | 11242 | 11243 | 11251 | 11252 | 11261)
+        )
+    {
         return QqBotApiErrorCategory::Authentication;
     }
     if status == 429
         || lower.contains("rate")
         || lower.contains("frequency")
         || lower.contains("频控")
+        || lower.contains("限频")
+        || matches!(
+            code,
+            Some(
+                100001
+                    | 20028
+                    | 304019
+                    | 304035
+                    | 304045
+                    | 304047
+                    | 304049
+                    | 304050
+                    | 40034100
+                    | 1100100
+            )
+        )
     {
         return QqBotApiErrorCategory::RateLimited;
     }
-    if status == 403 {
+    if status == 403
+        || matches!(
+            code,
+            Some(11253 | 11254 | 11264 | 304004 | 304036 | 304037 | 40034105 | 40062003 | 306004)
+        )
+    {
         return QqBotApiErrorCategory::Permission;
     }
     if status == 404 {
@@ -441,10 +559,7 @@ fn classify_api_error(status: u16, code: Option<i64>, message: &str) -> QqBotApi
     if status >= 500 {
         return QqBotApiErrorCategory::Server;
     }
-    match code {
-        Some(11241 | 304023 | 304024) => QqBotApiErrorCategory::RateLimited,
-        _ => QqBotApiErrorCategory::Unknown,
-    }
+    QqBotApiErrorCategory::Unknown
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,6 +579,8 @@ pub struct GatewayEvent {
     pub sequence: Option<i64>,
     #[serde(rename = "t")]
     pub event_type: Option<String>,
+    #[serde(rename = "id")]
+    pub event_id: Option<String>,
     #[serde(rename = "d")]
     #[serde(default)]
     pub data: Value,
@@ -481,8 +598,6 @@ pub enum GatewayStep {
     RemoteHeartbeat,
     Reconnect,
     InvalidSession,
-    Ready,
-    Resumed,
     Ignored,
 }
 
@@ -508,19 +623,13 @@ impl GatewayFrameState {
     }
 
     pub fn apply_event(&mut self, event: GatewayEvent) -> GatewayStep {
-        if let Some(sequence) = event.sequence {
-            self.session.last_sequence = Some(sequence);
-        }
-
         match event.opcode {
-            OP_DISPATCH => match event.event_type.as_deref() {
-                Some("READY") => {
+            OP_DISPATCH => {
+                if event.event_type.as_deref() == Some("READY") {
                     self.session.apply_ready_data(&event.data);
-                    GatewayStep::Ready
                 }
-                Some("RESUMED") => GatewayStep::Resumed,
-                _ => GatewayStep::Dispatch(event),
-            },
+                GatewayStep::Dispatch(event)
+            }
             OP_HEARTBEAT => {
                 self.awaiting_heartbeat_ack = true;
                 GatewayStep::RemoteHeartbeat
@@ -573,6 +682,13 @@ impl QqBotGatewayClient {
         &mut self.session
     }
 
+    /// Commit a dispatch sequence after the application has handled the event successfully.
+    pub fn acknowledge_dispatch(&mut self, sequence: Option<i64>) {
+        if let Some(sequence) = sequence {
+            self.session.last_sequence = Some(sequence);
+        }
+    }
+
     pub fn heartbeat_interval(&self) -> Duration {
         self.heartbeat_interval
     }
@@ -605,7 +721,7 @@ impl QqBotGatewayClient {
         match step {
             GatewayStep::RemoteHeartbeat => {
                 self.send_heartbeat().await?;
-                Ok(Some(GatewayStep::Ignored))
+                Ok(Some(GatewayStep::RemoteHeartbeat))
             }
             other => Ok(Some(other)),
         }
@@ -654,13 +770,12 @@ impl QqBotGatewaySession {
         }
         if let Some(shard) = data.get("shard").and_then(Value::as_array)
             && shard.len() >= 2
+            && let (Some(shard_id), Some(shard_count)) = (shard[0].as_u64(), shard[1].as_u64())
+            && shard_count > 0
+            && shard_id < shard_count
         {
-            if let Some(shard_id) = shard[0].as_u64() {
-                self.shard_id = shard_id;
-            }
-            if let Some(shard_count) = shard[1].as_u64() {
-                self.shard_count = shard_count;
-            }
+            self.shard_id = shard_id;
+            self.shard_count = shard_count;
         }
     }
 }
@@ -818,11 +933,16 @@ mod tests {
                 "file_info": "file-info",
                 "ttl": 3600,
             }),
-            "/channels/channel-1/messages/message-1?hidetip=true" => Value::Null,
+            "/channels/channel-1/messages/message-1?hidetip=true"
+            | "/v2/groups/group-1/messages/message-1"
+            | "/v2/users/user-1/messages/message-1"
+            | "/dms/guild-1/messages/message-1?hidetip=false"
+            | "/interactions/interaction-1" => Value::Null,
             "/rate-limited" => json!({
-                "code": 11241,
+                "err_code": 40034100,
                 "message": "rate limit exceeded",
                 "retry_after": 1000,
+                "trace_id": "trace-1",
             }),
             "/forbidden" => json!({
                 "code": 304003,
@@ -1046,10 +1166,14 @@ mod tests {
             msg_id: Some("msg-1".to_string()),
             msg_seq: Some(1),
             event_id: None,
+            is_wakeup: Some(false),
             markdown: Some(json!({ "content": "# Title" })),
             keyboard: Some(json!({ "id": "keyboard-template" })),
             ark: Some(json!({ "template_id": 37 })),
             embed: Some(json!({ "title": "embed" })),
+            card: Some(json!({ "type": "tuwen" })),
+            input_notify: Some(json!({ "input_type": 1, "input_second": 30 })),
+            message_reference: Some(json!({ "message_id": "quoted-message" })),
             media: Some(json!({ "file_info": "file-info" })),
             image: Some("https://example.invalid/a.png".to_string()),
         };
@@ -1063,10 +1187,14 @@ mod tests {
                 "content": "fallback",
                 "msg_id": "msg-1",
                 "msg_seq": 1,
+                "is_wakeup": false,
                 "markdown": { "content": "# Title" },
                 "keyboard": { "id": "keyboard-template" },
                 "ark": { "template_id": 37 },
                 "embed": { "title": "embed" },
+                "card": { "type": "tuwen" },
+                "input_notify": { "input_type": 1, "input_second": 30 },
+                "message_reference": { "message_id": "quoted-message" },
                 "media": { "file_info": "file-info" },
                 "image": "https://example.invalid/a.png",
             })
@@ -1166,8 +1294,10 @@ mod tests {
         let client = QqBotOpenApiClient::new(mock_config(base_url)).unwrap();
         let payload = UploadFilePayload {
             file_type: 1,
-            url: "https://example.invalid/a.png".to_string(),
+            url: Some("https://example.invalid/a.png".to_string()),
             srv_send_msg: false,
+            file_name: None,
+            upload_id: None,
         };
 
         let group_media = client.post_group_file("group-1", &payload).await.unwrap();
@@ -1199,7 +1329,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openapi_recalls_channel_message() {
+    async fn openapi_recalls_messages_and_acknowledges_interaction() {
         let (base_url, mut requests) = spawn_mock_server().await;
         let client = QqBotOpenApiClient::new(mock_config(base_url)).unwrap();
 
@@ -1221,6 +1351,40 @@ mod tests {
             header_value(&request, "authorization"),
             Some("QQBot mock-token")
         );
+
+        client
+            .recall_group_message("group-1", "message-1")
+            .await
+            .unwrap();
+        client
+            .recall_c2c_message("user-1", "message-1")
+            .await
+            .unwrap();
+        client
+            .recall_dms_message("guild-1", "message-1", false)
+            .await
+            .unwrap();
+        client
+            .acknowledge_interaction("interaction-1", 0)
+            .await
+            .unwrap();
+
+        for (method, path) in [
+            ("DELETE", "/v2/groups/group-1/messages/message-1"),
+            ("DELETE", "/v2/users/user-1/messages/message-1"),
+            ("DELETE", "/dms/guild-1/messages/message-1?hidetip=false"),
+            ("PUT", "/interactions/interaction-1"),
+        ] {
+            let request = requests.recv().await.unwrap();
+            assert_eq!(request.method, method);
+            assert_eq!(request.path, path);
+            if method == "PUT" {
+                assert_eq!(
+                    serde_json::from_str::<Value>(&request.body).unwrap(),
+                    json!({ "code": 0 })
+                );
+            }
+        }
     }
 
     #[test]
@@ -1228,16 +1392,18 @@ mod tests {
         let rate_limit = build_api_error(
             "/v2/users/user-1/messages",
             429,
-            r#"{"code":11241,"message":"rate limit exceeded","retry_after":1000}"#,
+            r#"{"err_code":40034100,"message":"rate limit exceeded","retry_after":"1000","trace_id":"trace-1"}"#,
         );
         let permission = build_api_error(
             "/channels/channel-1/messages/message-1",
-            403,
-            r#"{"code":304003,"message":"permission denied"}"#,
+            400,
+            r#"{"err_code":304004,"message":"ARK_NOT_ALLOWED"}"#,
         );
 
         assert_eq!(rate_limit.category, QqBotApiErrorCategory::RateLimited);
         assert_eq!(rate_limit.retry_after_ms, Some(1000));
+        assert_eq!(rate_limit.code, Some(40034100));
+        assert_eq!(rate_limit.trace_id.as_deref(), Some("trace-1"));
         assert_eq!(permission.category, QqBotApiErrorCategory::Permission);
         assert!(rate_limit.to_string().contains("RateLimited"));
     }
@@ -1307,11 +1473,19 @@ mod tests {
 
         let step = client.next_step().await.unwrap().unwrap();
 
-        assert!(matches!(step, GatewayStep::Ready));
+        assert!(matches!(
+            step,
+            GatewayStep::Dispatch(GatewayEvent {
+                event_type: Some(ref event_type),
+                ..
+            }) if event_type == "READY"
+        ));
         assert_eq!(
             client.session().session_id.as_deref(),
             Some("session-ready")
         );
+        assert_eq!(client.session().last_sequence, None);
+        client.acknowledge_dispatch(Some(7));
         assert_eq!(client.session().last_sequence, Some(7));
         assert_eq!(client.session().shard_count, 2);
     }
@@ -1342,6 +1516,25 @@ mod tests {
 
         assert!(matches!(step, GatewayStep::HeartbeatAck));
         assert!(!client.should_reconnect_for_missing_ack());
+    }
+
+    #[tokio::test]
+    async fn gateway_remote_heartbeat_is_answered_and_surfaced() {
+        let (endpoint, mut sent_payloads) = spawn_mock_gateway(vec![json!({
+            "op": OP_HEARTBEAT,
+        })])
+        .await;
+        let mut client = QqBotGatewayClient::connect(&endpoint, gateway_session(), "QQBot token")
+            .await
+            .unwrap();
+        let _identify = recv_gateway_payload(&mut sent_payloads).await;
+
+        let step = client.next_step().await.unwrap().unwrap();
+        let heartbeat = recv_gateway_payload(&mut sent_payloads).await;
+
+        assert!(matches!(step, GatewayStep::RemoteHeartbeat));
+        assert_eq!(heartbeat, json!({ "op": OP_HEARTBEAT, "d": null }));
+        assert!(client.should_reconnect_for_missing_ack());
     }
 
     #[tokio::test]
@@ -1440,18 +1633,23 @@ mod tests {
         assert_eq!(session.session_id.as_deref(), Some("session-1"));
         assert_eq!(session.shard_id, 1);
         assert_eq!(session.shard_count, 4);
+
+        session.apply_ready_data(&json!({ "shard": [0, 0] }));
+        assert_eq!(session.shard_id, 1);
+        assert_eq!(session.shard_count, 4);
     }
 
     #[test]
     fn gateway_event_parses_opcode_and_sequence() {
         let event = parse_gateway_event(
-            r#"{"op":0,"s":12,"t":"GROUP_AT_MESSAGE_CREATE","d":{"id":"msg"}}"#,
+            r#"{"op":0,"s":12,"t":"GROUP_AT_MESSAGE_CREATE","id":"event-1","d":{"id":"msg"}}"#,
         )
         .unwrap();
 
         assert_eq!(event.opcode, OP_DISPATCH);
         assert_eq!(event.sequence, Some(12));
         assert_eq!(event.event_type.as_deref(), Some("GROUP_AT_MESSAGE_CREATE"));
+        assert_eq!(event.event_id.as_deref(), Some("event-1"));
         assert_eq!(event.data.get("id").and_then(Value::as_str), Some("msg"));
     }
 
@@ -1462,6 +1660,7 @@ mod tests {
         assert_eq!(event.opcode, OP_HEARTBEAT_ACK);
         assert_eq!(event.sequence, None);
         assert_eq!(event.event_type, None);
+        assert_eq!(event.event_id, None);
         assert_eq!(event.data, Value::Null);
     }
 
@@ -1479,14 +1678,21 @@ mod tests {
             opcode: OP_DISPATCH,
             sequence: Some(10),
             event_type: Some("READY".to_string()),
+            event_id: None,
             data: json!({
                 "session_id": "session-1",
                 "shard": [2, 4],
             }),
         });
 
-        assert!(matches!(step, GatewayStep::Ready));
-        assert_eq!(state.session.last_sequence, Some(10));
+        assert!(matches!(
+            step,
+            GatewayStep::Dispatch(GatewayEvent {
+                event_type: Some(ref event_type),
+                ..
+            }) if event_type == "READY"
+        ));
+        assert_eq!(state.session.last_sequence, None);
         assert_eq!(state.session.session_id.as_deref(), Some("session-1"));
         assert_eq!(state.session.shard_id, 2);
         assert_eq!(state.session.shard_count, 4);
@@ -1506,6 +1712,7 @@ mod tests {
             opcode: OP_INVALID_SESSION,
             sequence: None,
             event_type: None,
+            event_id: None,
             data: Value::Null,
         });
 
@@ -1528,6 +1735,7 @@ mod tests {
             opcode: OP_HEARTBEAT,
             sequence: None,
             event_type: None,
+            event_id: None,
             data: Value::Null,
         });
         assert!(matches!(step, GatewayStep::RemoteHeartbeat));
@@ -1537,6 +1745,7 @@ mod tests {
             opcode: OP_HEARTBEAT_ACK,
             sequence: None,
             event_type: None,
+            event_id: None,
             data: Value::Null,
         });
         assert!(matches!(step, GatewayStep::HeartbeatAck));

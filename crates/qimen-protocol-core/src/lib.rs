@@ -140,7 +140,9 @@ impl NormalizedEvent {
 
     /// Whether the event originated in a private chat.
     pub fn is_private(&self) -> bool {
-        self.chat.as_ref().is_some_and(|c| c.kind == "private")
+        self.chat
+            .as_ref()
+            .is_some_and(|c| matches!(c.kind.as_str(), "private" | "channel_private"))
     }
 
     // ── Raw JSON top-level fields ──
@@ -276,6 +278,9 @@ impl NormalizedEvent {
 
     /// Whether the message contains an @-mention targeting this bot's `self_id`.
     pub fn is_at_self(&self) -> bool {
+        if self.raw_json.get("to_me").and_then(Value::as_bool) == Some(true) {
+            return true;
+        }
         let Some(sid) = self.self_id() else {
             return false;
         };
@@ -450,6 +455,9 @@ mod tests {
         assert!(evt.is_private());
         assert!(!evt.is_group());
         assert_eq!(evt.group_id(), None);
+
+        evt.chat.as_mut().unwrap().kind = "channel_private".to_string();
+        assert!(evt.is_private());
     }
 
     #[test]
@@ -520,6 +528,9 @@ mod tests {
         let mut evt = make_event(json!({"self_id": 10001}));
         let msg = Message::builder().text("hi ").at("10001").build();
         evt.message = Some(msg);
+        assert!(evt.is_at_self());
+
+        let evt = make_event(json!({"to_me": true}));
         assert!(evt.is_at_self());
     }
 

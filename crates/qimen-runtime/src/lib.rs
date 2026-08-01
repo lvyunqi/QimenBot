@@ -237,6 +237,12 @@ pub struct BotRuntimeInfo {
 /// Drained by the main event loop after each interceptor chain call.
 type PendingSendBuffer = Arc<std::sync::Mutex<Vec<SendAction>>>;
 
+#[derive(Debug, Clone, Copy)]
+struct QqBotReplySequence {
+    value: i64,
+    updated_at: Instant,
+}
+
 /// Adapter that wraps a dynamic plugin interceptor as a [`MessageEventInterceptor`].
 struct DynamicInterceptorAdapter {
     descriptor: DynamicInterceptorDescriptor,
@@ -263,10 +269,7 @@ impl DynamicInterceptorAdapter {
             .unwrap_or_default();
         let raw_event_json = event.raw_json.to_string();
         let sender_nickname = event.sender_nickname().unwrap_or("").to_string();
-        let message_id = event
-            .message_id()
-            .map(|id| id.to_string())
-            .unwrap_or_default();
+        let message_id = event.message_id_str().unwrap_or_default();
         let timestamp = event.time.unwrap_or(0);
 
         abi_stable_host_api::InterceptorRequest {
@@ -434,6 +437,7 @@ pub struct Runtime {
     interceptor_chain: std::sync::RwLock<InterceptorChain>,
     rate_limiters: Vec<TokenBucketLimiter>,
     qqbot_send_backoff_until: std::sync::Mutex<HashMap<String, Instant>>,
+    qqbot_reply_sequences: std::sync::Mutex<HashMap<String, QqBotReplySequence>>,
     proactive_send_hub: ProactiveSendHub,
     webhook_gateway: Option<WebhookGateway>,
     pub dedup: Arc<MessageDedup>,
@@ -458,6 +462,7 @@ impl Default for Runtime {
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
+            qqbot_reply_sequences: std::sync::Mutex::new(HashMap::new()),
             proactive_send_hub: ProactiveSendHub::new(
                 &[],
                 ProactiveSendSettings {
@@ -602,6 +607,7 @@ impl Runtime {
             interceptor_chain: std::sync::RwLock::new(interceptor_chain),
             rate_limiters,
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
+            qqbot_reply_sequences: std::sync::Mutex::new(HashMap::new()),
             proactive_send_hub,
             webhook_gateway,
             dedup: Arc::new(MessageDedup::new(60, 10000)),
@@ -1139,9 +1145,15 @@ impl Runtime {
         loop {
             let session_started = tokio::time::Instant::now();
             let gateway = api_client.get_gateway().await?;
-            if let Some(shards) = gateway.shards {
-                session.shard_count = shards.max(1);
+            if let Some(shards) = gateway.shards.filter(|shards| *shards > 1) {
+                tracing::warn!(
+                    bot_id = %bot.id,
+                    recommended_shards = shards,
+                    "QQ official Gateway recommends multiple shards; using one unsharded connection"
+                );
             }
+            session.shard_id = 0;
+            session.shard_count = 1;
             let token = api_client.bot_authorization().await?;
 
             tracing::info!(
@@ -1266,6 +1278,7 @@ impl Runtime {
                 maybe_step = client.next_step() => {
                     match maybe_step? {
                         Some(GatewayStep::Dispatch(event)) => {
+                            let sequence = event.sequence;
                             let signal = self
                                 .handle_qqbot_gateway_event(
                                     bot,
@@ -1278,6 +1291,7 @@ impl Runtime {
                                     limiter,
                                 )
                                 .await?;
+                            client.acknowledge_dispatch(sequence);
                             match signal {
                                 SessionSignal::Heartbeat(_) | SessionSignal::EventHandled => {
                                     idle_timer.as_mut().reset(tokio::time::Instant::now() + reconnect_policy.idle_timeout);
@@ -1287,7 +1301,11 @@ impl Runtime {
                                 }
                             }
                         }
-                        Some(GatewayStep::HeartbeatAck | GatewayStep::RemoteHeartbeat | GatewayStep::Ready | GatewayStep::Resumed | GatewayStep::Ignored) => {
+                        Some(GatewayStep::RemoteHeartbeat) => {
+                            idle_timer.as_mut().reset(tokio::time::Instant::now() + reconnect_policy.idle_timeout);
+                            heartbeat_timer.as_mut().reset(tokio::time::Instant::now() + client.heartbeat_interval());
+                        }
+                        Some(GatewayStep::HeartbeatAck | GatewayStep::Ignored) => {
                             idle_timer.as_mut().reset(tokio::time::Instant::now() + reconnect_policy.idle_timeout);
                         }
                         Some(GatewayStep::Reconnect) => {
@@ -1728,6 +1746,17 @@ impl Runtime {
             event_type = ?event.extensions.get("event_type"),
             "received QQ official event"
         );
+
+        if let Some(interaction_id) = qqbot_interaction_ack_target(&event)
+            && let Err(err) = api_client.acknowledge_interaction(interaction_id, 0).await
+        {
+            tracing::warn!(
+                bot_id = %bot.id,
+                interaction_id,
+                error = %err,
+                "failed to acknowledge QQ official interaction"
+            );
+        }
 
         if !matches!(event.kind, EventKind::Message) {
             self.handle_qqbot_system_event(bot, system_dispatcher, &runtime_ctx, event)
@@ -2334,14 +2363,13 @@ impl Runtime {
                 "QQ official action degraded unsupported message segments"
             );
         }
-        if route == "channel_recall_message" {
-            let channel_id = packet
-                .payload
-                .get("channel_id")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot channel recall missing channel_id".to_string())
-                })?;
+        if matches!(
+            route,
+            "channel_recall_message"
+                | "group_recall_message"
+                | "c2c_recall_message"
+                | "dms_recall_message"
+        ) {
             let message_id = packet
                 .payload
                 .get("message_id")
@@ -2356,9 +2384,82 @@ impl Runtime {
                 .unwrap_or(false);
             return Ok(self
                 .complete_qqbot_action(bot, &action, route, async {
-                    client
-                        .recall_channel_message(&channel_id, &message_id, hidetip)
-                        .await
+                    match route {
+                        "channel_recall_message" => {
+                            let channel_id = packet
+                                .payload
+                                .get("channel_id")
+                                .and_then(value_to_optional_string)
+                                .ok_or_else(|| {
+                                    QimenError::Protocol(
+                                        "qqbot channel recall missing channel_id".to_string(),
+                                    )
+                                })?;
+                            client
+                                .recall_channel_message(&channel_id, &message_id, hidetip)
+                                .await
+                        }
+                        "group_recall_message" => {
+                            let group_openid = packet
+                                .payload
+                                .get("group_openid")
+                                .and_then(value_to_optional_string)
+                                .ok_or_else(|| {
+                                    QimenError::Protocol(
+                                        "qqbot group recall missing group_openid".to_string(),
+                                    )
+                                })?;
+                            client
+                                .recall_group_message(&group_openid, &message_id)
+                                .await
+                        }
+                        "c2c_recall_message" => {
+                            let openid = packet
+                                .payload
+                                .get("openid")
+                                .and_then(value_to_optional_string)
+                                .ok_or_else(|| {
+                                    QimenError::Protocol(
+                                        "qqbot c2c recall missing openid".to_string(),
+                                    )
+                                })?;
+                            client.recall_c2c_message(&openid, &message_id).await
+                        }
+                        "dms_recall_message" => {
+                            let guild_id = packet
+                                .payload
+                                .get("guild_id")
+                                .and_then(value_to_optional_string)
+                                .ok_or_else(|| {
+                                    QimenError::Protocol(
+                                        "qqbot DMS recall missing guild_id".to_string(),
+                                    )
+                                })?;
+                            client
+                                .recall_dms_message(&guild_id, &message_id, hidetip)
+                                .await
+                        }
+                        _ => unreachable!(),
+                    }
+                })
+                .await);
+        }
+        if route == "interaction_ack" {
+            let interaction_id = packet
+                .payload
+                .get("interaction_id")
+                .and_then(value_to_optional_string)
+                .ok_or_else(|| {
+                    QimenError::Protocol("qqbot interaction ack missing interaction_id".to_string())
+                })?;
+            let code = packet
+                .payload
+                .get("code")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            return Ok(self
+                .complete_qqbot_action(bot, &action, route, async {
+                    client.acknowledge_interaction(&interaction_id, code).await
                 })
                 .await);
         }
@@ -2371,19 +2472,26 @@ impl Runtime {
                             .get("file_type")
                             .and_then(Value::as_i64)
                             .unwrap_or(1),
-                        url: packet
-                            .payload
-                            .get("url")
-                            .and_then(value_to_optional_string)
-                            .ok_or_else(|| {
-                                QimenError::Protocol("qqbot upload media missing url".to_string())
-                            })?,
+                        url: packet.payload.get("url").and_then(value_to_optional_string),
                         srv_send_msg: packet
                             .payload
                             .get("srv_send_msg")
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
+                        file_name: packet
+                            .payload
+                            .get("file_name")
+                            .and_then(value_to_optional_string),
+                        upload_id: packet
+                            .payload
+                            .get("upload_id")
+                            .and_then(value_to_optional_string),
                     };
+                    if payload.url.is_none() && payload.upload_id.is_none() {
+                        return Err(QimenError::Protocol(
+                            "qqbot upload media missing url or upload_id".to_string(),
+                        ));
+                    }
                     match route {
                         "group_file" => {
                             let group_openid = packet
@@ -2414,6 +2522,16 @@ impl Runtime {
                 })
                 .await);
         }
+        let reply_message_id = packet
+            .payload
+            .get("msg_id")
+            .and_then(value_to_optional_string);
+        let reply_msg_seq = self.qqbot_reply_msg_seq(
+            bot,
+            route,
+            reply_message_id.as_deref(),
+            packet.payload.get("msg_seq").and_then(Value::as_i64),
+        );
         Ok(self
             .complete_qqbot_action(bot, &action, route, async {
                 let media_upload = packet.payload.get("media_upload").cloned();
@@ -2423,19 +2541,20 @@ impl Runtime {
                         .payload
                         .get("content")
                         .and_then(value_to_optional_string),
-                    msg_id: packet
-                        .payload
-                        .get("msg_id")
-                        .and_then(value_to_optional_string),
-                    msg_seq: packet.payload.get("msg_seq").and_then(Value::as_i64),
+                    msg_id: reply_message_id,
+                    msg_seq: reply_msg_seq,
                     event_id: packet
                         .payload
                         .get("event_id")
                         .and_then(value_to_optional_string),
+                    is_wakeup: packet.payload.get("is_wakeup").and_then(Value::as_bool),
                     markdown: packet.payload.get("markdown").cloned(),
                     keyboard: packet.payload.get("keyboard").cloned(),
                     ark: packet.payload.get("ark").cloned(),
                     embed: packet.payload.get("embed").cloned(),
+                    card: packet.payload.get("card").cloned(),
+                    input_notify: packet.payload.get("input_notify").cloned(),
+                    message_reference: packet.payload.get("message_reference").cloned(),
                     media: packet.payload.get("media").cloned(),
                     image: packet
                         .payload
@@ -2469,10 +2588,14 @@ impl Runtime {
                         if let Some(upload) = media_upload.as_ref()
                             && payload.media.is_none()
                         {
-                            payload.media = Some(
-                                upload_qqbot_media(client, "group_file", &group_openid, upload)
-                                    .await?,
-                            );
+                            match upload_qqbot_media(client, "group_file", &group_openid, upload)
+                                .await?
+                            {
+                                QqBotMediaUploadOutcome::Media(media) => {
+                                    payload.media = Some(media)
+                                }
+                                QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
+                            }
                             payload.msg_type = Some(7);
                             payload.image = None;
                         }
@@ -2489,9 +2612,12 @@ impl Runtime {
                         if let Some(upload) = media_upload.as_ref()
                             && payload.media.is_none()
                         {
-                            payload.media = Some(
-                                upload_qqbot_media(client, "c2c_file", &openid, upload).await?,
-                            );
+                            match upload_qqbot_media(client, "c2c_file", &openid, upload).await? {
+                                QqBotMediaUploadOutcome::Media(media) => {
+                                    payload.media = Some(media)
+                                }
+                                QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
+                            }
                             payload.msg_type = Some(7);
                             payload.image = None;
                         }
@@ -2601,6 +2727,42 @@ impl Runtime {
         if let Ok(mut guard) = self.qqbot_send_backoff_until.lock() {
             guard.remove(&qqbot_backoff_key(bot, route));
         }
+    }
+
+    fn qqbot_reply_msg_seq(
+        &self,
+        bot: &BotRuntimeInfo,
+        route: &str,
+        message_id: Option<&str>,
+        explicit: Option<i64>,
+    ) -> Option<i64> {
+        if !matches!(route, "group_message" | "c2c_message") {
+            return None;
+        }
+        let message_id = message_id?;
+        let now = Instant::now();
+        let Ok(mut sequences) = self.qqbot_reply_sequences.lock() else {
+            return explicit.or(Some(1));
+        };
+        sequences
+            .retain(|_, state| now.duration_since(state.updated_at) < Duration::from_secs(3600));
+        let key = format!("{}:{route}:{message_id}", bot.id);
+        let state = sequences.entry(key).or_insert(QqBotReplySequence {
+            value: 0,
+            updated_at: now,
+        });
+        if let Some(explicit) = explicit {
+            state.value = state.value.max(explicit);
+            state.updated_at = now;
+            return Some(explicit);
+        }
+        state.value = state
+            .value
+            .checked_add(1)
+            .filter(|value| *value > 0)
+            .unwrap_or(1);
+        state.updated_at = now;
+        Some(state.value)
     }
 
     /// Process outbound send actions queued by a dynamic plugin via `BotApi` / `SendBuilder`.
@@ -3239,15 +3401,7 @@ fn build_qqbot_send_msg_action(
         .ok_or_else(|| QimenError::Protocol("qqbot reply event missing chat".to_string()))?;
     let mut params = serde_json::Map::new();
     params.insert("message".to_string(), reply.to_onebot_value());
-    if let Some(message_id) = event.message_id_str() {
-        params.insert("msg_id".to_string(), Value::String(message_id));
-    }
-    if let Some(event_id) = event.extensions.get("event_id").cloned() {
-        params.insert("event_id".to_string(), event_id);
-    }
-    if let Some(msg_seq) = event.extensions.get("msg_seq").cloned() {
-        params.insert("msg_seq".to_string(), msg_seq);
-    }
+    insert_qqbot_reply_reference(&mut params, event);
 
     let action = match chat.kind.as_str() {
         "group" => {
@@ -3297,47 +3451,31 @@ fn build_qqbot_notice_reply_action(
 ) -> Option<NormalizedActionRequest> {
     let mut params = serde_json::Map::new();
     params.insert("message".to_string(), reply.to_onebot_value());
-
-    let action = if let Some(group_openid) = event
-        .extensions
-        .get("group_openid")
-        .and_then(value_to_optional_string)
-    {
-        params.insert("group_openid".to_string(), Value::String(group_openid));
-        "send_group_msg"
-    } else if let Some(openid) = event
-        .extensions
-        .get("openid")
-        .or_else(|| event.extensions.get("user_openid"))
-        .and_then(value_to_optional_string)
-    {
-        params.insert("openid".to_string(), Value::String(openid));
-        "send_private_msg"
-    } else if let Some(channel_id) = event
-        .extensions
-        .get("channel_id")
-        .and_then(value_to_optional_string)
-    {
-        params.insert("channel_id".to_string(), Value::String(channel_id));
-        "send_channel_msg"
-    } else {
-        let guild_id = event
-            .extensions
-            .get("guild_id")
-            .and_then(value_to_optional_string)?;
-        params.insert("guild_id".to_string(), Value::String(guild_id));
-        "send_dms"
+    let chat = event.chat.as_ref()?;
+    let action = match chat.kind.as_str() {
+        "group" => {
+            params.insert("group_openid".to_string(), Value::String(chat.id.clone()));
+            "send_group_msg"
+        }
+        "private" => {
+            params.insert("openid".to_string(), Value::String(chat.id.clone()));
+            "send_private_msg"
+        }
+        "channel" => {
+            params.insert("channel_id".to_string(), Value::String(chat.id.clone()));
+            if let Some(guild_id) = event.extensions.get("guild_id").cloned() {
+                params.insert("guild_id".to_string(), guild_id);
+            }
+            "send_channel_msg"
+        }
+        "channel_private" => {
+            params.insert("guild_id".to_string(), Value::String(chat.id.clone()));
+            "send_dms"
+        }
+        _ => return None,
     };
 
-    if let Some(message_id) = event.message_id_str() {
-        params.insert("msg_id".to_string(), Value::String(message_id));
-    }
-    if let Some(event_id) = event.extensions.get("event_id").cloned() {
-        params.insert("event_id".to_string(), event_id);
-    }
-    if let Some(msg_seq) = event.extensions.get("msg_seq").cloned() {
-        params.insert("msg_seq".to_string(), msg_seq);
-    }
+    insert_qqbot_reply_reference(&mut params, event);
 
     Some(NormalizedActionRequest {
         protocol: ProtocolId::QqOfficial,
@@ -3350,6 +3488,17 @@ fn build_qqbot_notice_reply_action(
             source: source.to_string(),
         },
     })
+}
+
+fn insert_qqbot_reply_reference(
+    params: &mut serde_json::Map<String, Value>,
+    event: &NormalizedEvent,
+) {
+    if let Some(message_id) = event.message_id_str() {
+        params.insert("msg_id".to_string(), Value::String(message_id));
+    } else if let Some(event_id) = event.extensions.get("event_id").cloned() {
+        params.insert("event_id".to_string(), event_id);
+    }
 }
 
 fn build_echo(bot: &BotRuntimeInfo) -> String {
@@ -3366,10 +3515,32 @@ fn build_event_dedup_key(event: &qimen_protocol_core::NormalizedEvent, message_i
         .as_ref()
         .map(|chat| format!("{}:{}", chat.kind, chat.id))
         .unwrap_or_else(|| "unknown".to_string());
-    format!(
-        "{}:{:?}:{}:{}",
-        event.bot_instance, event.protocol, chat, message_id
-    )
+    let delivery_index = event
+        .extensions
+        .get("msg_idx")
+        .or_else(|| event.extensions.get("msg_seq"))
+        .and_then(value_to_optional_string);
+    match delivery_index {
+        Some(delivery_index) => format!(
+            "{}:{:?}:{}:{}:{}",
+            event.bot_instance, event.protocol, chat, message_id, delivery_index
+        ),
+        None => format!(
+            "{}:{:?}:{}:{}",
+            event.bot_instance, event.protocol, chat, message_id
+        ),
+    }
+}
+
+fn qqbot_interaction_ack_target(event: &NormalizedEvent) -> Option<&str> {
+    if event.extensions.get("event_type").and_then(Value::as_str) != Some("INTERACTION_CREATE") {
+        return None;
+    }
+    let payload = event.raw_json.get("qqbot_payload")?;
+    if !matches!(payload.get("type").and_then(Value::as_i64), Some(11 | 12)) {
+        return None;
+    }
+    payload.get("id").and_then(Value::as_str)
 }
 
 fn value_to_optional_string(value: &Value) -> Option<String> {
@@ -3388,26 +3559,52 @@ async fn upload_qqbot_media(
     route: &str,
     target_id: &str,
     upload: &Value,
-) -> Result<Value> {
+) -> Result<QqBotMediaUploadOutcome> {
     let payload = UploadFilePayload {
         file_type: upload.get("file_type").and_then(Value::as_i64).unwrap_or(1),
-        url: upload
-            .get("url")
-            .and_then(value_to_optional_string)
-            .ok_or_else(|| QimenError::Protocol("qqbot media upload missing url".to_string()))?,
+        url: Some(
+            upload
+                .get("url")
+                .and_then(value_to_optional_string)
+                .ok_or_else(|| {
+                    QimenError::Protocol("qqbot media upload missing url".to_string())
+                })?,
+        ),
         srv_send_msg: upload
             .get("srv_send_msg")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        file_name: None,
+        upload_id: None,
     };
 
-    match route {
+    let response = match route {
         "group_file" => client.post_group_file(target_id, &payload).await,
         "c2c_file" => client.post_c2c_file(target_id, &payload).await,
         other => Err(QimenError::Protocol(format!(
             "unsupported qqbot media upload route '{other}'"
         ))),
+    }?;
+
+    if payload.srv_send_msg {
+        return Ok(QqBotMediaUploadOutcome::Sent(response));
     }
+    Ok(QqBotMediaUploadOutcome::Media(
+        qqbot_media_payload_from_upload_response(&response)?,
+    ))
+}
+
+pub(crate) enum QqBotMediaUploadOutcome {
+    Media(Value),
+    Sent(Value),
+}
+
+fn qqbot_media_payload_from_upload_response(response: &Value) -> Result<Value> {
+    let file_info = response
+        .get("file_info")
+        .cloned()
+        .ok_or_else(|| QimenError::Protocol("qqbot media upload missing file_info".to_string()))?;
+    Ok(json!({ "file_info": file_info }))
 }
 
 fn qqbot_ok_action_response(
@@ -3925,7 +4122,7 @@ path = "/onebot/reverse"
 
     #[test]
     fn qqbot_error_helpers_detect_rate_limit_backoff() {
-        let error = "transport error: qqbot request /v2/users/u/messages failed with HTTP 429, code 11241, category RateLimited: rate limit exceeded, retry_after_ms=1500";
+        let error = "transport error: qqbot request /v2/users/u/messages failed with HTTP 429, code 40034100, category RateLimited: rate limit exceeded, retry_after_ms=1500";
 
         assert_eq!(qqbot_error_category(error), "RateLimited");
         assert_eq!(qqbot_error_retry_after_ms(error), Some(1500));
@@ -3937,6 +4134,153 @@ path = "/onebot/reverse"
 
         assert_eq!(qqbot_error_category(error), "Permission");
         assert_eq!(qqbot_error_retry_after_ms(error), None);
+    }
+
+    #[test]
+    fn qqbot_message_reply_prefers_msg_id_and_allocates_no_incoming_sequence() {
+        let bot = qq_official_bot();
+        let mut event = qq_official_message_event("group", "/ping", "message-id");
+        event
+            .extensions
+            .insert("event_id".to_string(), json!("event-id"));
+        event.extensions.insert("msg_seq".to_string(), json!(7));
+
+        let action = build_qqbot_send_msg_action(&bot, &event, Message::text("pong")).unwrap();
+
+        assert_eq!(
+            action.params.get("msg_id").and_then(Value::as_str),
+            Some("message-id")
+        );
+        assert!(action.params.get("msg_seq").is_none());
+        assert!(action.params.get("event_id").is_none());
+    }
+
+    #[test]
+    fn qqbot_event_reply_uses_event_id_without_msg_seq() {
+        let bot = qq_official_bot();
+        let mut event = qq_official_message_event("group", "", "unused");
+        event.raw_json.as_object_mut().unwrap().remove("message_id");
+        event
+            .extensions
+            .insert("group_openid".to_string(), json!("group-openid"));
+        event
+            .extensions
+            .insert("event_id".to_string(), json!("event-id"));
+        event.extensions.insert("msg_seq".to_string(), json!(7));
+
+        let action =
+            build_qqbot_notice_reply_action(&bot, &event, Message::text("pong"), "test").unwrap();
+
+        assert_eq!(
+            action.params.get("event_id").and_then(Value::as_str),
+            Some("event-id")
+        );
+        assert!(action.params.get("msg_id").is_none());
+        assert!(action.params.get("msg_seq").is_none());
+    }
+
+    #[test]
+    fn qqbot_guild_notice_does_not_misroute_as_dms() {
+        let bot = qq_official_bot();
+        let mut event = qq_official_message_event("guild", "", "unused");
+        event.raw_json.as_object_mut().unwrap().remove("message_id");
+        event
+            .extensions
+            .insert("guild_id".to_string(), json!("guild-id"));
+        event
+            .extensions
+            .insert("event_id".to_string(), json!("event-id"));
+
+        assert!(
+            build_qqbot_notice_reply_action(&bot, &event, Message::text("pong"), "test").is_none()
+        );
+    }
+
+    #[test]
+    fn qqbot_dedup_key_includes_official_message_index() {
+        let mut first = qq_official_message_event("group", "/ping", "message-id");
+        first
+            .extensions
+            .insert("msg_idx".to_string(), json!("index-1"));
+        let mut second = first.clone();
+        second
+            .extensions
+            .insert("msg_idx".to_string(), json!("index-2"));
+
+        assert_ne!(
+            build_event_dedup_key(&first, "message-id"),
+            build_event_dedup_key(&second, "message-id")
+        );
+        assert_eq!(
+            build_event_dedup_key(&first, "message-id"),
+            build_event_dedup_key(&first, "message-id")
+        );
+    }
+
+    #[test]
+    fn qqbot_reply_sequence_increments_per_message() {
+        let runtime = Runtime::default();
+        let bot = qq_official_bot();
+
+        assert_eq!(
+            runtime.qqbot_reply_msg_seq(&bot, "group_message", Some("message-id"), None),
+            Some(1)
+        );
+        assert_eq!(
+            runtime.qqbot_reply_msg_seq(&bot, "group_message", Some("message-id"), None),
+            Some(2)
+        );
+        assert_eq!(
+            runtime.qqbot_reply_msg_seq(&bot, "group_message", Some("message-id"), Some(7)),
+            Some(7)
+        );
+        assert_eq!(
+            runtime.qqbot_reply_msg_seq(&bot, "group_message", Some("message-id"), None),
+            Some(8)
+        );
+        assert_eq!(
+            runtime.qqbot_reply_msg_seq(&bot, "channel_message", Some("message-id"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn qqbot_media_upload_response_is_reduced_to_file_info() {
+        let media = qqbot_media_payload_from_upload_response(&json!({
+            "file_uuid": "file-uuid",
+            "file_info": "file-info",
+            "ttl": 300
+        }))
+        .unwrap();
+
+        assert_eq!(media, json!({ "file_info": "file-info" }));
+        assert!(qqbot_media_payload_from_upload_response(&json!({})).is_err());
+    }
+
+    #[test]
+    fn dynamic_interceptor_keeps_string_message_ids() {
+        let mut event = qq_official_message_event("group", "/ping", "ROBOT1.0_message-id");
+        event.time = Some(1785555555);
+
+        let request = DynamicInterceptorAdapter::build_request("qq-official", &event);
+
+        assert_eq!(request.message_id.as_str(), "ROBOT1.0_message-id");
+        assert_eq!(request.timestamp, 1785555555);
+    }
+
+    #[test]
+    fn qqbot_interaction_ack_only_targets_required_types() {
+        let mut event = qq_official_message_event("group", "", "unused");
+        event
+            .extensions
+            .insert("event_type".to_string(), json!("INTERACTION_CREATE"));
+        event.raw_json = json!({
+            "qqbot_payload": {"id": "interaction-id", "type": 11}
+        });
+
+        assert_eq!(qqbot_interaction_ack_target(&event), Some("interaction-id"));
+        event.raw_json["qqbot_payload"]["type"] = json!(13);
+        assert_eq!(qqbot_interaction_ack_target(&event), None);
     }
 
     struct RecordingQqOfficialExecutor {
@@ -4175,6 +4519,52 @@ path = "/onebot/reverse"
 
         let replies = executor.replies.lock().unwrap();
         assert_eq!(&*replies, &["pong", "pong", "pong", "pong"]);
+    }
+
+    #[tokio::test]
+    async fn qq_official_full_group_bot_mention_reaches_command_dispatch() {
+        let event = QqBotAdapter
+            .decode_event(IncomingPacket {
+                protocol: ProtocolId::QqOfficial,
+                transport_mode: TransportMode::Gateway,
+                bot_instance: "qq-official".to_string(),
+                payload: json!({
+                    "op": 0,
+                    "s": 1,
+                    "t": "GROUP_MESSAGE_CREATE",
+                    "d": {
+                        "id": "message-id",
+                        "content": "<qqbot-at-user id=\"bot-user-id\" /> /ping",
+                        "group_openid": "group-openid",
+                        "author": {"member_openid": "member-openid"},
+                        "mentions": [{
+                            "scope": "single",
+                            "bot": true,
+                            "id": "bot-user-id",
+                            "is_you": true,
+                            "member_openid": "bot-member-openid",
+                            "username": "bot"
+                        }]
+                    }
+                }),
+                raw_bytes: None,
+            })
+            .await
+            .unwrap();
+        let runtime = Runtime::default();
+        let bot = qq_official_bot();
+        let dispatcher = CommandDispatcher::with_default_handlers();
+        let help_text = render_help_text(&dispatcher.describe_commands());
+        let executor = RecordingQqOfficialExecutor::new();
+        let limiter = TokenBucketLimiter::new(&bot.limiter_config);
+
+        let signal = runtime
+            .handle_normalized_event(&bot, event, &dispatcher, &help_text, &executor, &limiter)
+            .await
+            .expect("message should be handled");
+
+        assert!(matches!(signal, SessionSignal::EventHandled));
+        assert_eq!(&*executor.replies.lock().unwrap(), &["pong"]);
     }
 
     #[tokio::test]

@@ -7,6 +7,7 @@ version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 qimen-error = { path = "../qimen-error" }
 qimen-message = { path = "../qimen-message" }
 qimen-protocol-core = { path = "../qimen-protocol-core" }

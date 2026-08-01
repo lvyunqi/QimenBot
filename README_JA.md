@@ -21,7 +21,7 @@ QimenBot は Rust で書かれたモジュラーで拡張可能なチャット�
 
 ## 特徴
 
-- **マルチプロトコル** — OneBot 11（本番対応）、公式 QQ Bot（プレビュー）、OneBot 12 / Satori（拡張ポイント予約済み）
+- **マルチプロトコル** — OneBot 11 と公式 QQ Bot に対応し、OneBot 12 / Satori の拡張ポイントを用意
 - **複数のトランスポート** — 正方向 WebSocket、逆方向 WebSocket、HTTP API、HTTP POST、公式 Gateway + OpenAPI
 - **宣言的プラグイン開発** — `#[module]` / `#[commands]` / `#[notice]` マクロで約7行でプラグインを実装
 - **インターセプター チェーン** — `pre_handle` / `after_completion` でブラックリスト、権限チェック、ショートカット書き換えなど
@@ -31,7 +31,7 @@ QimenBot は Rust で書かれたモジュラーで拡張可能なチャット�
 - **ダイナミックプラグイン** — `dlopen` による ABI 安定な共有ライブラリのランタイムロード
 - **リクエスト自動化** — ホワイトリスト/ブラックリスト/キーワードフィルターによるフレンド・グループリクエストの自動承認/拒否
 - **充実した OneBot 11 API** — メッセージング、グループ管理、ファイル、ギルド、リアクションなど 40+ の操作をラップ
-- **公式 QQ Bot 接続** — QQ グループ @、C2C 個別チャット、チャンネル @、DMS、Markdown / Keyboard メッセージに対応
+- **公式 QQ Bot 接続** — グループ @ と全量グループメッセージ、C2C、チャンネル、DMS、Markdown / Keyboard、メディア、取り消し、Interaction ACK、セッション再開に対応
 
 ## アーキテクチャ
 
@@ -63,7 +63,7 @@ QimenBot は Rust で書かれたモジュラーで拡張可能なチャット�
 - Rust 1.89+（2024 Edition）
 - OneBot 11 実装（例：[Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core)、[NapCat](https://github.com/NapNeko/NapCatQQ) など）
 
-公式 QQ Bot を接続する場合、OneBot 実装は不要です。[公式 QQ Bot 接入](docs/guide/qq-official-quickstart.md) を参照してください。
+公式 QQ Bot の接続には OneBot 実装は不要です。認証情報、イベント権限、グループ @ のテスト、トラブルシューティングは [公式 QQ Bot 接続](docs/guide/qq-official-quickstart.md) を参照してください。
 
 ### ビルド & 実行
 
@@ -250,7 +250,7 @@ QimenBot/
 | プロトコル | ステータス | トランスポート |
 |-----------|----------|--------------|
 | OneBot 11 | ✅ 本番対応 | WS 正方向、WS 逆方向、HTTP API、HTTP POST |
-| 公式 QQ Bot | 🧪 プレビュー | Gateway + OpenAPI |
+| 公式 QQ Bot | ✅ 対応済み | Gateway + OpenAPI |
 | OneBot 12 | 🔲 計画中 | — |
 | Satori | 🔲 計画中 | — |
 

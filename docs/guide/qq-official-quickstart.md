@@ -1,38 +1,101 @@
 # 官方 QQ Bot 接入
 
-本教程说明如何在 QimenBot 中接入官方 QQ Bot。官方 Bot 使用 Gateway 接收事件，使用 OpenAPI 发送消息；框架会把 QQ 群、QQ 单聊、频道消息统一转换成 `NormalizedEvent`，再交给命令、权限、限流、拦截器和插件流水线处理。
+官方 QQ Bot 不需要登录 QQ 客户端，也不需要 NapCat、Lagrange 等 OneBot 实现。QimenBot 通过 Gateway WebSocket 接收事件，再通过 QQ 开放平台 OpenAPI 发送消息。
 
-::: tip 当前支持范围
-当前适配器已支持 QQ 群 @ 消息、QQ 单聊 C2C、频道 @ 消息和频道私信。受官方平台策略影响，群和频道能力是否能立即联调取决于账号、机器人类型和平台审核状态。
+接入前先分清两个概念：
+
+- **QQ 群**：普通 QQ 群，平台使用 `group_openid`、`member_openid` 等字符串 ID。
+- **频道**：QQ 频道，平台使用 `guild_id`、`channel_id` 和频道用户 ID。
+
+两者的事件、权限和发送接口不同。QimenBot 会在适配层统一它们，但开放平台仍可能只给当前机器人开通其中一部分能力。
+
+当前版本支持以下消息入口：
+
+| 场景 | Gateway 事件 | 说明 |
+|------|--------------|------|
+| QQ 群 @ | `GROUP_AT_MESSAGE_CREATE` | 不需要全量群消息权限时，先用这个场景测试 |
+| QQ 群全量消息 | `GROUP_MESSAGE_CREATE` | 需要开放平台单独开通全量消息权限 |
+| QQ 单聊 | `C2C_MESSAGE_CREATE` | 官方文档也称 C2C 消息 |
+| 频道 @ | `AT_MESSAGE_CREATE` | 机器人所在频道的子频道消息 |
+| 频道普通消息 | `MESSAGE_CREATE` | 是否下发取决于机器人权限和 intent |
+| 频道私信 | `DIRECT_MESSAGE_CREATE` | 官方文档也称 DMS |
+
+发送侧支持文本、Markdown、Keyboard、群/C2C 媒体上传、频道图片、Ark、Embed、消息撤回和互动 ACK。具体限制见[官方 QQ Bot 插件适配](/plugin/qq-official)。
+
+## 第 1 步：创建机器人
+
+1. 打开 [QQ 开放平台](https://q.qq.com/)，登录后创建机器人应用。
+2. 在应用管理页找到 `AppID` 和 `AppSecret`。
+3. 按准备测试的场景配置机器人能力、事件订阅和测试范围。
+4. 将机器人加入测试群或频道，或使用平台提供的测试环境。
+
+平台页面名称可能随版本调整，找不到入口时以[官方 QQ Bot API 文档](https://bot.q.qq.com/wiki/develop/api-v2/)的“开发准备”和“事件订阅”说明为准。
+
+::: danger AppSecret 不能公开
+`AppSecret` 等同于机器人密码。不要把它写进 `config/*.toml`、截图、日志、Issue 或聊天记录，也不要提交到 Git。已经泄露的 Secret 应立即在开放平台重置，旧值不能继续使用。
 :::
 
-## 准备凭据
+## 第 2 步：开通事件权限
 
-在 QQ 开放平台创建机器人后，准备两项凭据：
+平台侧允许订阅某类事件，QimenBot 才能在 Gateway 鉴权时申请对应 intent。只改本地配置不能绕过平台权限。
 
-| 变量 | 说明 |
-|------|------|
-| `QQBOT_APPID` | 机器人 AppID |
-| `QQBOT_SECRET` | 机器人 AppSecret |
+初次接入建议配置下面三项：
 
-可以写入本地 `.env`、系统环境变量，或部署平台提供的环境变量配置：
+| QimenBot 配置名 | 官方 intent | 能收到的消息 |
+|------------------|-------------|--------------|
+| `GROUP_AND_C2C_EVENT` | Group and C2C | QQ 群 @、获准使用的全量群消息、QQ 单聊 |
+| `PUBLIC_GUILD_MESSAGES` | Public Guild Messages | 频道 @ 和获准使用的频道消息 |
+| `DIRECT_MESSAGE` | Direct Message | 频道私信 |
 
-```text
+`GROUP_AND_C2C_EVENT` 并不自动授予“全量群消息”权限。没有该权限时，群内普通消息不会下发，但群内 @ 机器人仍可通过 `GROUP_AT_MESSAGE_CREATE` 到达。需要读取所有群消息时，应在开放平台按官方要求申请，审核通过后再测试 `GROUP_MESSAGE_CREATE`。
+
+配置 intent 时还要注意：
+
+- 开放平台的事件订阅和本地 `intents` 必须同时包含目标能力。
+- intent 名称不区分大小写，文档和新配置建议使用上表中的官方大写名称。
+- `public_messages`、`public_guild_messages`、`direct_message` 等旧写法继续兼容。
+- 配置了机器人没有权限使用的 intent 时，平台可能在 Identify 阶段拒绝会话。
+
+## 第 3 步：保存凭据
+
+推荐把凭据放在项目根目录的 `.env` 中：
+
+```dotenv
 QQBOT_APPID=你的 AppID
 QQBOT_SECRET=你的 AppSecret
 ```
 
-`qimenbotd` 启动时会自动加载项目根目录下的 `.env`，配置文件里的 `${QQBOT_APPID}`、`${QQBOT_SECRET}` 会被替换成环境变量值。
+`.env` 已被 Git 忽略。`qimenbotd` 从项目根目录启动时会自动加载它，并替换 TOML 中的 `${QQBOT_APPID}` 和 `${QQBOT_SECRET}`。
 
-## 配置 Bot 实例
+也可以只给当前终端设置环境变量。
 
-框架默认读取 `config/base.toml`。如果要临时使用其他配置文件，可以设置 `QIMEN_CONFIG_PATH`：
+PowerShell：
 
-```bash
-QIMEN_CONFIG_PATH=config/dev.toml cargo run -p qimenbotd
+```powershell
+$env:QQBOT_APPID = "你的 AppID"
+$env:QQBOT_SECRET = "你的 AppSecret"
 ```
 
-最小配置如下：
+Linux 或 macOS：
+
+```bash
+export QQBOT_APPID='你的 AppID'
+export QQBOT_SECRET='你的 AppSecret'
+```
+
+在 PowerShell 中运行 `setx` 后，变量只对新开的终端生效。当前窗口要立即启动时，应使用 `$env:...`。
+
+## 第 4 步：配置 QimenBot
+
+框架默认只读取 `config/base.toml`。先确认 `[official_host]` 加载了基础测试插件：
+
+```toml
+[official_host]
+builtin_modules = ["command", "admin"]
+plugin_modules = ["example-basic", "example-message"]
+```
+
+然后在同一个文件中加入 Bot 实例：
 
 ```toml
 [[bots]]
@@ -45,121 +108,217 @@ appid = "${QQBOT_APPID}"
 secret = "${QQBOT_SECRET}"
 sandbox = false
 
-intents = ["public_messages", "public_guild_messages", "direct_message"]
+intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
 enabled_modules = ["command", "admin"]
 owners = []
 admins = []
 ```
 
-字段说明：
+字段含义：
 
-| 字段 | 说明 |
-|------|------|
-| `protocol` | 必须为 `qq-official` |
-| `transport` | 必须为 `gateway` |
-| `appid` / `secret` | 建议从环境变量注入 |
-| `sandbox` | 是否使用沙箱环境 |
-| `intents` | 订阅官方 Gateway 事件 |
-| `owners` / `admins` | 使用字符串 ID，可填 `openid`、`member_openid` 或频道用户 ID |
+| 字段 | 是否必填 | 说明 |
+|------|----------|------|
+| `id` | 是 | QimenBot 内部实例名，多 Bot 部署时不能重复 |
+| `protocol` | 是 | 官方机器人固定为 `qq-official` |
+| `transport` | 是 | 官方机器人固定为 `gateway` |
+| `appid` | 是 | 建议通过环境变量注入 |
+| `secret` | 是 | 建议通过环境变量注入 |
+| `sandbox` | 否 | `true` 使用官方沙箱 OpenAPI，默认 `false` |
+| `intents` | 是 | Gateway Identify 时申请的事件范围 |
+| `owners` / `admins` | 否 | 填官方字符串 ID，不是传统 QQ 号 |
 
-常用 intent：
-
-| intent | 事件 |
-|--------|------|
-| `public_messages` | QQ 群 @ 消息、QQ 单聊 C2C 消息 |
-| `public_guild_messages` | 频道 @ 消息 |
-| `direct_message` | 频道私信消息 |
-
-::: tip 配置模板
-`config/bots/qq-official.toml` 是参考模板，不会被框架自动加载。实际运行时请将同等配置放入 `config/base.toml`，或通过 `QIMEN_CONFIG_PATH` 指向自定义配置文件。
+::: warning 配置模板不会自动加载
+`config/bots/qq-official.toml` 是参考模板。修改这个文件不会影响默认启动配置，实际内容必须放进 `config/base.toml`，或通过 `QIMEN_CONFIG_PATH` 指向另一个完整配置文件。
 :::
 
-## 启动验证
+使用独立配置文件时：
 
-启动守护进程：
+```powershell
+$env:QIMEN_CONFIG_PATH = "config/dev.toml"
+cargo run -p qimenbotd
+```
+
+```bash
+QIMEN_CONFIG_PATH=config/dev.toml cargo run -p qimenbotd
+```
+
+## 第 5 步：启动
+
+从源码运行：
 
 ```bash
 cargo run -p qimenbotd
 ```
 
+使用 Release 包时，在解压目录中运行：
+
+```powershell
+.\qimenbotd.exe
+```
+
+```bash
+./qimenbotd
+```
+
 连接成功时会看到类似日志：
 
 ```text
-registered bot instance bot_id=qq-official protocol=QqOfficial transport=Gateway
-connecting to QQ official Gateway bot_id=qq-official
+official host startup report ... plugin_modules=example-basic,example-message
+connecting to QQ official Gateway bot_id=qq-official ...
 QQ official Gateway connected bot_id=qq-official
 ```
 
-先用 QQ 单聊发送 `/ping` 做最小闭环。回复成功时会出现：
+这三处分别说明：
+
+1. 示例插件已加入命令注册表。
+2. AppID、Secret 和 Gateway 地址获取流程已开始。
+3. WebSocket 已连接，并已发送 Identify 或 Resume。
+
+`Gateway connected` 只表示连接建立，不能证明事件权限已经正确。还要发送一条消息完成下一步验证。
+
+## 第 6 步：逐项测试
+
+先测纯文本，再测富消息。一次只测一个场景，出现问题时更容易判断是权限、事件还是发送接口。
+
+### QQ 单聊
+
+向机器人发送：
 
 ```text
-received QQ official event bot_id=qq-official kind=Message
-executed QQ official action bot_id=qq-official
+/ping
 ```
 
-如果暂时无法拉群或频道，可以先保留 `public_guild_messages` 和 `direct_message`，等测试环境可用后再验证 QQ 群 @、频道 @ 和频道私信。
+正常回复：
 
-## 插件兼容说明
-
-官方 QQ Bot 事件不会暴露传统 QQ 号。插件需要按字符串 ID 处理用户和会话：
-
-```rust
-let sender = ctx.sender_id().unwrap_or("unknown");
-let chat = ctx.chat_id().unwrap_or("unknown");
+```text
+pong!
 ```
 
-不同场景的 ID 映射：
+### QQ 群 @
 
-| 场景 | `ctx.sender_id()` | `ctx.chat_id()` / `ctx.group_id()` |
-|------|-------------------|------------------------------------|
-| QQ 群 @ | `member_openid` | `group_openid` |
-| QQ 单聊 C2C | `user_openid` | `user_openid` |
-| 频道 @ | 频道用户 ID | `channel_id` |
-| 频道私信 | 频道用户 ID | `guild_id` |
+在群里输入 `@机器人 /ping`。不要只发送 `/ping`，除非机器人已经获准接收全量群消息。
 
-不要在官方 Bot 插件里依赖 `sender_id_i64()`、`group_id_i64()` 或真实 QQ 号；这些方法主要用于 OneBot 这类数字 ID 协议。`onebot_actions()` 中的群管理、群资料、禁言等接口也是 OneBot 专用能力，不等价于官方 OpenAPI。
+QimenBot 同时识别官方当前使用的 `<qqbot-at-user id="..." />` 提及标签、旧版 `<@!id>` 标签和 `mentions[].is_you`。适配完成后，命令处理器收到的文本是 `/ping`，不会把 @ 标签当成命令内容。
 
-## 富文本测试
+### QQ 群全量消息
 
-开发配置可以加载 `example-message` 模块，用下面的命令测试官方富文本能力：
+仅在开放平台已批准全量群消息权限后，直接在群里发送 `/ping`。事件应以 `GROUP_MESSAGE_CREATE` 下发。
 
-| 命令 | 能力 |
-|------|------|
-| `/qq-md` | Markdown content |
-| `/qq-md-template [template_id]` | Markdown 模板参数 |
-| `/qq-keyboard` | Markdown + 自定义 Keyboard |
-| `/qq-keyboard-template [keyboard_id]` | Markdown + 模板 Keyboard |
-| `/qq-ark` | Ark payload |
-| `/qq-embed` | Embed payload |
-| `/qq-media image <url>` | QQ 群/C2C 图片 media 上传 |
-| `/qq-media record <url>` | QQ 群/C2C 语音 media 上传 |
-| `/qq-media video <url>` | QQ 群/C2C 视频 media 上传 |
-| `/qq-media file <url>` | QQ 群/C2C 文件 media 上传 |
+全量模式中的 @ 也可能仍以 `GROUP_MESSAGE_CREATE` 下发，而不是 `GROUP_AT_MESSAGE_CREATE`。QimenBot 会根据 `mentions[].is_you` 判断消息是否指向机器人，插件不需要只靠事件名判断。
 
-Ark、Embed 主要面向频道消息；QQ 群和 C2C 的图片、语音、视频、文件会先调用官方 `/files` 上传，再以 `msg_type = 7` 发送。
+### 频道和频道私信
+
+- 子频道中发送 `@机器人 /ping`，验证 `AT_MESSAGE_CREATE`。
+- 向机器人发送频道私信 `/ping`，验证 `DIRECT_MESSAGE_CREATE`。
+
+每次收到消息后，debug 日志中应能看到事件进入运行时；回复成功后会有 QQ 官方 action 执行记录。若事件日志存在而回复失败，应检查紧随其后的 OpenAPI 错误，而不是继续修改 intent。
+
+## 测试富消息
+
+确认 `/ping` 正常后，再使用 `example-message`：
+
+| 命令 | 测试内容 | 适用场景 |
+|------|----------|----------|
+| `/qq-md` | Markdown content | 群、C2C、频道、DMS，实际权限以平台为准 |
+| `/qq-md-template [template_id]` | Markdown 模板参数 | 需要已配置的官方模板 |
+| `/qq-keyboard` | Markdown + 自定义 Keyboard | 需要机器人按钮能力 |
+| `/qq-keyboard-template [keyboard_id]` | 模板 Keyboard | 需要有效模板 ID |
+| `/qq-ark` | Ark | 频道、DMS |
+| `/qq-embed` | Embed | 频道、DMS |
+| `/qq-media image <url>` | 图片上传 | QQ 群、C2C |
+| `/qq-media record <url>` | 语音上传 | QQ 群、C2C |
+| `/qq-media video <url>` | 视频上传 | QQ 群、C2C |
+| `/qq-media file <url>` | 文件上传 | QQ 群、C2C |
+
+群和 C2C 媒体不能把普通 URL 直接放进消息体。QimenBot 会先调用对应 `/files` 接口，取回 `file_info`，再以 `msg_type = 7` 发送。测试 URL 必须能被 QQ 服务器访问；`localhost`、内网地址和需要登录的下载地址通常不可用。
+
+## 被动回复限制
+
+回复用户刚发来的消息属于被动回复。QQ 开放平台对回复窗口和次数有限制：
+
+| 场景 | 有效时间 | 同一消息最多回复 |
+|------|----------|------------------|
+| QQ 群 | 5 分钟 | 5 条 |
+| QQ 单聊 C2C | 60 分钟 | 4 条 |
+
+群和 C2C 的多次回复由 `msg_id + msg_seq` 区分。QimenBot 会为同一条来信自动分配递增的 `msg_seq`，插件直接返回回复即可，不要复用固定序号。
+
+耗时任务应尽快先回复“正在处理”，再根据机器人已有权限决定是否主动推送最终结果。超过平台窗口后，继续携带原 `msg_id` 会被官方接口拒绝。
 
 ## 常见问题
 
-### 鉴权失败
+### 启动时报 `missing qq-official appid` 或 `secret`
 
-检查 `QQBOT_APPID` 和 `QQBOT_SECRET` 是否为空，配置文件是否把占位符写成普通文本，当前运行目录是否能加载 `.env`。
+环境变量没有成功替换。按顺序检查：
 
-### Gateway 已连接但收不到消息
+1. 启动目录是否为项目根目录。
+2. `.env` 变量名是否正好是 `QQBOT_APPID` 和 `QQBOT_SECRET`。
+3. TOML 中是否写成 `${QQBOT_APPID}`、`${QQBOT_SECRET}`。
+4. 使用 Release 包时，`.env` 是否放在当前工作目录，而不是只放在二进制所在目录的上级。
 
-检查开放平台事件订阅和配置中的 `intents`。QQ 群与 C2C 需要 `public_messages`，频道 @ 需要 `public_guild_messages`，频道私信需要 `direct_message`。
+### Token 请求返回 401 或鉴权错误
 
-### 回复失败或权限不足
+AppID 和 AppSecret 不匹配、Secret 已重置，或复制时带入了空格。重新从开放平台获取凭据。不要把 Secret 打进日志进行比对。
 
-官方 OpenAPI 会按场景区分频道、群、C2C、DMS endpoint。确认机器人拥有对应场景的发送权限，并确认事件来源类型和发送 action 路由一致。
+### Gateway 已连接，但完全收不到消息
 
-### Ark 或 Embed 返回 invalid content
+这通常发生在事件订阅阶段：
 
-这通常和官方能力开放、消息结构、场景支持范围有关。先用 `/qq-md` 或普通文本确认发送链路正常，再检查 Ark、Embed 是否已在目标场景通过官方审核或配置。
+1. 确认机器人已经进入当前测试群、频道或测试成员范围。
+2. 确认开放平台已订阅目标事件。
+3. 确认本地 `intents` 包含对应项。
+4. 先用 C2C `/ping`，再测试群 @，最后测试全量群消息。
+5. 全量权限未开通时，不要用群内普通 `/ping` 判断程序是否正常。
 
-### 触发频控
+### 私聊正常，群内 @ 不回复
 
-429 会被框架归类为频控错误，并对 bot + route 做短期 backoff。降低主动发送频率，避免在 backoff 期间重复推送同一路由消息。
+先看是否收到 `GROUP_AT_MESSAGE_CREATE` 或 `GROUP_MESSAGE_CREATE`：
 
-### 被动回复过期
+- 没有事件：检查 `GROUP_AND_C2C_EVENT`、群测试范围和平台权限。
+- 有事件但没有命令命中：确认发送的是 `@机器人 /ping`，并确认运行版本包含当前 QQ @ 解析支持。
+- 命令已命中但发送失败：查看 `/v2/groups/{group_openid}/messages` 的错误分类、错误码和 `trace_id`。
 
-官方平台对被动回复窗口有限制。插件收到消息后应尽快回复；耗时任务建议先返回处理中提示，再用允许的主动消息能力补发结果。
+群全量事件中的 @ 由 `mentions[].is_you` 判断。插件若需要自行判断，应使用 `event.is_at_self()`，不要只匹配 `GROUP_AT_MESSAGE_CREATE`。
+
+### 收到消息，但 `/ping` 没有任何命令回复
+
+检查启动报告中是否有 `example-basic`。它必须同时满足：
+
+```toml
+[official_host]
+plugin_modules = ["example-basic"]
+```
+
+`config/plugin-state.toml` 中也不能把它持久化为禁用状态。可用 `/plugins` 查看当前插件状态。
+
+### 返回 `unknown qq-official intent`
+
+本地配置中存在不支持的拼写。优先使用：
+
+```toml
+intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
+```
+
+### OpenAPI 返回 403
+
+403 通常是场景权限不足，而不是 Gateway 连接问题。确认机器人是否拥有目标群、C2C、频道或 DMS 的发送能力，消息类型是否获准使用。日志中的 `category=Permission`、官方错误码和 `trace_id` 是向平台排查时最有用的信息。
+
+### OpenAPI 返回 429
+
+429 表示触发频控。QimenBot 会读取 `retry_after`，并按 Bot 和发送路由短暂退避；退避期间，同一路由的新发送会直接失败，避免不断请求官方接口。应降低发送频率，不要用无限重试绕过频控。
+
+### Markdown、Keyboard、Ark 或 Embed 失败
+
+先回到 `/ping` 验证文本链路。文本正常而富消息失败时，再检查：
+
+- 当前场景是否支持该消息结构。
+- Markdown 或 Keyboard 模板 ID 是否有效。
+- 机器人是否已经开通按钮、模板或对应富消息能力。
+- 群/C2C 是否使用了允许的 `msg_type`。
+
+## 继续阅读
+
+- [官方 QQ Bot 插件适配](/plugin/qq-official)：字符串 ID、消息解析、回复和富消息写法。
+- [传输层：官方 QQ Bot Gateway](/advanced/transport#官方-qq-bot-gateway)：Token、Heartbeat、Resume、OpenAPI 路由和错误分类。
+- [运行时原理](/advanced/runtime)：消息去重、回复序号、互动 ACK 和事件分发。
+- [QQ Bot API v2 官方文档](https://bot.q.qq.com/wiki/develop/api-v2/)：平台权限、接口字段和最新政策。
