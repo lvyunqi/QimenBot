@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub runtime: RuntimeConfig,
     pub observability: ObservabilityConfig,
     #[serde(default)]
+    pub admin_web: AdminWebConfig,
+    #[serde(default)]
     pub official_host: OfficialHostConfig,
     #[serde(default)]
     pub bots: Vec<BotConfig>,
@@ -29,6 +31,33 @@ pub struct ObservabilityConfig {
     pub level: String,
     pub json_logs: bool,
     pub metrics_bind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdminWebConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_admin_web_bind")]
+    pub bind: String,
+    /// Optional Bearer token. Required when binding to a non-loopback address.
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default = "default_admin_web_log_capacity")]
+    pub log_capacity: usize,
+    #[serde(default = "default_admin_web_audit_path")]
+    pub audit_path: String,
+}
+
+impl Default for AdminWebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: default_admin_web_bind(),
+            access_token: String::new(),
+            log_capacity: default_admin_web_log_capacity(),
+            audit_path: default_admin_web_audit_path(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,13 +210,40 @@ pub struct BotConfig {
 impl AppConfig {
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self> {
         let raw = fs::read_to_string(path)?;
-        let expanded = expand_env_placeholders(&raw);
+        Self::load_from_str(&raw)
+    }
+
+    pub fn load_from_str(raw: &str) -> Result<Self> {
+        let expanded = expand_env_placeholders(raw);
         let config = toml::from_str::<Self>(&expanded)?;
         config.validate()?;
         Ok(config)
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self.admin_web.log_capacity == 0 {
+            return Err(QimenError::Config(
+                "admin_web.log_capacity must be greater than zero".to_string(),
+            ));
+        }
+        if self.admin_web.enabled {
+            let bind = self
+                .admin_web
+                .bind
+                .parse::<std::net::SocketAddr>()
+                .map_err(|_| {
+                    QimenError::Config(format!(
+                        "admin_web.bind '{}' is not a valid socket address",
+                        self.admin_web.bind
+                    ))
+                })?;
+            if !bind.ip().is_loopback() && self.admin_web.access_token.trim().is_empty() {
+                return Err(QimenError::Config(
+                    "admin_web.access_token is required for a non-loopback bind".to_string(),
+                ));
+            }
+        }
+
         if self.official_host.proactive_send.queue_capacity == 0 {
             return Err(QimenError::Config(
                 "official_host.proactive_send.queue_capacity must be greater than zero".to_string(),
@@ -357,6 +413,18 @@ pub fn qq_official_intent_bit(intent: &str) -> Result<u64> {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_admin_web_bind() -> String {
+    "127.0.0.1:3210".to_string()
+}
+
+fn default_admin_web_log_capacity() -> usize {
+    2_000
+}
+
+fn default_admin_web_audit_path() -> String {
+    "config/admin-audit.jsonl".to_string()
 }
 
 fn default_builtin_modules() -> Vec<String> {

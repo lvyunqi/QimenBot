@@ -30,6 +30,19 @@ json_logs = false
 # Metrics 指标暴露地址（预留，暂未启用）
 metrics_bind = "127.0.0.1:9090"
 
+# ── Web 管理面板 / Admin Web ───────────────────────────────────────────────
+[admin_web]
+# 面板与 API 默认只监听本机，启动后访问 http://127.0.0.1:3210
+enabled = true
+bind = "127.0.0.1:3210"
+
+# 仅本机访问时可留空。绑定非回环地址时必须设置，建议使用 ${QIMEN_ADMIN_TOKEN}。
+access_token = ""
+
+# 浏览器可查询的结构化日志条数，以及管理操作审计日志位置。
+log_capacity = 2000
+audit_path = "config/admin-audit.jsonl"
+
 # ── Official Host 配置 / Official Host ───────────────────────────────────
 [official_host]
 # 启用的内置模块列表，可选值：

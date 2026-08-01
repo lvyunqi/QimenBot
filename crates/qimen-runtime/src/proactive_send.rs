@@ -13,7 +13,7 @@ use qimen_protocol_core::{
 use qimen_transport_qqbot::{QqBotOpenApiClient, SendMessagePayload, UploadFilePayload};
 use qimen_transport_ws::OneBot11WsActionSender;
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -52,10 +52,7 @@ pub struct ProactiveSendHub {
 struct ProactiveSendHubInner {
     settings: ProactiveSendSettings,
     states: HashMap<String, Arc<BotQueueState>>,
-    disabled_bots: HashSet<String>,
-    account_states: HashMap<String, Arc<BotQueueState>>,
-    disabled_accounts: HashSet<String>,
-    ambiguous_accounts: HashSet<String>,
+    account_states: HashMap<String, Vec<Arc<BotQueueState>>>,
     shutting_down: AtomicBool,
     active_workers: AtomicUsize,
     workers_stopped: Notify,
@@ -63,6 +60,7 @@ struct ProactiveSendHubInner {
 
 struct BotQueueState {
     bot: BotRuntimeInfo,
+    enabled: AtomicBool,
     sender: mpsc::Sender<OwnedProactiveSendRequest>,
     receiver: std::sync::Mutex<Option<mpsc::Receiver<OwnedProactiveSendRequest>>>,
     executor: Mutex<Option<RegisteredExecutor>>,
@@ -85,10 +83,7 @@ trait ProactiveActionExecutor: Send + Sync {
 impl ProactiveSendHub {
     pub fn new(bots: &[BotRuntimeInfo], settings: ProactiveSendSettings) -> Self {
         let mut states = HashMap::new();
-        let mut disabled_bots = HashSet::new();
-        let mut account_states = HashMap::new();
-        let mut disabled_accounts = HashSet::new();
-        let mut ambiguous_accounts = HashSet::new();
+        let mut account_states = HashMap::<String, Vec<Arc<BotQueueState>>>::new();
         let capacity = settings.queue_capacity.max(1);
 
         for bot in bots {
@@ -97,31 +92,22 @@ impl ProactiveSendHub {
                 .as_deref()
                 .map(str::trim)
                 .filter(|account_id| !account_id.is_empty());
-            if bot.enabled {
-                let (sender, receiver) = mpsc::channel(capacity);
-                let state = Arc::new(BotQueueState {
-                    bot: bot.clone(),
-                    sender,
-                    receiver: std::sync::Mutex::new(Some(receiver)),
-                    executor: Mutex::new(None),
-                    notify: Notify::new(),
-                    next_registration_id: AtomicU64::new(1),
-                });
-                states.insert(bot.id.clone(), Arc::clone(&state));
-                if let Some(account_id) = account_id
-                    && !ambiguous_accounts.contains(account_id)
-                    && account_states
-                        .insert(account_id.to_string(), state)
-                        .is_some()
-                {
-                    account_states.remove(account_id);
-                    ambiguous_accounts.insert(account_id.to_string());
-                }
-            } else {
-                disabled_bots.insert(bot.id.clone());
-                if let Some(account_id) = account_id {
-                    disabled_accounts.insert(account_id.to_string());
-                }
+            let (sender, receiver) = mpsc::channel(capacity);
+            let state = Arc::new(BotQueueState {
+                bot: bot.clone(),
+                enabled: AtomicBool::new(bot.enabled),
+                sender,
+                receiver: std::sync::Mutex::new(Some(receiver)),
+                executor: Mutex::new(None),
+                notify: Notify::new(),
+                next_registration_id: AtomicU64::new(1),
+            });
+            states.insert(bot.id.clone(), Arc::clone(&state));
+            if let Some(account_id) = account_id {
+                account_states
+                    .entry(account_id.to_string())
+                    .or_default()
+                    .push(state);
             }
         }
 
@@ -129,10 +115,7 @@ impl ProactiveSendHub {
             inner: Arc::new(ProactiveSendHubInner {
                 settings,
                 states,
-                disabled_bots,
                 account_states,
-                disabled_accounts,
-                ambiguous_accounts,
                 shutting_down: AtomicBool::new(false),
                 active_workers: AtomicUsize::new(0),
                 workers_stopped: Notify::new(),
@@ -167,6 +150,23 @@ impl ProactiveSendHub {
         }
     }
 
+    pub fn set_bot_enabled(&self, bot_id: &str, enabled: bool) -> bool {
+        let Some(state) = self.inner.states.get(bot_id) else {
+            return false;
+        };
+        state.enabled.store(enabled, Ordering::SeqCst);
+        state.notify.notify_waiters();
+        true
+    }
+
+    pub async fn clear_executor(&self, bot_id: &str) {
+        let Some(state) = self.inner.states.get(bot_id) else {
+            return;
+        };
+        *state.executor.lock().await = None;
+        state.notify.notify_waiters();
+    }
+
     /// 停止接收新请求，并等待所有 Bot 顺序 worker 完成当前发送、丢弃未开始请求后退出。
     pub async fn shutdown_and_wait(&self) {
         self.shutdown();
@@ -195,29 +195,27 @@ impl ProactiveSendHub {
             .bot_id
             .strip_prefix(PROACTIVE_BOT_ACCOUNT_SELECTOR_PREFIX)
         {
-            if account_id.is_empty() || self.inner.ambiguous_accounts.contains(account_id) {
+            if account_id.is_empty() {
                 return SendEnqueueStatus::InvalidRequest;
             }
-            match self.inner.account_states.get(account_id) {
-                Some(state) => state,
-                None => {
-                    return if self.inner.disabled_accounts.contains(account_id) {
-                        SendEnqueueStatus::BotDisabled
-                    } else {
-                        SendEnqueueStatus::BotNotFound
-                    };
-                }
+            let Some(candidates) = self.inner.account_states.get(account_id) else {
+                return SendEnqueueStatus::BotNotFound;
+            };
+            let mut enabled = candidates
+                .iter()
+                .filter(|state| state.enabled.load(Ordering::SeqCst));
+            let Some(state) = enabled.next() else {
+                return SendEnqueueStatus::BotDisabled;
+            };
+            if enabled.next().is_some() {
+                return SendEnqueueStatus::InvalidRequest;
             }
+            state
         } else {
             match self.inner.states.get(&request.bot_id) {
-                Some(state) => state,
-                None => {
-                    return if self.inner.disabled_bots.contains(&request.bot_id) {
-                        SendEnqueueStatus::BotDisabled
-                    } else {
-                        SendEnqueueStatus::BotNotFound
-                    };
-                }
+                Some(state) if state.enabled.load(Ordering::SeqCst) => state,
+                Some(_) => return SendEnqueueStatus::BotDisabled,
+                None => return SendEnqueueStatus::BotNotFound,
             }
         };
 
@@ -236,6 +234,9 @@ impl ProactiveSendHub {
         sender: OneBot11WsActionSender,
     ) -> Option<u64> {
         let state = self.inner.states.get(&bot.id)?;
+        if !state.enabled.load(Ordering::SeqCst) {
+            return None;
+        }
         let registration_id = state.next_registration_id.fetch_add(1, Ordering::SeqCst);
         let executor = Arc::new(OneBot11ProactiveExecutor {
             bot: bot.clone(),
@@ -255,6 +256,9 @@ impl ProactiveSendHub {
         client: Arc<QqBotOpenApiClient>,
     ) -> Option<u64> {
         let state = self.inner.states.get(&bot.id)?;
+        if !state.enabled.load(Ordering::SeqCst) {
+            return None;
+        }
         let registration_id = state.next_registration_id.fetch_add(1, Ordering::SeqCst);
         let executor = Arc::new(QqOfficialProactiveExecutor {
             bot: bot.clone(),
@@ -383,6 +387,10 @@ impl ProactiveSendHub {
             notified.as_mut().enable();
 
             if self.inner.shutting_down.load(Ordering::SeqCst) {
+                return None;
+            }
+
+            if !state.enabled.load(Ordering::SeqCst) {
                 return None;
             }
 

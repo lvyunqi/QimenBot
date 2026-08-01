@@ -10,6 +10,7 @@ abi_stable.workspace = true
 abi-stable-host-api = { path = "../abi-stable-host-api" }
 libloading = "0.7"
 qimen-config = { path = "../qimen-config" }
+qimen-admin-web = { path = "../qimen-admin-web" }
 qimen-error = { path = "../qimen-error" }
 qimen-framework = { path = "../qimen-framework" }
 qimen-host-types = { path = "../qimen-host-types" }

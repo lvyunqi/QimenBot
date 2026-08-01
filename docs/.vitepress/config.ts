@@ -46,6 +46,7 @@ export default defineConfig({
             { text: '快速开始', link: '/guide/getting-started' },
             { text: '官方 QQ Bot 接入', link: '/guide/qq-official-quickstart' },
             { text: '配置详解', link: '/guide/configuration' },
+            { text: 'Web 管理面板', link: '/guide/web-admin' },
           ]
         },
         {

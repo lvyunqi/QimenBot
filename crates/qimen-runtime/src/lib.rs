@@ -51,10 +51,12 @@ use qimen_transport_ws::{
     WsReverseConfig, WsReverseServer,
 };
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::watch;
 
 struct OneBotRuntimeContext<'a> {
     runtime: &'a Runtime,
@@ -231,6 +233,145 @@ pub struct BotRuntimeInfo {
     pub auto_reply_poke_enabled: bool,
     pub auto_reply_poke_message: Option<String>,
     pub limiter_config: RateLimiterConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotConnectionState {
+    Disabled,
+    Starting,
+    Online,
+    Reconnecting,
+    Stopped,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct BotStatusSnapshot {
+    pub id: String,
+    pub desired_enabled: bool,
+    pub state: BotConnectionState,
+    pub state_since_epoch_ms: u64,
+    pub last_event_epoch_ms: Option<u64>,
+    pub events_received: u64,
+    pub reconnect_count: u64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeThroughputPoint {
+    pub minute_epoch: u64,
+    pub events: u64,
+    pub replies: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeMetricsSnapshot {
+    pub started_at_epoch_ms: u64,
+    pub events_total: u64,
+    pub replies_total: u64,
+    pub throughput: Vec<RuntimeThroughputPoint>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BotControl {
+    enabled: bool,
+    generation: u64,
+}
+
+#[derive(Debug, Clone)]
+struct BotStatusRecord {
+    desired_enabled: bool,
+    state: BotConnectionState,
+    state_since_epoch_ms: u64,
+    last_event_epoch_ms: Option<u64>,
+    events_received: u64,
+    reconnect_count: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeMetricsBucket {
+    minute_epoch: u64,
+    events: u64,
+    replies: u64,
+}
+
+#[derive(Debug)]
+struct RuntimeMetrics {
+    started_at_epoch_ms: u64,
+    events_total: AtomicU64,
+    replies_total: AtomicU64,
+    buckets: std::sync::Mutex<VecDeque<RuntimeMetricsBucket>>,
+}
+
+impl RuntimeMetrics {
+    fn new() -> Self {
+        Self {
+            started_at_epoch_ms: epoch_millis(),
+            events_total: AtomicU64::new(0),
+            replies_total: AtomicU64::new(0),
+            buckets: std::sync::Mutex::new(VecDeque::with_capacity(120)),
+        }
+    }
+
+    fn record_event(&self) {
+        self.events_total.fetch_add(1, Ordering::Relaxed);
+        self.record_bucket(true);
+    }
+
+    fn record_reply(&self) {
+        self.replies_total.fetch_add(1, Ordering::Relaxed);
+        self.record_bucket(false);
+    }
+
+    fn record_bucket(&self, event: bool) {
+        let minute = epoch_millis() / 60_000;
+        let Ok(mut buckets) = self.buckets.lock() else {
+            return;
+        };
+        if buckets
+            .back()
+            .is_none_or(|bucket| bucket.minute_epoch != minute)
+        {
+            buckets.push_back(RuntimeMetricsBucket {
+                minute_epoch: minute,
+                ..RuntimeMetricsBucket::default()
+            });
+            while buckets.len() > 120 {
+                buckets.pop_front();
+            }
+        }
+        if let Some(bucket) = buckets.back_mut() {
+            if event {
+                bucket.events += 1;
+            } else {
+                bucket.replies += 1;
+            }
+        }
+    }
+
+    fn snapshot(&self) -> RuntimeMetricsSnapshot {
+        let throughput = self
+            .buckets
+            .lock()
+            .map(|buckets| {
+                buckets
+                    .iter()
+                    .map(|bucket| RuntimeThroughputPoint {
+                        minute_epoch: bucket.minute_epoch,
+                        events: bucket.events,
+                        replies: bucket.replies,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        RuntimeMetricsSnapshot {
+            started_at_epoch_ms: self.started_at_epoch_ms,
+            events_total: self.events_total.load(Ordering::Relaxed),
+            replies_total: self.replies_total.load(Ordering::Relaxed),
+            throughput,
+        }
+    }
 }
 
 /// Shared buffer for send actions queued by dynamic interceptors.
@@ -436,6 +577,9 @@ pub struct Runtime {
     static_interceptors: Vec<Arc<dyn qimen_plugin_api::MessageEventInterceptor>>,
     interceptor_chain: std::sync::RwLock<InterceptorChain>,
     rate_limiters: Vec<TokenBucketLimiter>,
+    bot_controls: HashMap<String, watch::Sender<BotControl>>,
+    bot_statuses: std::sync::RwLock<HashMap<String, BotStatusRecord>>,
+    metrics: RuntimeMetrics,
     qqbot_send_backoff_until: std::sync::Mutex<HashMap<String, Instant>>,
     qqbot_reply_sequences: std::sync::Mutex<HashMap<String, QqBotReplySequence>>,
     proactive_send_hub: ProactiveSendHub,
@@ -461,6 +605,9 @@ impl Default for Runtime {
             static_interceptors: Vec::new(),
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
+            bot_controls: HashMap::new(),
+            bot_statuses: std::sync::RwLock::new(HashMap::new()),
+            metrics: RuntimeMetrics::new(),
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
             qqbot_reply_sequences: std::sync::Mutex::new(HashMap::new()),
             proactive_send_hub: ProactiveSendHub::new(
@@ -568,6 +715,38 @@ impl Runtime {
             .iter()
             .map(|b| TokenBucketLimiter::new(&b.limiter_config))
             .collect();
+        let bot_controls = bots
+            .iter()
+            .map(|bot| {
+                let (sender, _) = watch::channel(BotControl {
+                    enabled: bot.enabled,
+                    generation: 0,
+                });
+                (bot.id.clone(), sender)
+            })
+            .collect();
+        let now = epoch_millis();
+        let bot_statuses = bots
+            .iter()
+            .map(|bot| {
+                (
+                    bot.id.clone(),
+                    BotStatusRecord {
+                        desired_enabled: bot.enabled,
+                        state: if bot.enabled {
+                            BotConnectionState::Starting
+                        } else {
+                            BotConnectionState::Disabled
+                        },
+                        state_since_epoch_ms: now,
+                        last_event_epoch_ms: None,
+                        events_received: 0,
+                        reconnect_count: 0,
+                        last_error: None,
+                    },
+                )
+            })
+            .collect();
         let proactive_send_hub = ProactiveSendHub::new(
             &bots,
             ProactiveSendSettings {
@@ -606,6 +785,9 @@ impl Runtime {
             static_interceptors,
             interceptor_chain: std::sync::RwLock::new(interceptor_chain),
             rate_limiters,
+            bot_controls,
+            bot_statuses: std::sync::RwLock::new(bot_statuses),
+            metrics: RuntimeMetrics::new(),
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
             qqbot_reply_sequences: std::sync::Mutex::new(HashMap::new()),
             proactive_send_hub,
@@ -667,6 +849,98 @@ impl Runtime {
 
     pub fn bots(&self) -> &[BotRuntimeInfo] {
         &self.bots
+    }
+
+    pub fn bot_statuses(&self) -> Vec<BotStatusSnapshot> {
+        let Ok(statuses) = self.bot_statuses.read() else {
+            return Vec::new();
+        };
+        self.bots
+            .iter()
+            .filter_map(|bot| {
+                let status = statuses.get(&bot.id)?;
+                Some(BotStatusSnapshot {
+                    id: bot.id.clone(),
+                    desired_enabled: status.desired_enabled,
+                    state: status.state,
+                    state_since_epoch_ms: status.state_since_epoch_ms,
+                    last_event_epoch_ms: status.last_event_epoch_ms,
+                    events_received: status.events_received,
+                    reconnect_count: status.reconnect_count,
+                    last_error: status.last_error.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn metrics_snapshot(&self) -> RuntimeMetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
+    pub fn host_plugin_report(&self) -> Option<HostPluginReport> {
+        self.host_plugin_report.read().ok()?.clone()
+    }
+
+    pub fn dynamic_plugin_health(&self) -> Vec<qimen_host_types::DynamicRuntimeHealthEntry> {
+        self.dynamic_runtime
+            .lock()
+            .map(|runtime| runtime.health_entries())
+            .unwrap_or_default()
+    }
+
+    pub fn set_bot_enabled(&self, bot_id: &str, enabled: bool) -> Result<()> {
+        let sender = self
+            .bot_controls
+            .get(bot_id)
+            .ok_or_else(|| QimenError::Runtime(format!("bot '{}' was not found", bot_id)))?;
+        sender.send_modify(|control| {
+            control.enabled = enabled;
+            control.generation = control.generation.wrapping_add(1);
+        });
+        self.proactive_send_hub.set_bot_enabled(bot_id, enabled);
+        self.update_bot_status(bot_id, |status| {
+            status.desired_enabled = enabled;
+            status.state = if enabled {
+                BotConnectionState::Starting
+            } else {
+                BotConnectionState::Disabled
+            };
+            status.state_since_epoch_ms = epoch_millis();
+            status.last_error = None;
+        });
+        Ok(())
+    }
+
+    pub fn reconnect_bot(&self, bot_id: &str) -> Result<()> {
+        let sender = self
+            .bot_controls
+            .get(bot_id)
+            .ok_or_else(|| QimenError::Runtime(format!("bot '{}' was not found", bot_id)))?;
+        if !sender.borrow().enabled {
+            return Err(QimenError::Runtime(format!("bot '{}' is disabled", bot_id)));
+        }
+        sender.send_modify(|control| {
+            control.generation = control.generation.wrapping_add(1);
+        });
+        self.set_bot_connection_state(bot_id, BotConnectionState::Reconnecting, None);
+        Ok(())
+    }
+
+    pub fn reconnect_all_bots(&self) {
+        for (bot_id, sender) in &self.bot_controls {
+            if sender.borrow().enabled {
+                sender.send_modify(|control| {
+                    control.generation = control.generation.wrapping_add(1);
+                });
+                self.set_bot_connection_state(bot_id, BotConnectionState::Reconnecting, None);
+            }
+        }
+    }
+
+    pub async fn reload_dynamic_plugins(&self) -> Result<usize> {
+        let count = self.rescan_dynamic_plugins().await?;
+        self.reconnect_all_bots();
+        Ok(count)
     }
 
     pub async fn boot(&self) -> Result<()> {
@@ -732,16 +1006,11 @@ impl Runtime {
                 "registered bot instance"
             );
 
-            if !bot.enabled {
-                tracing::info!(bot_id = %bot.id, "bot is disabled, skipping startup");
-                continue;
-            }
-
-            bot_futures.push(self.run_bot(bot, &self.rate_limiters[idx]));
+            bot_futures.push(self.supervise_bot(bot, &self.rate_limiters[idx]));
         }
 
         if bot_futures.is_empty() && self.webhook_gateway.is_none() {
-            tracing::warn!("no enabled bot transport loops were started");
+            tracing::warn!("no bot transport supervisors were started");
             return Ok(());
         }
 
@@ -752,6 +1021,87 @@ impl Runtime {
             bots.await?;
         }
         Ok(())
+    }
+
+    async fn supervise_bot(
+        &self,
+        bot: &BotRuntimeInfo,
+        limiter: &TokenBucketLimiter,
+    ) -> Result<()> {
+        let sender = self.bot_controls.get(&bot.id).ok_or_else(|| {
+            QimenError::Runtime(format!("bot '{}' control channel is missing", bot.id))
+        })?;
+        let mut control = sender.subscribe();
+
+        loop {
+            let desired = *control.borrow_and_update();
+            if !desired.enabled {
+                self.set_bot_connection_state(&bot.id, BotConnectionState::Disabled, None);
+                tokio::select! {
+                    changed = control.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    signal = tokio::signal::ctrl_c() => {
+                        signal.map_err(|error| QimenError::Runtime(error.to_string()))?;
+                        return Ok(());
+                    }
+                }
+                continue;
+            }
+
+            self.set_bot_connection_state(&bot.id, BotConnectionState::Starting, None);
+            let run = self.run_bot(bot, limiter);
+            tokio::pin!(run);
+            tokio::select! {
+                result = &mut run => {
+                    match result {
+                        Ok(()) => {
+                            self.set_bot_connection_state(&bot.id, BotConnectionState::Stopped, None);
+                            return Ok(());
+                        }
+                        Err(error) => {
+                            let message = error.to_string();
+                            self.set_bot_connection_state(
+                                &bot.id,
+                                BotConnectionState::Error,
+                                Some(message.clone()),
+                            );
+                            tracing::warn!(bot_id = %bot.id, error = %message, "bot loop failed; supervisor will retry");
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                                changed = control.changed() => {
+                                    if changed.is_err() {
+                                        return Ok(());
+                                    }
+                                }
+                                signal = tokio::signal::ctrl_c() => {
+                                    signal.map_err(|error| QimenError::Runtime(error.to_string()))?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+                changed = control.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                    self.proactive_send_hub.clear_executor(&bot.id).await;
+                    let next = *control.borrow_and_update();
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        if next.enabled {
+                            BotConnectionState::Reconnecting
+                        } else {
+                            BotConnectionState::Disabled
+                        },
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     /// 每个 Bot 使用独立 future 运行，避免长连接阻塞后续实例启动。
@@ -777,6 +1127,41 @@ impl Runtime {
             );
             Ok(())
         }
+    }
+
+    fn update_bot_status(&self, bot_id: &str, update: impl FnOnce(&mut BotStatusRecord)) {
+        if let Ok(mut statuses) = self.bot_statuses.write()
+            && let Some(status) = statuses.get_mut(bot_id)
+        {
+            update(status);
+        }
+    }
+
+    fn set_bot_connection_state(
+        &self,
+        bot_id: &str,
+        state: BotConnectionState,
+        error: Option<String>,
+    ) {
+        self.update_bot_status(bot_id, |status| {
+            if matches!(state, BotConnectionState::Reconnecting)
+                && !matches!(status.state, BotConnectionState::Reconnecting)
+            {
+                status.reconnect_count = status.reconnect_count.saturating_add(1);
+            }
+            status.state = state;
+            status.state_since_epoch_ms = epoch_millis();
+            status.last_error = error;
+        });
+    }
+
+    fn record_bot_event(&self, bot_id: &str) {
+        self.metrics.record_event();
+        self.update_bot_status(bot_id, |status| {
+            status.events_received = status.events_received.saturating_add(1);
+            status.last_event_epoch_ms = Some(epoch_millis());
+            status.last_error = None;
+        });
     }
 
     fn build_system_dispatcher(&self) -> OneBotSystemDispatcher {
@@ -1048,7 +1433,7 @@ impl Runtime {
             .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
             .unload_all();
 
-        let new_entries = match dynamic_runtime::scan_dynamic_plugins(&dir) {
+        let mut new_entries = match dynamic_runtime::scan_dynamic_plugins(&dir) {
             Ok(entries) => entries,
             Err(err) => {
                 if let Some(gateway) = &self.webhook_gateway {
@@ -1057,6 +1442,10 @@ impl Runtime {
                 return Err(err);
             }
         };
+        if let Some(path) = &self.plugin_state_path {
+            let state = load_plugin_state(path)?;
+            new_entries.retain(|entry| state.is_enabled(&entry.plugin_id));
+        }
         let initialized_entries = match self.initialize_dynamic_plugins(&new_entries).await {
             Ok(entries) => entries,
             Err(err) => {
@@ -1167,10 +1556,16 @@ impl Runtime {
             let mut client =
                 match QqBotGatewayClient::connect(&gateway.url, session.clone(), &token).await {
                     Ok(client) => {
+                        self.set_bot_connection_state(&bot.id, BotConnectionState::Online, None);
                         tracing::info!(bot_id = %bot.id, "QQ official Gateway connected");
                         client
                     }
                     Err(err) => {
+                        self.set_bot_connection_state(
+                            &bot.id,
+                            BotConnectionState::Reconnecting,
+                            Some(err.to_string()),
+                        );
                         tracing::warn!(
                             bot_id = %bot.id,
                             delay_secs = reconnect_delay.as_secs(),
@@ -1216,9 +1611,19 @@ impl Runtime {
                     continue;
                 }
                 Ok(SessionEnd::Reconnect(reason)) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(reason.clone()),
+                    );
                     tracing::warn!(bot_id = %bot.id, reason = %reason, "QQ official session ended, reconnecting");
                 }
                 Err(err) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(err.to_string()),
+                    );
                     tracing::warn!(bot_id = %bot.id, error = %err, "QQ official session failed, reconnecting");
                 }
             }
@@ -1347,6 +1752,7 @@ impl Runtime {
         let mut command_dispatcher = self.build_command_dispatcher()?;
         let mut command_help_text = render_help_text(&command_dispatcher.describe_commands());
         let reconnect_policy = ReconnectPolicy::default();
+        self.set_bot_connection_state(&bot.id, BotConnectionState::Reconnecting, None);
 
         loop {
             let connection = tokio::select! {
@@ -1366,6 +1772,7 @@ impl Runtime {
             };
 
             let peer = connection.peer_addr();
+            self.set_bot_connection_state(&bot.id, BotConnectionState::Online, None);
             tracing::info!(bot_id = %bot.id, peer = %peer, "ws-reverse session connected");
             let mut client = OneBot11WsClient::Reverse(connection);
             let proactive_registration = self
@@ -1410,10 +1817,20 @@ impl Runtime {
                             render_help_text(&command_dispatcher.describe_commands());
                     }
                     Ok(SessionEnd::Reconnect(reason)) => {
+                        self.set_bot_connection_state(
+                            &bot.id,
+                            BotConnectionState::Reconnecting,
+                            Some(reason.clone()),
+                        );
                         tracing::warn!(bot_id = %bot.id, peer = %peer, reason = %reason, "ws-reverse session ended, waiting for reconnect");
                         break;
                     }
                     Err(err) => {
+                        self.set_bot_connection_state(
+                            &bot.id,
+                            BotConnectionState::Reconnecting,
+                            Some(err.to_string()),
+                        );
                         tracing::warn!(bot_id = %bot.id, peer = %peer, error = %err, "ws-reverse session failed, waiting for reconnect");
                         break;
                     }
@@ -1456,10 +1873,16 @@ impl Runtime {
             .await
             {
                 Ok(client) => {
+                    self.set_bot_connection_state(&bot.id, BotConnectionState::Online, None);
                     tracing::info!(bot_id = %bot.id, endpoint = %endpoint, "websocket connected");
                     client
                 }
                 Err(err) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(err.to_string()),
+                    );
                     tracing::warn!(
                         bot_id = %bot.id,
                         endpoint = %endpoint,
@@ -1521,9 +1944,19 @@ impl Runtime {
                     continue;
                 }
                 Ok(SessionEnd::Reconnect(reason)) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(reason.clone()),
+                    );
                     tracing::warn!(bot_id = %bot.id, reason = %reason, "session ended, reconnecting");
                 }
                 Err(err) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(err.to_string()),
+                    );
                     tracing::warn!(bot_id = %bot.id, error = %err, "session failed, reconnecting");
                 }
             }
@@ -1693,6 +2126,7 @@ impl Runtime {
         };
 
         let event = adapter.decode_event(packet).await?;
+        self.record_bot_event(&bot.id);
         tracing::info!(
             bot_id = %bot.id,
             kind = ?event.kind,
@@ -1740,6 +2174,7 @@ impl Runtime {
         };
 
         let event = adapter.decode_event(packet).await?;
+        self.record_bot_event(&bot.id);
         tracing::info!(
             bot_id = %bot.id,
             kind = ?event.kind,
@@ -1945,6 +2380,7 @@ impl Runtime {
 
         if let Some(reply) = reply {
             runtime_ctx.reply_to_event(&event, reply).await?;
+            self.metrics.record_reply();
         }
 
         self.interceptor_chain
@@ -3317,6 +3753,14 @@ enum SessionEnd {
     PluginReload {
         reply_action: Option<NormalizedActionRequest>,
     },
+}
+
+fn epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 enum SessionSignal {
