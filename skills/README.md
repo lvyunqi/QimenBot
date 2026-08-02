@@ -1,54 +1,55 @@
-# QimenBot Plugin Development Skills
+# QimenBot 插件开发 Skill
 
-本目录提供适配各种 AI 编程工具的插件开发 Skill，帮助 AI 快速理解 QimenBot 并辅助插件开发。
+本目录只维护一份工具无关的插件开发 Skill，不再按不同 AI 工具复制多份内容。
 
-## 文件说明
+## 目录结构
 
-| 文件 | 适配工具 | 安装方式 |
-|------|---------|---------|
-| `plugin-dev.md` | 通用参考 / 任何 AI | 直接阅读或喂给 AI |
-| `claude-code.md` | Claude Code | 复制到 `.claude/commands/plugin.md` |
-| `cursor.mdc` | Cursor | 复制到 `.cursor/rules/plugin-dev.mdc` |
-| `copilot.md` | GitHub Copilot | 复制到 `.github/copilot-instructions.md` |
-| `gemini.md` | Gemini CLI | 复制到项目根目录 `GEMINI.md` |
-| `kiro.md` | Kiro | 复制到 `.kiro/steering/plugin-dev.md` |
-| `windsurf.md` | Windsurf | 复制到 `.windsurf/rules/plugin-dev.md` |
-| `agents.md` | Qodo / 通用 AGENTS.md 标准 | 复制到项目根目录 `AGENTS.md` |
-
-## 快速安装
-
-### 一键安装所有（Unix/macOS/Git Bash）
-
-```bash
-# 在项目根目录执行
-bash skills/install.sh
+```text
+skills/qimenbot-plugin-development/
+├── SKILL.md
+└── references/
+    ├── static-plugins.md
+    ├── dynamic-plugins.md
+    └── runtime-and-troubleshooting.md
 ```
 
-### 手动安装单个工具
+- `SKILL.md`：入口、插件类型选择、开发流程和共同约束。
+- `static-plugins.md`：需要 QimenBot 主框架源码的静态插件开发。
+- `dynamic-plugins.md`：可在主仓库外独立开发的动态插件、API 0.5、主动发送和 Webhook。
+- `runtime-and-troubleshooting.md`：宿主配置、加载流程、官方 QQ Bot、部署和错误诊断。
 
-```bash
-# Claude Code
-mkdir -p .claude/commands && cp skills/claude-code.md .claude/commands/plugin.md
+## 使用方式
 
-# Cursor
-mkdir -p .cursor/rules && cp skills/cursor.mdc .cursor/rules/plugin-dev.mdc
+让编程工具先完整读取入口：
 
-# GitHub Copilot
-cp skills/copilot.md .github/copilot-instructions.md
-
-# Gemini CLI
-cp skills/gemini.md GEMINI.md
-
-# Kiro
-mkdir -p .kiro/steering && cp skills/kiro.md .kiro/steering/plugin-dev.md
-
-# Windsurf
-mkdir -p .windsurf/rules && cp skills/windsurf.md .windsurf/rules/plugin-dev.md
-
-# Qodo / AGENTS.md
-cp skills/agents.md AGENTS.md
+```text
+请读取 skills/qimenbot-plugin-development/SKILL.md，
+再根据任务类型完整读取其中指定的 references 文件后开始开发。
 ```
 
-## 更新 Skill
+支持标准 Skill 目录的工具可以直接读取仓库内目录，也可以把整个目录复制到自己的 Skill 根目录：
 
-编辑 `skills/` 目录下的源文件，然后重新执行安装脚本即可同步到各工具。
+```bash
+cp -R skills/qimenbot-plugin-development "$YOUR_SKILLS_DIR/"
+```
+
+```powershell
+Copy-Item -Recurse skills/qimenbot-plugin-development $env:YOUR_SKILLS_DIR
+```
+
+必须复制整个目录，不能只复制 `SKILL.md`，否则静态、动态和排错引用会丢失。对于不自动发现 Skill 的工具，直接把入口路径写进任务即可，无需维护专用格式副本。
+
+## 维护规则
+
+更新插件能力时只修改这一份 Skill：
+
+1. 先核对当前源码、静态与动态示例、线上文档和 crates.io 实际发布版本。
+2. 选型与工作流放在 `SKILL.md`，并保持简短。
+3. 静态和动态插件知识不得混写；独立动态插件不能依赖本地主框架 path。
+4. 详细内容放在同级 `references/`，引用保持一层深度。
+5. 新增动态 API 时同步检查 `templates/dynamic-plugin/`，避免模板落后于 Skill。
+6. 验证所有相对链接、代码块、版本说明和示例构建。
+
+权威仓库：<https://github.com/lvyunqi/QimenBot>
+
+在线文档：<https://lvyunqi.github.io/QimenBot/>

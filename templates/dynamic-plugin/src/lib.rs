@@ -1,4 +1,4 @@
-//! QimenBot API 0.4 dynamic plugin template.
+//! QimenBot 动态插件 API 0.5 模板。
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,51 +6,97 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use abi_stable_host_api::{
-    BotApi, CommandRequest, CommandResponse, PluginInitConfig, PluginInitResult,
+    BotApi, CommandRequest, CommandResponse, PluginInitConfig, PluginInitResult, SendEnqueueStatus,
+    WebhookRequest, WebhookResponse,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
 static STOP_WORKER: AtomicBool = AtomicBool::new(false);
 static WORKER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
-#[dynamic_plugin(id = "{{name}}", version = "0.1.0", api = "0.4")]
+#[derive(Clone)]
+enum BotSelector {
+    Instance(String),
+    Account(String),
+}
+
+impl BotSelector {
+    fn send_group_msg(&self, group_id: &str, message: &str) -> SendEnqueueStatus {
+        match self {
+            Self::Instance(bot_id) => BotApi::for_bot(bot_id).send_group_msg(group_id, message),
+            Self::Account(account_id) => {
+                BotApi::for_account(account_id).send_group_msg(group_id, message)
+            }
+        }
+    }
+}
+
+#[dynamic_plugin(id = "{{name}}", version = "0.1.0", api = "0.5")]
 mod plugin {
     use super::*;
 
-    /// Optional configuration:
-    /// background_push = { bot_id = "qq-main", group_id = "123", interval_secs = 60 }
+    /// 可选配置：
+    /// background_push = { account_id = "2733944636", group_id = "123", interval_secs = 60 }
     #[init]
     fn init(config: PluginInitConfig) -> PluginInitResult {
-        let Ok(root) = serde_json::from_str::<serde_json::Value>(config.config_json.as_str()) else {
+        let Ok(root) = serde_json::from_str::<serde_json::Value>(config.config_json.as_str())
+        else {
             return PluginInitResult::ok();
         };
         let Some(push) = root.get("background_push") else {
             return PluginInitResult::ok();
         };
-        let Some(bot_id) = push.get("bot_id").and_then(serde_json::Value::as_str) else {
-            return PluginInitResult::err("background_push.bot_id is required");
+
+        let bot_id = push
+            .get("bot_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let account_id = push
+            .get("account_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let selector = match (bot_id, account_id) {
+            (Some(bot_id), None) => BotSelector::Instance(bot_id.to_string()),
+            (None, Some(account_id)) => BotSelector::Account(account_id.to_string()),
+            _ => {
+                return PluginInitResult::err(
+                    "background_push 必须且只能配置 bot_id 或 account_id 其中一个",
+                );
+            }
         };
-        let Some(group_id) = push.get("group_id").and_then(serde_json::Value::as_str) else {
-            return PluginInitResult::err("background_push.group_id is required");
+
+        let Some(group_id) = push
+            .get("group_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return PluginInitResult::err("background_push.group_id 不能为空");
         };
+        let group_id = group_id.to_string();
+        let message = push
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("来自动态插件后台线程的消息")
+            .to_string();
         let interval = Duration::from_secs(
             push.get("interval_secs")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(60)
                 .max(1),
         );
-        let bot_id = bot_id.to_string();
-        let group_id = group_id.to_string();
 
         STOP_WORKER.store(false, Ordering::Release);
         let handle = thread::spawn(move || {
             while !STOP_WORKER.load(Ordering::Acquire) {
-                let status = BotApi::for_bot(&bot_id)
-                    .send_group_msg(&group_id, "Hello from a background plugin worker");
-                eprintln!("[{{name}}] proactive enqueue status: {status:?}");
+                let status = selector.send_group_msg(&group_id, &message);
+                eprintln!("[{{name}}] 主动发送入队状态: {status:?}");
                 thread::park_timeout(interval);
             }
         });
+
         match WORKER.lock() {
             Ok(mut worker) => {
                 *worker = Some(handle);
@@ -60,7 +106,7 @@ mod plugin {
                 STOP_WORKER.store(true, Ordering::Release);
                 handle.thread().unpark();
                 let _ = handle.join();
-                PluginInitResult::err("worker lock is poisoned")
+                PluginInitResult::err("后台线程锁已损坏")
             }
         }
     }
@@ -76,8 +122,31 @@ mod plugin {
         }
     }
 
-    #[command(name = "hello", description = "Say hello", aliases = "hi")]
+    #[command(
+        name = "hello",
+        description = "向发送者打招呼",
+        aliases = "hi,你好",
+        category = "general"
+    )]
     fn hello(req: &CommandRequest) -> CommandResponse {
-        CommandResponse::text(&format!("Hello, {}!", req.sender_id.as_str()))
+        let nickname = req.sender_nickname.as_str();
+        let display = if nickname.is_empty() {
+            req.sender_id.as_str()
+        } else {
+            nickname
+        };
+        CommandResponse::text(&format!("你好，{display}"))
+    }
+
+    /// 启用宿主 Webhook Gateway 后，对外路径为 /webhooks/{{name}}/events。
+    #[webhook(method = "POST", path = "/events")]
+    fn receive_event(req: &WebhookRequest) -> WebhookResponse {
+        let response = serde_json::json!({
+            "accepted": true,
+            "bytes": req.body.len(),
+        })
+        .to_string();
+        WebhookResponse::text(200, &response)
+            .with_headers_json(r#"{"content-type":"application/json; charset=utf-8"}"#)
     }
 }

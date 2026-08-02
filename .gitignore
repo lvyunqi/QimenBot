@@ -22,7 +22,7 @@ docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 
-# AI Agent 工具本地文件（源文件在 skills/ 目录，通过 install.sh 安装）
+# 本地编程工具配置不入库；统一插件开发 Skill 位于 skills/ 目录。
 .claude/
 /.cursor/
 /.windsurf/
