@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "abi-stable-host-api"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "abi_stable",
 ]
@@ -388,6 +388,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
 
 [[package]]
+name = "futures-io"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4577ecaa3c4f96589d473f679a71b596316f6641bc350038b962a5daf0085d7a"
+
+[[package]]
 name = "futures-macro"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -397,6 +403,12 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "futures-sink"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e34418ac499d6305c2fb5ad0ed2f6ac998c5f8ca209b4510f7f94242c647e307"
 
 [[package]]
 name = "futures-task"
@@ -411,8 +423,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
  "futures-core",
+ "futures-io",
  "futures-macro",
+ "futures-sink",
  "futures-task",
+ "memchr",
  "pin-project-lite",
  "slab",
 ]
@@ -965,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-adapter-onebot11"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -977,11 +992,11 @@ dependencies = [
 
 [[package]]
 name = "qimen-adapter-onebot12"
-version = "0.1.14"
+version = "0.1.15"
 
 [[package]]
 name = "qimen-adapter-qqbot"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "chrono",
@@ -995,11 +1010,11 @@ dependencies = [
 
 [[package]]
 name = "qimen-adapter-satori"
-version = "0.1.14"
+version = "0.1.15"
 
 [[package]]
 name = "qimen-admin-web"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "axum",
  "chrono",
@@ -1010,6 +1025,7 @@ dependencies = [
  "qimen-host-types",
  "qimen-observability",
  "qimen-runtime",
+ "qimen-update-protocol",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1021,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-command-registry"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-host-types",
  "qimen-plugin-api",
@@ -1029,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-config"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-error",
  "qimen-plugin-api",
@@ -1039,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-dynamic-plugin-derive"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1048,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-error"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -1057,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-framework"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-command-registry",
  "qimen-config",
@@ -1072,15 +1088,32 @@ dependencies = [
 
 [[package]]
 name = "qimen-host-types"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-error",
  "toml",
 ]
 
 [[package]]
+name = "qimen-launcher"
+version = "0.1.15"
+dependencies = [
+ "futures-util",
+ "qimen-update-protocol",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "qimen-message"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -1088,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-admin"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1101,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-bridge"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1110,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-command"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1122,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-scheduler"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1135,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-observability"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "chrono",
  "qimen-error",
@@ -1148,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-official-host"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "abi-stable-host-api",
  "abi_stable",
@@ -1166,6 +1199,7 @@ dependencies = [
  "qimen-observability",
  "qimen-plugin-api",
  "qimen-plugin-host",
+ "qimen-update-protocol",
  "tokio",
  "toml",
  "tracing",
@@ -1173,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-api"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "inventory",
@@ -1196,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-example"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1210,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-host"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1221,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-protocol-core"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1233,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-runtime"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "abi-stable-host-api",
  "abi_stable",
@@ -1262,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-storage"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-error",
  "serde",
@@ -1273,14 +1307,14 @@ dependencies = [
 
 [[package]]
 name = "qimen-testkit"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "qimen-transport-core"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1289,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-transport-http"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-error",
  "reqwest",
@@ -1300,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-transport-qqbot"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-error",
  "qimen-transport-ws",
@@ -1313,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-transport-ws"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-error",
  "rustls",
@@ -1325,8 +1359,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "qimen-update-protocol"
+version = "0.1.15"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qimenbotd"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "dotenvy",
  "qimen-error",
@@ -1337,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "qimenctl"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "qimen-config",
  "qimen-error",
@@ -1501,6 +1543,7 @@ dependencies = [
  "base64",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -1520,12 +1563,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots 1.0.6",
 ]
@@ -1943,6 +1988,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-util"
+version = "0.7.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "toml"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2276,6 +2334,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75a326b8c223ee17883a4251907455a2431acc2791c98c26279376490c378c16"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

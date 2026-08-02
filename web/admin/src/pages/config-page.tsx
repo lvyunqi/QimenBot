@@ -2,6 +2,8 @@ import { useCallback, useEffect, useId, useRef, useState } from "react"
 import type React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 import {
+  AlertTriangle,
+  Check,
   Gauge,
   History,
   PanelTop,
@@ -12,11 +14,10 @@ import {
   Save,
   ShieldCheck,
   Webhook,
-  X,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, type ConfigView, type GeneralConfigView, type RevisionView } from "@/lib/api"
+import { api, type ConfigView, type GeneralConfigView, type PluginView, type RevisionView } from "@/lib/api"
 import { formatBytes, formatClock, generalToMutation } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -39,6 +40,7 @@ export function ConfigPage({ onRefreshSnapshot }: { onRefreshSnapshot: () => voi
   const [config, setConfig] = useState<ConfigView | null>(null)
   const [general, setGeneral] = useState<GeneralConfigView | null>(null)
   const [revisions, setRevisions] = useState<RevisionView[]>([])
+  const [moduleCatalog, setModuleCatalog] = useState<PluginView[]>([])
   const [adminToken, setAdminToken] = useState("")
   const [webhookToken, setWebhookToken] = useState("")
   const [activeTab, setActiveTab] = useState<ConfigTab>("runtime")
@@ -47,10 +49,18 @@ export function ConfigPage({ onRefreshSnapshot }: { onRefreshSnapshot: () => voi
   const tabsRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
-    const [nextConfig, nextRevisions] = await Promise.all([api.config(), api.revisions()])
+    const [nextConfig, nextRevisions, nextModules] = await Promise.all([
+      api.config(),
+      api.revisions(),
+      api.plugins().catch((error) => {
+        toast.warning(error instanceof Error ? "模块发现失败：" + error.message : "模块发现信息暂不可用")
+        return []
+      }),
+    ])
     setConfig(nextConfig)
     setGeneral(structuredClone(nextConfig.general))
     setRevisions(nextRevisions)
+    setModuleCatalog(nextModules.filter((plugin) => plugin.kind === "builtin" || plugin.kind === "static"))
     setAdminToken("")
     setWebhookToken("")
     setDirty(false)
@@ -234,7 +244,7 @@ export function ConfigPage({ onRefreshSnapshot }: { onRefreshSnapshot: () => voi
                 />
               </TabsPrimitive.Content>
               <TabsPrimitive.Content value="plugins" className="config-tabpanel">
-                <PluginsSection general={general} patch={patch} />
+                <PluginsSection general={general} modules={moduleCatalog} patch={patch} />
               </TabsPrimitive.Content>
               <TabsPrimitive.Content value="webhook" className="config-tabpanel">
                 <WebhookSection
@@ -392,33 +402,34 @@ function PanelSection({
 
 function PluginsSection({
   general,
+  modules,
   patch,
 }: {
   general: GeneralConfigView
+  modules: PluginView[]
   patch: (next: Partial<GeneralConfigView>) => void
 }) {
   return (
     <ConfigSection
       title="模块与插件"
-      description="徽标代表配置中的模块 ID。点击徽标内的删除图标可移除，使用输入框添加。"
+      description="从当前 qimenbotd 实际发现的模块中选择。不可用项会保留原配置并明确标记。"
       badge={<Badge variant="default">{general.builtin_modules.length + general.plugin_modules.length} 个模块</Badge>}
     >
       <div className="config-form-grid">
         <Field label="内置模块" hint="宿主随框架编译的基础模块。" wide controlGroup>
-          <TagEditor
+          <ModulePicker
             values={general.builtin_modules}
-            tone="neutral"
-            placeholder="输入模块 ID 后回车"
-            ariaLabel="添加内置模块"
+            options={modules.filter((module) => module.kind === "builtin")}
+            kind="builtin"
             onChange={(builtin_modules) => patch({ builtin_modules })}
           />
         </Field>
         <Field label="静态插件" hint="已编译进 qimenbotd 的插件模块。" wide controlGroup>
-          <TagEditor
+          <ModulePicker
             values={general.plugin_modules}
-            tone="default"
-            placeholder="输入插件 module id 后回车"
-            ariaLabel="添加静态插件"
+            options={modules.filter((module) => module.kind === "static")}
+            kind="static"
+            allowCustom
             onChange={(plugin_modules) => patch({ plugin_modules })}
           />
         </Field>
@@ -724,20 +735,40 @@ function SecretField({
   )
 }
 
-function TagEditor({
+function ModulePicker({
   values,
-  tone,
-  placeholder,
-  ariaLabel,
+  options,
+  kind,
+  allowCustom = false,
   onChange,
 }: {
   values: string[]
-  tone: "default" | "neutral"
-  placeholder: string
-  ariaLabel: string
+  options: PluginView[]
+  kind: "builtin" | "static"
+  allowCustom?: boolean
   onChange: (values: string[]) => void
 }) {
   const [draft, setDraft] = useState("")
+
+  const byId = new Map(options.map((option) => [option.id, option]))
+  const entries = [
+    ...options,
+    ...values
+      .filter((value) => !byId.has(value))
+      .map<PluginView>((value) => ({
+        id: value,
+        kind,
+        enabled: true,
+        loaded: false,
+        configured: true,
+        available: false,
+        commands: [],
+        routes: [],
+        webhooks: [],
+        failures: 0,
+        live_toggle: false,
+      })),
+  ].sort((left, right) => Number(values.includes(right.id)) - Number(values.includes(left.id)) || left.id.localeCompare(right.id))
 
   const add = () => {
     const value = draft.trim()
@@ -747,38 +778,96 @@ function TagEditor({
   }
 
   return (
-    <div className="tag-editor">
-      <div className="tag-list">
-        {values.map((value) => (
-          <Badge variant={tone} key={value}>
-            {value}
+    <div className="module-picker">
+      <div className="module-picker-summary">
+        <span><strong>{values.length}</strong> 个已选择</span>
+        <span>{entries.filter((entry) => entry.available !== false).length} 个当前可用</span>
+      </div>
+      <div className="module-choice-grid" role="group" aria-label={kind === "builtin" ? "选择内置模块" : "选择静态插件"}>
+        {entries.map((entry) => {
+          const selected = values.includes(entry.id)
+          const available = entry.available !== false
+          const copy = moduleDisplayCopy(entry)
+          const endpointCount = entry.commands.length + entry.routes.length + (entry.system_plugins?.length ?? 0)
+          return (
             <button
               type="button"
-              aria-label={"删除 " + value}
-              onClick={() => onChange(values.filter((item) => item !== value))}
+              key={entry.kind + entry.id}
+              className={(selected ? "is-selected " : "") + (!available ? "is-unavailable" : "")}
+              aria-pressed={selected}
+              onClick={() => onChange(selected ? values.filter((value) => value !== entry.id) : [...values, entry.id])}
             >
-              <X />
+              <span className="module-choice-mark">
+                {!available ? <AlertTriangle /> : selected ? <Check /> : <Plus />}
+              </span>
+              <span className="module-choice-copy">
+                <span>
+                  <strong>{copy.name}</strong>
+                  <Badge variant={!available ? "warning" : selected ? "success" : "neutral"}>
+                    {!available ? "当前不可用" : selected ? "已选择" : "可添加"}
+                  </Badge>
+                </span>
+                <code>{entry.id}</code>
+                <small>{copy.description}</small>
+                {available && (
+                  <span className="module-choice-meta">
+                    {entry.version && <span>v{entry.version}</span>}
+                    <span>{endpointCount} 个入口</span>
+                    <span>{entry.interceptors ?? 0} 个拦截器</span>
+                  </span>
+                )}
+              </span>
             </button>
-          </Badge>
-        ))}
+          )
+        })}
+        {entries.length === 0 && <div className="module-choice-empty">当前二进制没有发现此类模块</div>}
       </div>
-      <div className="tag-input-row">
-        <Input
-          value={draft}
-          aria-label={ariaLabel}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === ",") {
-              event.preventDefault()
-              add()
-            }
-          }}
-          placeholder={placeholder}
-        />
-        <Button type="button" variant="outline" size="icon" onClick={add} disabled={!draft.trim()} aria-label="添加徽标">
-          <Plus />
-        </Button>
-      </div>
+      {allowCustom && (
+        <div className="module-manual-entry">
+          <span>
+            <strong>手动添加 Module ID</strong>
+            <small>仅用于准备尚未编译进当前 qimenbotd 的静态插件。</small>
+          </span>
+          <div>
+            <Input
+              value={draft}
+              aria-label="手动添加静态插件 Module ID"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === ",") {
+                  event.preventDefault()
+                  add()
+                }
+              }}
+              placeholder="plugin-module-id"
+            />
+            <Button type="button" variant="outline" size="icon" onClick={add} disabled={!draft.trim()} aria-label="添加 Module ID">
+              <Plus />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+const builtinModuleCopy: Record<string, { name: string; description: string }> = {
+  command: { name: "命令系统", description: "命令解析、权限匹配和处理器分发。" },
+  admin: { name: "管理能力", description: "宿主维护和管理命令所需的基础能力。" },
+  scheduler: { name: "任务调度", description: "定时任务与周期性后台作业。" },
+  bridge: { name: "消息桥接", description: "在机器人和已配置端点之间转发消息。" },
+}
+
+function moduleDisplayCopy(module: PluginView) {
+  if (module.kind === "builtin" && builtinModuleCopy[module.id]) return builtinModuleCopy[module.id]
+  if (module.available === false) {
+    return {
+      name: module.name || module.id,
+      description: "该 ID 已写入配置，但当前二进制没有发现对应模块。",
+    }
+  }
+  return {
+    name: module.name || module.id,
+    description: module.description || "已编译进当前 qimenbotd 的静态插件模块。",
+  }
 }

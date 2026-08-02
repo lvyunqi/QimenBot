@@ -578,6 +578,7 @@ pub struct Runtime {
     interceptor_chain: std::sync::RwLock<InterceptorChain>,
     rate_limiters: Vec<TokenBucketLimiter>,
     bot_controls: HashMap<String, watch::Sender<BotControl>>,
+    shutdown: watch::Sender<bool>,
     bot_statuses: std::sync::RwLock<HashMap<String, BotStatusRecord>>,
     metrics: RuntimeMetrics,
     qqbot_send_backoff_until: std::sync::Mutex<HashMap<String, Instant>>,
@@ -606,6 +607,7 @@ impl Default for Runtime {
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
             bot_controls: HashMap::new(),
+            shutdown: watch::channel(false).0,
             bot_statuses: std::sync::RwLock::new(HashMap::new()),
             metrics: RuntimeMetrics::new(),
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
@@ -725,6 +727,7 @@ impl Runtime {
                 (bot.id.clone(), sender)
             })
             .collect();
+        let (shutdown, _) = watch::channel(false);
         let now = epoch_millis();
         let bot_statuses = bots
             .iter()
@@ -786,6 +789,7 @@ impl Runtime {
             interceptor_chain: std::sync::RwLock::new(interceptor_chain),
             rate_limiters,
             bot_controls,
+            shutdown,
             bot_statuses: std::sync::RwLock::new(bot_statuses),
             metrics: RuntimeMetrics::new(),
             qqbot_send_backoff_until: std::sync::Mutex::new(HashMap::new()),
@@ -937,6 +941,40 @@ impl Runtime {
         }
     }
 
+    /// 请求整个运行时进入统一优雅关闭流程。
+    pub fn request_shutdown(&self) {
+        if !*self.shutdown.borrow() {
+            self.shutdown.send_replace(true);
+            tracing::info!("runtime shutdown requested");
+        }
+    }
+
+    /// 等待内部关闭请求、Ctrl+C 或 Unix SIGTERM。
+    pub async fn wait_for_shutdown(&self) {
+        let mut receiver = self.shutdown.subscribe();
+        if *receiver.borrow() {
+            return;
+        }
+
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+                tokio::select! {
+                    _ = receiver.changed() => {}
+                    _ = tokio::signal::ctrl_c() => self.request_shutdown(),
+                    _ = terminate.recv() => self.request_shutdown(),
+                }
+                return;
+            }
+        }
+
+        tokio::select! {
+            _ = receiver.changed() => {}
+            _ = tokio::signal::ctrl_c() => self.request_shutdown(),
+        }
+    }
+
     pub async fn reload_dynamic_plugins(&self) -> Result<usize> {
         let count = self.rescan_dynamic_plugins().await?;
         self.reconnect_all_bots();
@@ -945,9 +983,12 @@ impl Runtime {
 
     pub async fn boot(&self) -> Result<()> {
         self.proactive_send_hub.start_workers();
-        let result = self.boot_inner().await;
+        let result = tokio::select! {
+            result = self.boot_inner() => result,
+            _ = self.wait_for_shutdown() => Ok(()),
+        };
 
-        // Stop accepting webhook and proactive-send work before unloading plugin code.
+        // 卸载插件代码前先停止接收 Webhook 和主动发送任务。
         if let Some(gateway) = &self.webhook_gateway {
             gateway.pause_and_wait();
         }
@@ -1469,6 +1510,7 @@ impl Runtime {
             *report_guard = Some(HostPluginReport {
                 builtin_modules: Vec::new(),
                 configured_plugins: Vec::new(),
+                available_modules: Vec::new(),
                 persisted_states: std::collections::BTreeMap::new(),
                 dynamic_plugins: initialized_entries,
             });
@@ -4526,6 +4568,15 @@ mod tests {
     use qimen_plugin_api::MessageEventInterceptor;
     use qimen_protocol_core::{ActorRef, ChatRef};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn internal_shutdown_request_wakes_waiters() {
+        let runtime = Runtime::default();
+        runtime.request_shutdown();
+        tokio::time::timeout(Duration::from_millis(100), runtime.wait_for_shutdown())
+            .await
+            .expect("shutdown waiter should wake immediately");
+    }
 
     #[tokio::test]
     async fn ws_reverse_boot_stays_alive_while_waiting_for_connection() {

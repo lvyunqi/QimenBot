@@ -54,7 +54,7 @@ export function OverviewPage({ snapshot, loading, error, onRefresh, onNavigate, 
   ] as const
 
   return (
-    <main className="page-shell">
+    <main className="page-shell overview-page">
       <div className="page-heading enter-item">
         <div>
           <div className="flex items-center gap-2.5">
@@ -82,7 +82,11 @@ export function OverviewPage({ snapshot, loading, error, onRefresh, onNavigate, 
         {metrics.map((metric, index) => {
           const Icon = metric.icon
           return (
-            <div className="metric-cell enter-item" style={{ animationDelay: index * 45 + "ms" }} key={metric.label}>
+            <div
+              className={"metric-cell enter-item" + (index === 0 ? " is-anchor" : "")}
+              style={{ animationDelay: index * 45 + "ms" }}
+              key={metric.label}
+            >
               <div className={"metric-icon is-" + metric.tone}>
                 <Icon strokeWidth={1.9} />
               </div>
@@ -137,7 +141,7 @@ function RecentLogs({ logs, onOpenLogs }: { logs: AdminSnapshot["recent_logs"]; 
           <div className="flex items-center gap-2">
             <Activity className="size-4 text-success" />
             <h2 className="panel-title">实时事件</h2>
-            <span className="live-indicator">LIVE</span>
+            <span className="live-indicator">流式</span>
           </div>
           <p className="panel-subtitle">日志缓冲区最新记录</p>
         </div>
@@ -186,32 +190,45 @@ function BotSummary({
           <span>实例</span>
           <span>协议</span>
           <span>连接</span>
-          <span>重连</span>
-          <span>事件</span>
-          <span>最后活动</span>
+          <span>活动</span>
           <span aria-hidden="true" />
         </div>
         {bots.map((bot, index) => (
           <div className="bot-table-row" role="row" key={bot.id} style={{ animationDelay: 160 + index * 45 + "ms" }}>
-            <div className="flex min-w-0 items-center gap-3" role="cell">
+            <div className="bot-instance-cell" role="cell">
               <div className="bot-mark">
                 <Bot />
                 <span className={"bot-status-dot is-" + bot.state} />
               </div>
               <div className="min-w-0">
-                <div className="truncate font-mono text-xs font-bold text-foreground">{bot.id}</div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">{bot.transport}</div>
+                <div className="truncate font-mono text-xs font-bold text-foreground" title={bot.id}>{bot.id}</div>
+                <div className="bot-instance-meta">{bot.transport}</div>
               </div>
             </div>
-            <div role="cell"><Badge variant={bot.protocol === "qq-official" ? "default" : "neutral"}>{bot.protocol}</Badge></div>
-            <div role="cell"><Badge variant={botStatusVariant(bot.state)}>{botStatusLabel(bot.state)}</Badge></div>
-            <div role="cell" className="table-mono">{bot.reconnect_count}</div>
-            <div role="cell" className="table-mono">{formatNumber(bot.events_received)}</div>
-            <div role="cell" className="text-xs text-muted-foreground">{relativeTime(bot.last_event_epoch_ms)}</div>
-            <div role="cell" className="flex justify-end gap-1">
+            <div role="cell" className="bot-protocol-cell">
+              <Badge variant={bot.protocol === "qq-official" ? "default" : "neutral"}>{bot.protocol}</Badge>
+            </div>
+            <div role="cell" className="bot-connection-cell">
+              <Badge variant={botStatusVariant(bot.state)}>{botStatusLabel(bot.state)}</Badge>
+              <span>重连 {bot.reconnect_count}</span>
+            </div>
+            <div role="cell" className="bot-activity-cell">
+              <strong>{formatNumber(bot.events_received)} 条</strong>
+              <span>{relativeTime(bot.last_event_epoch_ms)}</span>
+            </div>
+            <div role="cell" className="bot-row-action">
               <Button variant="ghost" size="icon-sm" aria-label={"重连 " + bot.id} onClick={() => onBotAction(bot.id, "reconnect")} disabled={!bot.desired_enabled}>
                 <RefreshCw />
               </Button>
+            </div>
+            <div role="cell" className="bot-runtime-route">
+              <span>已启用模块</span>
+              <div>
+                {bot.enabled_modules.slice(0, 3).map((module) => <code key={module}>{module}</code>)}
+                {bot.enabled_modules.length === 0 && <small>无</small>}
+                {bot.enabled_modules.length > 3 && <small>+{bot.enabled_modules.length - 3}</small>}
+              </div>
+              <strong>{bot.intents.length} Intents</strong>
             </div>
           </div>
         ))}

@@ -80,6 +80,8 @@ vim config/base.toml
 cargo run
 ```
 
+生产环境建议下载 Release 压缩包并启动 `qimen-launcher`，Docker Hub、systemd、Windows Service 和在线更新步骤见[部署与更新](docs/advanced/deployment.md)。
+
 ## 配置详解
 
 框架启动时只读取一个配置文件：**`config/base.toml`**。所有全局设置和 Bot 实例都在这一个文件中定义。

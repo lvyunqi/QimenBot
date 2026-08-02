@@ -7,8 +7,22 @@ use std::path::Path;
 pub struct HostPluginReport {
     pub builtin_modules: Vec<String>,
     pub configured_plugins: Vec<String>,
+    pub available_modules: Vec<HostModuleReportEntry>,
     pub persisted_states: BTreeMap<String, bool>,
     pub dynamic_plugins: Vec<DynamicPluginReportEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HostModuleReportEntry {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub api_version: String,
+    pub commands: Vec<String>,
+    pub system_plugins: Vec<String>,
+    pub interceptors: usize,
 }
 
 #[derive(Debug, Clone)]

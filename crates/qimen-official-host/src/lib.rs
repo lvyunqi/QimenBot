@@ -6,7 +6,7 @@ use qimen_error::{QimenError, Result};
 use qimen_framework::Runtime;
 use qimen_host_types::{
     DynamicCommandEntry, DynamicInterceptorEntry, DynamicPluginReportEntry, DynamicRouteEntry,
-    DynamicWebhookEntry, HostPluginReport, PluginState, load_plugin_state,
+    DynamicWebhookEntry, HostModuleReportEntry, HostPluginReport, PluginState, load_plugin_state,
 };
 use qimen_mod_admin::AdminModule;
 use qimen_mod_bridge::BridgeModule;
@@ -15,6 +15,7 @@ use qimen_mod_scheduler::SchedulerModule;
 use qimen_observability::{LogStore, init_with_log_store};
 use qimen_plugin_api::Module;
 use qimen_plugin_host::ModuleRegistry;
+use qimen_update_protocol::{RuntimeCommandAction, managed_update_dir, take_runtime_commands};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ const HOST_PLUGIN_API_VERSION: &str = "0.1";
 const HOST_FRAMEWORK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub async fn run_official_host(config_path: &str) -> Result<()> {
-    // First-start: auto-copy config template if config file is missing
+    // 首次启动时从示例文件创建实际配置。
     if !Path::new(config_path).exists() {
         let example_path = format!("{}.example", config_path);
         if Path::new(&example_path).exists() {
@@ -81,12 +82,42 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
         Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report),
     );
     tracing::info!(bots = runtime.bots().len(), "official host initialized");
-    if config.admin_web.enabled {
+    let update_control = managed_update_dir().map(|update_dir| {
+        let runtime = Arc::clone(&runtime);
+        tokio::spawn(async move {
+            loop {
+                match take_runtime_commands(&update_dir) {
+                    Ok(commands)
+                        if commands
+                            .iter()
+                            .any(|command| command.action == RuntimeCommandAction::Shutdown) =>
+                    {
+                        tracing::info!("launcher requested a graceful runtime shutdown");
+                        runtime.request_shutdown();
+                        return;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to read launcher runtime command")
+                    }
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+                    _ = runtime.wait_for_shutdown() => return,
+                }
+            }
+        })
+    });
+    let result = if config.admin_web.enabled {
         let admin = AdminServer::new(config_path, &config, Arc::clone(&runtime), log_store);
-        tokio::try_join!(runtime.boot(), admin.serve())?;
+        tokio::try_join!(runtime.boot(), admin.serve()).map(|_| ())
     } else {
-        runtime.boot().await?;
+        runtime.boot().await
+    };
+    if let Some(task) = update_control {
+        task.abort();
     }
+    result?;
     tracing::info!("official host stopped");
     Ok(())
 }
@@ -187,6 +218,7 @@ fn build_host_plugin_report(
     HostPluginReport {
         builtin_modules: config.official_host.builtin_modules.clone(),
         configured_plugins: config.official_host.plugin_modules.clone(),
+        available_modules: discover_host_modules(),
         persisted_states: plugin_state.modules().clone(),
         dynamic_plugins: dynamic_descriptors
             .iter()
@@ -211,6 +243,79 @@ fn build_host_plugin_report(
                 meta_callback_symbol: descriptor.meta_callback_symbol.clone(),
             })
             .collect(),
+    }
+}
+
+fn discover_host_modules() -> Vec<HostModuleReportEntry> {
+    let mut entries = vec![
+        describe_host_module("builtin", Box::new(CommandModule)),
+        describe_host_module("builtin", Box::new(AdminModule::default())),
+        describe_host_module("builtin", Box::new(SchedulerModule::default())),
+        describe_host_module("builtin", Box::new(BridgeModule)),
+    ];
+
+    entries.extend(
+        inventory::iter::<qimen_plugin_api::ModuleEntry>
+            .into_iter()
+            .map(|entry| describe_host_module("static", (entry.factory)())),
+    );
+    entries.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.id.cmp(&right.id)));
+    entries.dedup_by(|left, right| left.kind == right.kind && left.id == right.id);
+    entries
+}
+
+fn describe_host_module(kind: &str, module: Box<dyn Module>) -> HostModuleReportEntry {
+    let id = module.id().to_string();
+    let command_plugins = module.command_plugins();
+    let system_plugins = module.system_plugins();
+    let metadata = command_plugins
+        .iter()
+        .map(|plugin| plugin.metadata())
+        .chain(system_plugins.iter().map(|plugin| plugin.metadata()))
+        .next();
+
+    let mut commands: Vec<String> = command_plugins
+        .iter()
+        .flat_map(|plugin| plugin.commands())
+        .map(|command| command.name.to_string())
+        .collect();
+    commands.sort();
+    commands.dedup();
+
+    let mut system_plugin_ids: Vec<String> = system_plugins
+        .iter()
+        .map(|plugin| plugin.metadata().id.to_string())
+        .collect();
+    system_plugin_ids.sort();
+    system_plugin_ids.dedup();
+
+    HostModuleReportEntry {
+        id: id.clone(),
+        kind: kind.to_string(),
+        name: metadata
+            .as_ref()
+            .map(|value| value.name.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&id)
+            .to_string(),
+        description: metadata
+            .as_ref()
+            .map(|value| value.description.trim())
+            .unwrap_or_default()
+            .to_string(),
+        version: metadata
+            .as_ref()
+            .map(|value| value.version)
+            .unwrap_or(HOST_FRAMEWORK_VERSION)
+            .to_string(),
+        api_version: metadata
+            .as_ref()
+            .map(|value| value.api_version)
+            .unwrap_or(HOST_PLUGIN_API_VERSION)
+            .to_string(),
+        commands,
+        system_plugins: system_plugin_ids,
+        interceptors: module.interceptors().len(),
     }
 }
 
@@ -500,7 +605,8 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
 
 #[cfg(test)]
 mod tests {
-    use super::uses_descriptor_collections;
+    use super::{discover_host_modules, uses_descriptor_collections};
+    use std::collections::BTreeSet;
 
     #[test]
     fn api_v05_uses_multi_entry_descriptor_collections() {
@@ -508,5 +614,28 @@ mod tests {
             assert!(uses_descriptor_collections(version));
         }
         assert!(!uses_descriptor_collections("0.1"));
+    }
+
+    #[test]
+    fn module_catalog_contains_each_builtin_once() {
+        let modules = discover_host_modules();
+        let builtin_ids: BTreeSet<_> = modules
+            .iter()
+            .filter(|module| module.kind == "builtin")
+            .map(|module| module.id.as_str())
+            .collect();
+
+        assert_eq!(
+            builtin_ids,
+            BTreeSet::from(["admin", "bridge", "command", "scheduler"])
+        );
+        assert_eq!(
+            modules.len(),
+            modules
+                .iter()
+                .map(|module| (module.kind.as_str(), module.id.as_str()))
+                .collect::<BTreeSet<_>>()
+                .len()
+        );
     }
 }

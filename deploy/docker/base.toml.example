@@ -1,0 +1,49 @@
+[runtime]
+env = "prod"
+shutdown_timeout_secs = 30
+task_grace_secs = 10
+
+[observability]
+level = "info"
+json_logs = true
+metrics_bind = "127.0.0.1:9090"
+
+[admin_web]
+enabled = true
+bind = "0.0.0.0:3210"
+access_token = "${QIMEN_ADMIN_TOKEN}"
+log_capacity = 2000
+audit_path = "config/admin-audit.jsonl"
+
+[official_host]
+builtin_modules = ["command", "admin", "scheduler", "bridge"]
+plugin_modules = ["example-basic"]
+plugin_state_path = "config/plugin-state.toml"
+plugin_bin_dir = "plugins/bin"
+dynamic_plugin_timeout_secs = 30
+
+[official_host.proactive_send]
+queue_capacity = 256
+offline_ttl_secs = 60
+
+[official_host.webhook]
+enabled = false
+bind = "0.0.0.0:8088"
+base_path = "/webhooks"
+max_body_bytes = 1048576
+request_timeout_ms = 5000
+max_in_flight = 64
+access_token = "${QIMEN_WEBHOOK_TOKEN}"
+
+[[bots]]
+id = "qq-official"
+protocol = "qq-official"
+transport = "gateway"
+appid = "${QQBOT_APPID}"
+secret = "${QQBOT_SECRET}"
+intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
+sandbox = false
+enabled = true
+enabled_modules = ["command", "admin"]
+owners = []
+admins = []

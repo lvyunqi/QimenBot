@@ -1,7 +1,6 @@
-import { BarChart3, MoreHorizontal } from "lucide-react"
+import { BarChart3 } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
-import { Button } from "@/components/ui/button"
 import type { ThroughputPoint } from "@/lib/api"
 
 interface ThroughputChartProps {
@@ -29,14 +28,9 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
           </div>
           <p className="panel-subtitle">最近 2 小时 · 每分钟滚动统计</p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="hidden items-center gap-3 text-[11px] font-semibold text-muted-foreground sm:flex">
-            <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-primary" />事件</span>
-            <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-success" />回复</span>
-          </div>
-          <Button variant="ghost" size="icon-sm" aria-label="吞吐图表选项">
-            <MoreHorizontal />
-          </Button>
+        <div className="hidden items-center gap-3 text-[11px] font-semibold text-muted-foreground sm:flex">
+          <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-primary" />事件</span>
+          <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-success" />回复</span>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import {
   ScrollText,
   Settings2,
   ShieldCheck,
+  UploadCloud,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -85,6 +86,7 @@ export function Sidebar({ active, collapsed, logoUrl, snapshot, onNavigate, onCo
   ]
   const secondaryNav: NavItem[] = [
     { id: "configuration", label: "配置", icon: Settings2, count: snapshot?.server.restart_required ? "!" : undefined },
+    { id: "updates", label: "版本更新", icon: UploadCloud },
     { id: "audit", label: "安全审计", icon: ShieldCheck },
   ]
 

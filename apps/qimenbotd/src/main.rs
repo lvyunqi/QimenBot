@@ -1,18 +1,19 @@
 use qimen_error::Result;
 use qimen_official_host::run_official_host;
 
-// Force the linker to include plugin crate object files containing
-// inventory::submit! registrations. On Windows/MSVC, `use crate as _`
-// alone is insufficient — the linker may drop object files that only
-// contain inventory constructors if no concrete symbol is referenced.
+// 强制链接包含 inventory 注册项的静态插件目标文件。
+// Windows/MSVC 可能丢弃只有 inventory 构造器、没有具体符号引用的目标文件。
 extern crate qimen_plugin_example;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        println!("qimenbotd {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let _ = dotenvy::dotenv();
 
-    // Reference concrete symbols from each plugin crate so that the
-    // linker is forced to include the object files with inventory entries.
+    // 引用每个静态插件的具体符号，确保 inventory 注册项进入最终二进制。
     std::hint::black_box(qimen_plugin_example::BasicModule::__QIMEN_MODULE_ID);
 
     let config_path =

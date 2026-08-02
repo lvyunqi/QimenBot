@@ -126,13 +126,19 @@ export interface LogsView {
 export interface PluginView {
   id: string
   kind: "builtin" | "static" | "dynamic" | string
+  name?: string | null
+  description?: string | null
   version?: string | null
   api_version?: string | null
+  configured?: boolean
+  available?: boolean
   enabled: boolean
   loaded: boolean
   file_name?: string | null
   commands: string[]
   routes: string[]
+  system_plugins?: string[]
+  interceptors?: number
   webhooks: string[]
   failures: number
   last_error?: string | null
@@ -158,6 +164,43 @@ export interface AuditEntry {
 export interface MutationResult {
   revision?: string | null
   restart_required: boolean
+  message: string
+}
+
+export type DeploymentKind = "binary_managed" | "docker" | "direct_binary"
+export type UpdatePhase =
+  | "idle"
+  | "checking"
+  | "up_to_date"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "applying"
+  | "restarting"
+  | "rolled_back"
+  | "error"
+
+export interface UpdateStatus {
+  schema_version: number
+  deployment: DeploymentKind
+  phase: UpdatePhase
+  current_version: string
+  launcher_version: string
+  target: string
+  channel: string
+  auto_install: boolean
+  available_version?: string | null
+  release_url?: string | null
+  progress_percent?: number | null
+  message: string
+  checked_at_epoch_ms?: number | null
+  updated_at_epoch_ms: number
+}
+
+export interface UpdateView {
+  deployment: DeploymentKind
+  managed: boolean
+  status?: UpdateStatus | null
   message: string
 }
 
@@ -207,6 +250,7 @@ export const api = {
   plugins: () => request<PluginView[]>("/plugins"),
   logs: (params?: URLSearchParams) => request<LogsView>("/logs" + (params ? "?" + params : "")),
   audit: () => request<AuditEntry[]>("/audit"),
+  updates: () => request<UpdateView>("/updates"),
   revisions: () => request<RevisionView[]>("/config/revisions"),
   botAction: (id: string, action: "start" | "stop" | "reconnect") =>
     request<MutationResult>("/bots/" + encodeURIComponent(id) + "/actions", {
@@ -242,6 +286,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ revision }),
     }),
+  checkUpdates: () => request<MutationResult>("/updates/check", { method: "POST" }),
+  installUpdate: () => request<MutationResult>("/updates/install", { method: "POST" }),
+  restartRuntime: () => request<MutationResult>("/updates/restart", { method: "POST" }),
 }
 
 export function setApiToken(token: string) {

@@ -1,4 +1,4 @@
-import { Bell, Command, Moon, Search, Sun } from "lucide-react"
+import { Command, Moon, Search, Settings2, Sun } from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -11,10 +11,20 @@ interface TopbarProps {
   logoUrl: string
   snapshot?: AdminSnapshot
   error?: string | null
+  displaySettingsOpen: boolean
   onToggleTheme: () => void
+  onToggleDisplaySettings: () => void
 }
 
-export function Topbar({ dark, logoUrl, snapshot, error, onToggleTheme }: TopbarProps) {
+export function Topbar({
+  dark,
+  logoUrl,
+  snapshot,
+  error,
+  displaySettingsOpen,
+  onToggleTheme,
+  onToggleDisplaySettings,
+}: TopbarProps) {
   return (
     <header className="topbar-shell">
       <div className="topbar-search" role="search">
@@ -40,12 +50,17 @@ export function Topbar({ dark, logoUrl, snapshot, error, onToggleTheme }: Topbar
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="通知" className="relative">
-              <Bell />
-              <span className="absolute right-2 top-2 size-1.5 rounded-full bg-destructive ring-2 ring-background" />
+            <Button
+              variant={displaySettingsOpen ? "secondary" : "ghost"}
+              size="icon"
+              onClick={onToggleDisplaySettings}
+              aria-label="显示设置"
+              aria-expanded={displaySettingsOpen}
+            >
+              <Settings2 />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>通知</TooltipContent>
+          <TooltipContent>显示设置</TooltipContent>
         </Tooltip>
         <Avatar className="ml-1 size-8">
           <AvatarImage src={logoUrl} alt="QimenBot" />

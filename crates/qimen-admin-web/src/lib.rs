@@ -22,6 +22,10 @@ use qimen_host_types::load_plugin_state;
 use qimen_observability::{LogEntry, LogStore};
 use qimen_runtime::dynamic_runtime::scan_dynamic_plugins;
 use qimen_runtime::{BotConnectionState, BotStatusSnapshot, Runtime};
+use qimen_update_protocol::{
+    DeploymentKind, LauncherCommandAction, deployment_kind, enqueue_launcher_command,
+    managed_update_dir, read_status,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -81,6 +85,7 @@ impl AdminServer {
         let auth = AuthState {
             token: Arc::<str>::from(self.config.access_token.clone()),
         };
+        let shutdown_runtime = Arc::clone(&self.state.runtime);
         let api = Router::new()
             .route("/health", get(health))
             .route("/snapshot", get(snapshot))
@@ -96,26 +101,27 @@ impl AdminServer {
             .route("/config/general", put(update_general))
             .route("/config/revisions", get(revisions))
             .route("/config/rollback", post(rollback))
+            .route("/updates", get(updates))
+            .route("/updates/check", post(check_updates))
+            .route("/updates/install", post(install_update))
+            .route("/updates/restart", post(restart_runtime))
             .route("/audit", get(audit_entries))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .route_layer(middleware::from_fn_with_state(auth, require_auth))
             .with_state(self.state);
         let app = Router::new()
             .nest("/api/v1", api)
+            .route("/healthz", get(health))
             .route("/", get(assets::index))
             .route("/{*path}", get(assets::spa));
 
         let listener = TcpListener::bind(bind).await?;
         tracing::info!(bind = %bind, url = %format!("http://{bind}"), "QimenBot admin web panel listening");
         axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
+            .with_graceful_shutdown(async move { shutdown_runtime.wait_for_shutdown().await })
             .await
             .map_err(|error| qimen_error::QimenError::Runtime(error.to_string()))
     }
-}
-
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn require_auth(State(auth): State<AuthState>, request: Request, next: Next) -> Response {
@@ -580,6 +586,80 @@ async fn audit_entries(State(state): State<AdminState>) -> Json<ApiEnvelope<Vec<
     Json(ApiEnvelope::new(state.audit.entries(500)))
 }
 
+async fn updates() -> Result<Json<ApiEnvelope<UpdateView>>, AdminError> {
+    let deployment = deployment_kind();
+    let status = managed_update_dir()
+        .as_deref()
+        .map(read_status)
+        .transpose()?
+        .flatten();
+    let message = match deployment {
+        DeploymentKind::BinaryManaged => status
+            .as_ref()
+            .map(|value| value.message.clone())
+            .unwrap_or_else(|| "launcher 尚未写入更新状态".to_string()),
+        DeploymentKind::Docker => {
+            "当前由 Docker 编排层管理，请使用 docker compose pull && docker compose up -d 更新"
+                .to_string()
+        }
+        DeploymentKind::DirectBinary => {
+            "当前不是由 launcher 启动，先使用 qimen-launcher run 才能启用受控更新".to_string()
+        }
+    };
+    Ok(Json(ApiEnvelope::new(UpdateView {
+        deployment,
+        managed: matches!(deployment, DeploymentKind::BinaryManaged),
+        status,
+        message,
+    })))
+}
+
+async fn check_updates(
+    State(state): State<AdminState>,
+) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    queue_update_command(&state, LauncherCommandAction::Check, "更新检查请求已发送").await
+}
+
+async fn install_update(
+    State(state): State<AdminState>,
+) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    queue_update_command(&state, LauncherCommandAction::Install, "更新安装请求已发送").await
+}
+
+async fn restart_runtime(
+    State(state): State<AdminState>,
+) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    queue_update_command(&state, LauncherCommandAction::Restart, "重启请求已发送").await
+}
+
+async fn queue_update_command(
+    state: &AdminState,
+    action: LauncherCommandAction,
+    message: &str,
+) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    let Some(update_dir) = managed_update_dir() else {
+        return Err(AdminError::Conflict(
+            "当前进程没有由 qimen-launcher 管理，无法执行受控更新或重启".to_string(),
+        ));
+    };
+    let id = enqueue_launcher_command(&update_dir, action)?;
+    state.audit.record(
+        match action {
+            LauncherCommandAction::Check => "update.check",
+            LauncherCommandAction::Install => "update.install",
+            LauncherCommandAction::Restart => "runtime.restart",
+        },
+        "launcher",
+        "success",
+        format!("{}（命令 {}）", message, id),
+    )?;
+    Ok(Json(ApiEnvelope::new(MutationResult {
+        revision: None,
+        restart_required: false,
+        message: message.to_string(),
+    })))
+}
+
 async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError> {
     let stored = state.config_store.read().await?;
     let persisted = load_plugin_state(&stored.config.official_host.plugin_state_path)?;
@@ -590,6 +670,7 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             .unwrap_or_else(|| qimen_host_types::HostPluginReport {
                 builtin_modules: Vec::new(),
                 configured_plugins: Vec::new(),
+                available_modules: Vec::new(),
                 persisted_states: Default::default(),
                 dynamic_plugins: Vec::new(),
             });
@@ -599,41 +680,102 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
         .map(|entry| (entry.path.clone(), entry))
         .collect();
     let mut views = Vec::new();
-    for id in &stored.config.official_host.builtin_modules {
+    let mut represented_builtin = std::collections::HashSet::new();
+    let mut represented_static = std::collections::HashSet::new();
+    for module in &loaded.available_modules {
+        let configured = match module.kind.as_str() {
+            "builtin" => stored
+                .config
+                .official_host
+                .builtin_modules
+                .iter()
+                .any(|id| id == &module.id),
+            "static" => stored
+                .config
+                .official_host
+                .plugin_modules
+                .iter()
+                .any(|id| id == &module.id),
+            _ => false,
+        };
+        let enabled = configured && (module.kind == "builtin" || persisted.is_enabled(&module.id));
+        if module.kind == "builtin" {
+            represented_builtin.insert(module.id.clone());
+        } else if module.kind == "static" {
+            represented_static.insert(module.id.clone());
+        }
         views.push(PluginView {
-            id: id.clone(),
-            kind: "builtin".to_string(),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            api_version: None,
-            enabled: true,
-            loaded: true,
+            id: module.id.clone(),
+            kind: module.kind.clone(),
+            name: Some(module.name.clone()),
+            description: (!module.description.is_empty()).then(|| module.description.clone()),
+            version: Some(module.version.clone()),
+            api_version: Some(module.api_version.clone()),
+            configured,
+            available: true,
+            enabled,
+            loaded: enabled,
             file_name: None,
-            commands: Vec::new(),
+            commands: module.commands.clone(),
             routes: Vec::new(),
+            system_plugins: module.system_plugins.clone(),
+            interceptors: module.interceptors,
             webhooks: Vec::new(),
             failures: 0,
             last_error: None,
             live_toggle: false,
         });
     }
-    for id in &stored.config.official_host.plugin_modules {
+
+    for id in &stored.config.official_host.builtin_modules {
+        if represented_builtin.contains(id) {
+            continue;
+        }
         views.push(PluginView {
             id: id.clone(),
-            kind: "static".to_string(),
+            kind: "builtin".to_string(),
+            name: None,
+            description: None,
             version: None,
-            api_version: Some("0.1".to_string()),
-            enabled: persisted.is_enabled(id),
-            loaded: loaded
-                .configured_plugins
-                .iter()
-                .any(|loaded_id| loaded_id == id)
-                && persisted.is_enabled(id),
+            api_version: None,
+            configured: true,
+            available: false,
+            enabled: true,
+            loaded: false,
             file_name: None,
             commands: Vec::new(),
             routes: Vec::new(),
+            system_plugins: Vec::new(),
+            interceptors: 0,
             webhooks: Vec::new(),
             failures: 0,
-            last_error: None,
+            last_error: Some("当前二进制未发现该内置模块".to_string()),
+            live_toggle: false,
+        });
+    }
+    for id in &stored.config.official_host.plugin_modules {
+        if represented_static.contains(id) {
+            continue;
+        }
+        views.push(PluginView {
+            id: id.clone(),
+            kind: "static".to_string(),
+            name: None,
+            description: None,
+            version: None,
+            api_version: Some("0.1".to_string()),
+            configured: true,
+            available: false,
+            enabled: persisted.is_enabled(id),
+            loaded: false,
+            file_name: None,
+            commands: Vec::new(),
+            routes: Vec::new(),
+            system_plugins: Vec::new(),
+            interceptors: 0,
+            webhooks: Vec::new(),
+            failures: 0,
+            last_error: Some("当前二进制未发现该静态插件".to_string()),
             live_toggle: false,
         });
     }
@@ -642,8 +784,16 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
         views.push(PluginView {
             id: plugin.plugin_id.clone(),
             kind: "dynamic".to_string(),
+            name: Some(plugin.plugin_id.clone()),
+            description: plugin
+                .commands
+                .iter()
+                .find(|command| !command.description.trim().is_empty())
+                .map(|command| command.description.clone()),
             version: Some(plugin.plugin_version.clone()),
             api_version: Some(plugin.api_version.clone()),
+            configured: true,
+            available: true,
             enabled: persisted.is_enabled(&plugin.plugin_id),
             loaded: loaded
                 .dynamic_plugins
@@ -663,6 +813,8 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
                 .iter()
                 .map(|route| format!("{}:{}", route.kind, route.route))
                 .collect(),
+            system_plugins: Vec::new(),
+            interceptors: plugin.interceptors.len(),
             webhooks: plugin
                 .webhooks
                 .iter()

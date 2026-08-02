@@ -38,9 +38,9 @@ OneBot 是聊天平台实现与 Bot 框架之间的标准协议。Lagrange、Nap
 
 前往 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载对应平台的压缩包，解压即可运行。
 
-支持平台：Linux x86_64、macOS x86_64/ARM64、Windows x86_64。
+支持平台：Linux x86_64/ARM64、macOS x86_64/ARM64、Windows x86_64。
 
-下载后跳到 [第 3 步：修改配置](#第-3-步-修改配置) 继续。
+下载后保留压缩包内的 `qimen-launcher` 和 `qimenbotd`，再跳到 [第 3 步：修改配置](#第-3-步-修改配置) 继续。
 
 ### 方式二：从源码编译
 
@@ -103,6 +103,18 @@ owners    = ["管理员QQ号"]           # ← 具有最高权限的 QQ 号
 :::
 
 ## 第 4 步：启动
+
+下载预编译版本时启动 launcher：
+
+```bash
+# Linux / macOS
+./qimen-launcher run
+
+# Windows PowerShell
+.\qimen-launcher.exe run
+```
+
+从源码开发时仍可直接运行：
 
 ```bash
 cargo run

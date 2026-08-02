@@ -1,0 +1,25 @@
+services:
+  qimenbot:
+    image: "${QIMENBOT_IMAGE:-lvyunqi/qimenbot}:${QIMENBOT_TAG:-latest}"
+    pull_policy: missing
+    restart: unless-stopped
+    stop_grace_period: 40s
+    environment:
+      QIMEN_ADMIN_TOKEN: "${QIMEN_ADMIN_TOKEN:?请在 deploy/docker/.env 中设置 QIMEN_ADMIN_TOKEN}"
+      QQBOT_APPID: "${QQBOT_APPID:?请在 deploy/docker/.env 中设置 QQBOT_APPID}"
+      QQBOT_SECRET: "${QQBOT_SECRET:?请在 deploy/docker/.env 中设置 QQBOT_SECRET}"
+      QIMEN_WEBHOOK_TOKEN: "${QIMEN_WEBHOOK_TOKEN:-}"
+    ports:
+      - "3210:3210"
+      - "6701:6701"
+      - "8088:8088"
+    volumes:
+      - ./data/config:/data/config
+      - ./data/plugins:/data/plugins
+      - ./data/logs:/data/logs
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3210/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

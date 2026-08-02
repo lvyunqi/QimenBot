@@ -1,5 +1,6 @@
 use qimen_config::{AppConfig, BotConfig};
 use qimen_observability::LogEntry;
+use qimen_update_protocol::{DeploymentKind, UpdateStatus};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
@@ -216,17 +217,31 @@ pub struct MutationResult {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct UpdateView {
+    pub deployment: DeploymentKind,
+    pub managed: bool,
+    pub status: Option<UpdateStatus>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginView {
     pub id: String,
     pub kind: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
     pub version: Option<String>,
     pub api_version: Option<String>,
+    pub configured: bool,
+    pub available: bool,
     pub enabled: bool,
     pub loaded: bool,
     pub file_name: Option<String>,
     pub commands: Vec<String>,
     pub routes: Vec<String>,
+    pub system_plugins: Vec<String>,
+    pub interceptors: usize,
     pub webhooks: Vec<String>,
     pub failures: u32,
     pub last_error: Option<String>,

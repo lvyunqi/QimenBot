@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { LockKeyhole, Settings2, X } from "lucide-react"
+import { LockKeyhole, X } from "lucide-react"
 import { toast, Toaster } from "sonner"
 
 import logoUrl from "../../../logo.jpg"
@@ -16,10 +16,11 @@ import { ConfigPage } from "@/pages/config-page"
 import { LogsPage } from "@/pages/logs-page"
 import { OverviewPage } from "@/pages/overview-page"
 import { PluginsPage } from "@/pages/plugins-page"
+import { UpdatesPage } from "@/pages/updates-page"
 
-type Page = "overview" | "bots" | "logs" | "plugins" | "configuration" | "audit"
+type Page = "overview" | "bots" | "logs" | "plugins" | "configuration" | "updates" | "audit"
 
-function Tweaks({
+function DisplaySettings({
   open,
   dark,
   compact,
@@ -41,13 +42,13 @@ function Tweaks({
   return (
     <div className="tweaks-root">
       {open && (
-        <section className="tweaks-panel" aria-label="Tweaks">
+        <section className="tweaks-panel" aria-label="显示设置">
           <div className="flex items-center justify-between border-b border-border px-3.5 py-3">
             <div>
-              <h2 className="text-sm font-extrabold text-foreground">Tweaks</h2>
+              <h2 className="text-sm font-extrabold text-foreground">显示设置</h2>
               <p className="mt-0.5 text-[10px] text-muted-foreground">本地显示偏好</p>
             </div>
-            <Button variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="关闭 Tweaks">
+            <Button variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="关闭显示设置">
               <X />
             </Button>
           </div>
@@ -67,16 +68,6 @@ function Tweaks({
           </div>
         </section>
       )}
-      <Button
-        variant="default"
-        size="icon"
-        className="tweaks-trigger"
-        onClick={() => onOpenChange(!open)}
-        aria-label="打开 Tweaks"
-        aria-expanded={open}
-      >
-        <Settings2 />
-      </Button>
     </div>
   )
 }
@@ -122,6 +113,10 @@ function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#171816" : "#f6f7f5")
   }, [dark, compact, motion])
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" })
+  }, [active])
+
   const handleBotAction = useCallback(
     async (id: string, action: "start" | "stop" | "reconnect") => {
       try {
@@ -150,8 +145,9 @@ function App() {
     }
     if (active === "bots") return <BotsPage snapshotBots={snapshot?.bots ?? []} onRefreshSnapshot={refreshSnapshot} />
     if (active === "logs") return <LogsPage />
-    if (active === "plugins") return <PluginsPage />
+    if (active === "plugins") return <PluginsPage onOpenConfig={() => setActive("configuration")} />
     if (active === "configuration") return <ConfigPage onRefreshSnapshot={refreshSnapshot} />
+    if (active === "updates") return <UpdatesPage />
     return <AuditPage />
   }, [active, error, handleBotAction, loading, refreshSnapshot, snapshot])
 
@@ -206,10 +202,18 @@ function App() {
           onCollapse={() => setCollapsed((value) => !value)}
         />
         <div className="app-content">
-          <Topbar dark={dark} logoUrl={logoUrl} snapshot={snapshot} error={error} onToggleTheme={() => setDark((value) => !value)} />
+          <Topbar
+            dark={dark}
+            logoUrl={logoUrl}
+            snapshot={snapshot}
+            error={error}
+            displaySettingsOpen={tweaksOpen}
+            onToggleTheme={() => setDark((value) => !value)}
+            onToggleDisplaySettings={() => setTweaksOpen((value) => !value)}
+          />
           <div key={active} className="page-transition">{content}</div>
         </div>
-        <Tweaks
+        <DisplaySettings
           open={tweaksOpen}
           dark={dark}
           compact={compact}

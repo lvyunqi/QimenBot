@@ -1,0 +1,25 @@
+[process]
+# 留空时自动使用 launcher 同目录下的 qimenbotd（Windows 为 qimenbotd.exe）。
+# binary = "qimenbotd"
+working_dir = "."
+args = []
+restart_policy = "on-failure"
+restart_delay_secs = 3
+max_crash_restarts = 5
+graceful_shutdown_secs = 30
+startup_grace_secs = 3
+
+# 管理面板关闭时可设为空字符串，此时只检查新进程是否持续运行。
+health_url = "http://127.0.0.1:3210/healthz"
+health_timeout_secs = 45
+
+[update]
+enabled = true
+repository = "lvyunqi/QimenBot"
+channel = "stable"
+
+# 默认只提示新版本，由用户在面板确认；确认稳定后可改为 true。
+auto_install = false
+check_interval_secs = 21600
+request_timeout_secs = 30
+update_dir = ".qimen-update"

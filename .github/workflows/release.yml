@@ -18,20 +18,28 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: qimenbotd
-            archive: tar.gz
+            daemon: qimenbotd
+            launcher: qimen-launcher
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            daemon: qimenbotd
+            launcher: qimen-launcher
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            daemon: qimenbotd
+            launcher: qimen-launcher
           - target: x86_64-apple-darwin
             os: macos-latest
-            binary: qimenbotd
-            archive: tar.gz
+            daemon: qimenbotd
+            launcher: qimen-launcher
           - target: aarch64-apple-darwin
             os: macos-latest
-            binary: qimenbotd
-            archive: tar.gz
+            daemon: qimenbotd
+            launcher: qimen-launcher
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            binary: qimenbotd.exe
-            archive: zip
+            daemon: qimenbotd.exe
+            launcher: qimen-launcher.exe
 
     steps:
       - name: Checkout
@@ -41,6 +49,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install ARM64 cross compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
+      - name: Install musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -56,42 +72,63 @@ jobs:
           npm run build
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+        run: cargo build --locked --release --target ${{ matrix.target }} --package qimenbotd --package qimen-launcher
 
-      - name: Prepare release directory (Unix)
+      - name: Prepare release assets (Unix)
         if: runner.os != 'Windows'
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          DIR="qimenbot-${VERSION}-${{ matrix.target }}"
-          mkdir -p "${DIR}/config/plugins" "${DIR}/plugins/bin"
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${DIR}/"
+          TARGET="${{ matrix.target }}"
+          DIR="qimenbot-${VERSION}-${TARGET}"
+          DAEMON_ASSET="qimenbotd-${VERSION}-${TARGET}"
+          LAUNCHER_ASSET="qimen-launcher-${VERSION}-${TARGET}"
+          mkdir -p "${DIR}/config/plugins" "${DIR}/plugins/bin" release-assets
+          cp "target/${TARGET}/release/${{ matrix.daemon }}" "${DIR}/"
+          cp "target/${TARGET}/release/${{ matrix.launcher }}" "${DIR}/"
           cp config/base.toml "${DIR}/config/base.toml.example"
+          cp config/launcher.toml.example "${DIR}/config/launcher.toml.example"
           cp config/plugin-state.toml "${DIR}/config/"
           touch "${DIR}/config/plugins/.gitkeep"
           touch "${DIR}/plugins/bin/.gitkeep"
-          tar czf "${DIR}.tar.gz" "${DIR}"
-          echo "ASSET=${DIR}.tar.gz" >> "$GITHUB_ENV"
+          tar czf "release-assets/${DIR}.tar.gz" "${DIR}"
+          cp "target/${TARGET}/release/${{ matrix.daemon }}" "release-assets/${DAEMON_ASSET}"
+          cp "target/${TARGET}/release/${{ matrix.launcher }}" "release-assets/${LAUNCHER_ASSET}"
+          sha256sum "release-assets/${DAEMON_ASSET}" > "release-assets/${DAEMON_ASSET}.sha256"
+          sha256sum "release-assets/${LAUNCHER_ASSET}" > "release-assets/${LAUNCHER_ASSET}.sha256"
 
-      - name: Prepare release directory (Windows)
+      - name: Prepare release assets (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $VERSION = "${{ github.ref_name }}"
-          $DIR = "qimenbot-${VERSION}-${{ matrix.target }}"
-          New-Item -ItemType Directory -Force -Path "${DIR}/config/plugins", "${DIR}/plugins/bin"
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${DIR}/"
+          $TARGET = "${{ matrix.target }}"
+          $DIR = "qimenbot-${VERSION}-${TARGET}"
+          $DAEMON_ASSET = "qimenbotd-${VERSION}-${TARGET}.exe"
+          $LAUNCHER_ASSET = "qimen-launcher-${VERSION}-${TARGET}.exe"
+          New-Item -ItemType Directory -Force -Path "${DIR}/config/plugins", "${DIR}/plugins/bin", "release-assets"
+          Copy-Item "target/${TARGET}/release/${{ matrix.daemon }}" "${DIR}/"
+          Copy-Item "target/${TARGET}/release/${{ matrix.launcher }}" "${DIR}/"
           Copy-Item "config/base.toml" "${DIR}/config/base.toml.example"
+          Copy-Item "config/launcher.toml.example" "${DIR}/config/launcher.toml.example"
           Copy-Item "config/plugin-state.toml" "${DIR}/config/"
           New-Item -ItemType File -Force -Path "${DIR}/config/plugins/.gitkeep"
           New-Item -ItemType File -Force -Path "${DIR}/plugins/bin/.gitkeep"
-          Compress-Archive -Path "${DIR}" -DestinationPath "${DIR}.zip"
-          echo "ASSET=${DIR}.zip" >> $env:GITHUB_ENV
+          Compress-Archive -Path "${DIR}" -DestinationPath "release-assets/${DIR}.zip"
+          Copy-Item "target/${TARGET}/release/${{ matrix.daemon }}" "release-assets/${DAEMON_ASSET}"
+          Copy-Item "target/${TARGET}/release/${{ matrix.launcher }}" "release-assets/${LAUNCHER_ASSET}"
+          $daemonHash = (Get-FileHash "release-assets/${DAEMON_ASSET}" -Algorithm SHA256).Hash.ToLower()
+          $launcherHash = (Get-FileHash "release-assets/${LAUNCHER_ASSET}" -Algorithm SHA256).Hash.ToLower()
+          "${daemonHash}  ${DAEMON_ASSET}" | Set-Content -Encoding ascii "release-assets/${DAEMON_ASSET}.sha256"
+          "${launcherHash}  ${LAUNCHER_ASSET}" | Set-Content -Encoding ascii "release-assets/${LAUNCHER_ASSET}.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: ${{ env.ASSET }}
+          path: release-assets/*
 
   release:
     name: Create Release

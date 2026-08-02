@@ -1,5 +1,17 @@
 # 更新日志
 
+## v0.1.15 (2026-08-02)
+
+### 部署与更新
+
+- 新增 `qimen-launcher` 二进制监督器，按系统架构检查 GitHub Release，校验 SHA256 后替换 `qimenbotd`，并通过健康检查决定确认更新或自动回滚。
+- 管理面板新增版本更新页，区分 launcher 托管、Docker 托管和直接启动三种部署状态，支持检查、确认安装与优雅重启。
+- 运行时统一处理面板关闭请求、`Ctrl+C` 和 Unix `SIGTERM`，新增无需管理 Token 的只读 `/healthz` 健康端点。
+- 新增 Docker 多阶段构建、Compose 持久化部署和 Docker Hub 多架构发布工作流；Release 同时提供 launcher、原始更新资产和 SHA256 文件。
+- 重写部署文档，补充 Docker Hub Token、GitHub Actions、systemd、Windows Service、镜像更新、二进制回滚和数据保留说明。
+
+---
+
 ## v0.1.14 (2026-08-01)
 
 ### Web 管理面板
