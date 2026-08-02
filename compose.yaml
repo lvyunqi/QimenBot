@@ -9,6 +9,7 @@ services:
       QQBOT_APPID: "${QQBOT_APPID:-}"
       QQBOT_SECRET: "${QQBOT_SECRET:-}"
       QIMEN_WEBHOOK_TOKEN: "${QIMEN_WEBHOOK_TOKEN:-}"
+      RUST_LOG: "${RUST_LOG:-info}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -16,9 +17,9 @@ services:
       - "6701:6701"
       - "8088:8088"
     volumes:
-      - ./data/config:/data/config
-      - ./data/plugins:/data/plugins
-      - ./data/logs:/data/logs
+      - "${QIMEN_CONFIG_DIR:-./data/config}:/data/config"
+      - "${QIMEN_PLUGIN_DIR:-./data/plugins}:/data/plugins"
+      - "${QIMEN_LOG_DIR:-./data/logs}:/data/logs"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3210/healthz"]
       interval: 30s

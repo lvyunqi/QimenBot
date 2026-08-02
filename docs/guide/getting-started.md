@@ -1,6 +1,6 @@
 # 快速开始
 
-本指南说明 QimenBot 的安装、机器人连接配置和首次启动流程。生产服务器的 Docker、systemd、Windows Service、备份和升级步骤见[完整部署指南](/advanced/deployment)。
+本指南说明 QimenBot 的安装、机器人连接配置和首次启动流程。生产服务器的 Docker、systemd、Windows Service、备份和升级步骤见[完整部署指南](/guide/deployment)。
 
 ## 环境准备
 
@@ -39,15 +39,13 @@ OneBot 是聊天平台实现与 Bot 框架之间的标准协议。Lagrange、Nap
 
 ### 方式一：Docker Compose
 
-已安装 Docker 时，可以直接使用 Docker Hub 的 `mryunqi/qimenbot` 多架构镜像：
+Linux 服务器已经安装 Docker 时，QQ 官方机器人可以一键安装：
 
 ```bash
-git clone --depth 1 https://github.com/lvyunqi/QimenBot.git
-cd QimenBot
-cp deploy/docker/.env.example deploy/docker/.env
+bash <(curl -fsSL https://raw.githubusercontent.com/lvyunqi/QimenBot/main/deploy/docker/install.sh)
 ```
 
-填写 `deploy/docker/.env` 后执行 `docker compose --env-file deploy/docker/.env up -d`。QQ 官方 Bot 可以直接使用容器默认模板；OneBot 的容器网络和配置步骤见[Docker Compose 部署](/advanced/deployment#docker-compose)。
+脚本会询问 AppID 和 Secret，自动生成管理 Token，并创建配置、插件和日志目录。NAS、Portainer、OneBot 以及自定义数据盘的步骤见[Docker Compose 部署](/guide/deployment#手动使用-docker-compose)。
 
 ### 方式二：下载预编译版本（推荐新手）
 

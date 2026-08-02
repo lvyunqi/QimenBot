@@ -44,6 +44,7 @@ export default defineConfig({
           items: [
             { text: '框架介绍', link: '/guide/introduction' },
             { text: '快速开始', link: '/guide/getting-started' },
+            { text: '部署与更新', link: '/guide/deployment' },
             { text: '官方 QQ Bot 接入', link: '/guide/qq-official-quickstart' },
             { text: '配置详解', link: '/guide/configuration' },
             { text: 'Web 管理面板', link: '/guide/web-admin' },
@@ -114,7 +115,8 @@ export default defineConfig({
             { text: '传输层', link: '/advanced/transport' },
             { text: 'API 0.4+ 实时主动推送', link: '/advanced/dynamic-proactive-send-v04' },
             { text: '动态插件 Webhook Gateway', link: '/advanced/dynamic-webhook-v05' },
-            { text: '部署指南', link: '/advanced/deployment' },
+            { text: '生产环境运维', link: '/advanced/operations' },
+            { text: '发布 Docker Hub 镜像', link: '/advanced/docker-publishing' },
           ]
         }
       ]

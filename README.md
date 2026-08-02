@@ -72,21 +72,27 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 
 ### Docker Compose
 
+Linux 服务器接入 QQ 官方机器人，可以直接运行一键安装：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/lvyunqi/QimenBot/main/deploy/docker/install.sh)
+```
+
+脚本会询问 AppID 和 Secret、生成管理 Token，并把数据保存到 `~/qimenbot/data/`（root 用户为 `/opt/qimenbot/data/`）。配置、动态插件和日志分别映射到容器的 `/data/config`、`/data/plugins`、`/data/logs`。
+
+NAS、Portainer、OneBot 或自定义数据盘请使用手动 Compose：
+
 ```bash
 git clone --depth 1 https://github.com/lvyunqi/QimenBot.git
 cd QimenBot
 cp deploy/docker/.env.example deploy/docker/.env
-```
-
-编辑 `deploy/docker/.env`，设置随机的 `QIMEN_ADMIN_TOKEN`。使用 QQ 官方 Bot 时再填写 `QQBOT_APPID` 和 `QQBOT_SECRET`，然后启动：
-
-```bash
+# 编辑 .env 中的管理 Token、QQ 凭据和三个宿主机目录
 docker compose --env-file deploy/docker/.env up -d
 docker compose --env-file deploy/docker/.env ps
 docker compose --env-file deploy/docker/.env logs -f qimenbot
 ```
 
-镜像默认为 [`mryunqi/qimenbot`](https://hub.docker.com/r/mryunqi/qimenbot)，支持 `linux/amd64` 和 `linux/arm64`。管理面板默认位于 `http://127.0.0.1:3210/`。
+镜像默认为 [`mryunqi/qimenbot`](https://hub.docker.com/r/mryunqi/qimenbot)，支持 `linux/amd64` 和 `linux/arm64`。启动后打开 `http://服务器IP:3210/`，其余机器人、模块和插件配置在 Web 面板完成。
 
 ### Release 二进制
 
@@ -111,7 +117,7 @@ npm --prefix web/admin run build
 cargo run --package qimenbotd
 ```
 
-管理面板会嵌入 Rust 二进制，所以前端必须先构建。Docker 更新、systemd、Windows Service、HTTPS 反向代理、备份恢复和故障排查见[完整部署指南](docs/advanced/deployment.md)。
+管理面板会嵌入 Rust 二进制，所以前端必须先构建。Docker 一键安装、目录映射、systemd、Windows Service、备份恢复和故障排查见[完整部署指南](docs/guide/deployment.md)。
 
 ## 配置详解
 
