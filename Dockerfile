@@ -5,6 +5,7 @@ WORKDIR /src/web/admin
 COPY web/admin/package.json web/admin/package-lock.json ./
 RUN npm ci
 COPY web/admin/ ./
+COPY logo.jpg /src/logo.jpg
 RUN npm run build
 
 FROM rust:1.89-bookworm AS rust-builder
