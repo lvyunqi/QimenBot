@@ -6,6 +6,7 @@ mod supervisor;
 use config::ResolvedConfig;
 use qimen_update_protocol::{LauncherCommandAction, enqueue_launcher_command};
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing_subscriber::EnvFilter;
@@ -81,7 +82,19 @@ fn init_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_ansi(terminal_ansi_enabled())
         .try_init();
+}
+
+fn terminal_ansi_enabled() -> bool {
+    should_emit_ansi(
+        std::io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").is_some(),
+    )
+}
+
+fn should_emit_ansi(is_terminal: bool, no_color: bool) -> bool {
+    is_terminal && !no_color
 }
 
 fn print_help() {

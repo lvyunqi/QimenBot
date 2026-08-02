@@ -23,6 +23,28 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_ERROR_HISTORY: usize = 10;
 
+/// Format a loader error with actionable guidance for unsupported musl builds.
+pub fn dynamic_library_load_error_message(path: &Path, error: impl std::fmt::Display) -> String {
+    format_dynamic_library_load_error(
+        path,
+        &error.to_string(),
+        cfg!(all(target_os = "linux", target_env = "musl")),
+    )
+}
+
+fn format_dynamic_library_load_error(path: &Path, error: &str, linux_musl: bool) -> String {
+    let base = format!("failed to load library '{}': {error}", path.display());
+    if linux_musl && error.contains("Dynamic loading not supported") {
+        format!(
+            "{base}. This is a statically linked Linux musl build, which cannot load dynamic \
+             plugins. Use the matching QimenBot *-unknown-linux-gnu package or Docker, and build \
+             the plugin for the same CPU architecture and GNU target"
+        )
+    } else {
+        base
+    }
+}
+
 /// Mutable metadata for a loaded library (protected by its own Mutex).
 struct LibraryMeta {
     failures: u32,
@@ -851,10 +873,7 @@ impl DynamicPluginRuntime {
         if !self.libraries.contains_key(path) {
             let library = unsafe {
                 libloading::Library::new(path).map_err(|err| {
-                    QimenError::Runtime(format!(
-                        "failed to load dynamic plugin library '{}': {err}",
-                        path
-                    ))
+                    QimenError::Runtime(dynamic_library_load_error_message(Path::new(path), err))
                 })?
             };
             self.libraries.insert(
@@ -960,6 +979,34 @@ mod lifecycle_tests {
         assert_eq!(
             owned.segments_json.as_str(),
             r#"[{"type":"text","data":{"text":"hello"}}]"#
+        );
+    }
+
+    #[test]
+    fn static_musl_error_explains_how_to_use_dynamic_plugins() {
+        let message = format_dynamic_library_load_error(
+            Path::new("plugins/bin/libexample.so"),
+            "Dynamic loading not supported",
+            true,
+        );
+
+        assert!(message.contains("statically linked Linux musl build"));
+        assert!(message.contains("unknown-linux-gnu"));
+        assert!(message.contains("Docker"));
+        assert!(message.contains("same CPU architecture"));
+    }
+
+    #[test]
+    fn ordinary_dynamic_load_error_keeps_the_loader_reason() {
+        let message = format_dynamic_library_load_error(
+            Path::new("plugins/bin/libexample.so"),
+            "wrong ELF class: ELFCLASS32",
+            false,
+        );
+
+        assert_eq!(
+            message,
+            "failed to load library 'plugins/bin/libexample.so': wrong ELF class: ELFCLASS32"
         );
     }
 }
@@ -1125,12 +1172,8 @@ fn is_dynamic_library_path(path: &Path) -> bool {
 
 fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
     unsafe {
-        let library = libloading::Library::new(path).map_err(|err| {
-            QimenError::Module(format!(
-                "failed to load library '{}': {err}",
-                path.display()
-            ))
-        })?;
+        let library = libloading::Library::new(path)
+            .map_err(|err| QimenError::Module(dynamic_library_load_error_message(path, err)))?;
 
         // Try v0.2 symbol name first, then fallback to v0.1 legacy name
         let descriptor: PluginDescriptor = if let Ok(symbol) =

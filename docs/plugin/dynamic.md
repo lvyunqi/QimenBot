@@ -97,13 +97,41 @@ mod my_plugin {
 
 宏自动生成 `qimen_plugin_descriptor()` 和 `extern "C" fn hello(...)` 导出。
 
-### 第 4 步：编译
+### 第 4 步：确认目标并编译
+
+动态库不能跨操作系统、CPU 架构或 C 运行时混用。先看 QimenBot 安装包文件名，或者确认 Docker 容器架构，再按下表选择插件的 Rust target：
+
+| QimenBot 运行方式 | 动态插件 target | 插件文件 |
+|------|------|------|
+| Windows 64 位，`x86_64-pc-windows-msvc` 包 | `x86_64-pc-windows-msvc` | `.dll` |
+| Linux x86_64，`x86_64-unknown-linux-gnu` 包 | `x86_64-unknown-linux-gnu` | `.so` |
+| Linux ARM64，`aarch64-unknown-linux-gnu` 包 | `aarch64-unknown-linux-gnu` | `.so` |
+| Docker `linux/amd64` | `x86_64-unknown-linux-gnu` | `.so` |
+| Docker `linux/arm64` | `aarch64-unknown-linux-gnu` | `.so` |
+| macOS Intel，`x86_64-apple-darwin` 包 | `x86_64-apple-darwin` | `.dylib` |
+| macOS Apple 芯片，`aarch64-apple-darwin` 包 | `aarch64-apple-darwin` | `.dylib` |
+| `x86_64-unknown-linux-musl` 包 | 不支持动态插件 | - |
+
+::: danger musl 包不能加载动态插件
+QimenBot 的 musl 发行物是静态链接程序，系统不会提供 `dlopen`。即使插件也是 `.so`，加载时仍会出现 `Dynamic loading not supported`。需要动态插件时，请使用同 CPU 架构的 `*-unknown-linux-gnu` 包或 Docker；不要把 GNU 插件复制到 musl 包中尝试加载。
+:::
+
+在与 QimenBot 相同的平台上开发时，直接构建即可：
 
 ```bash
 cargo build --release
 ```
 
-编译产物位于 `target/release/` 目录：
+显式指定 target 可以避免误把开发机架构的产物上传到服务器。以下示例用于 Linux x86_64 GNU：
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+cargo build --release --target x86_64-unknown-linux-gnu
+```
+
+对应产物位于 `target/x86_64-unknown-linux-gnu/release/`。如果开发机与部署机的操作系统或 CPU 不同，仅安装 Rust target 通常还不够，还需要对应 linker；刚接触交叉编译时，建议直接在部署机、同架构 CI Runner，或与 QimenBot 容器一致的 Debian 环境中构建。
+
+未显式指定 `--target` 时，编译产物位于 `target/release/` 目录：
 
 | 平台 | 文件名 |
 |------|--------|
@@ -113,7 +141,7 @@ cargo build --release
 
 ### 第 5 步：部署
 
-将动态库复制到运行 QimenBot 的机器上，并放入配置文件中 `plugin_bin_dir` 指定的目录（默认 `plugins/bin/`）。动态库必须使用与宿主一致的操作系统和 CPU 架构构建：
+将动态库复制到运行 QimenBot 的机器上，并放入配置文件中 `plugin_bin_dir` 指定的目录（默认 `plugins/bin/`）。动态库必须使用上表中与宿主一致的 target：
 
 ```bash
 # Linux：插件与 QimenBot 在同一台机器
@@ -126,7 +154,16 @@ scp target/release/libqimen_dynamic_plugin_myplugin.so user@bot-host:/opt/qimenb
 Copy-Item target/release/qimen_dynamic_plugin_myplugin.dll C:\qimenbot\plugins\bin\
 ```
 
-Linux 下还应确保构建环境与宿主的 C 运行时兼容；最稳妥的做法是在与宿主相同的发行版环境或 CI 容器中构建。
+Linux 下还应确保构建环境与宿主的 glibc 兼容。插件如果在更高版本的发行版上构建，可能因需要较新的 `GLIBC_x.y` 而无法加载。最稳妥的做法是在与 QimenBot 相同或更旧的发行版环境中构建；Docker 部署建议使用 Debian Bookworm 环境构建 GNU 插件。
+
+部署前可以在 Linux 上检查主程序和插件：
+
+```bash
+file ./runtime/qimenbotd ./plugins/bin/libqimen_dynamic_plugin_myplugin.so
+ldd ./plugins/bin/libqimen_dynamic_plugin_myplugin.so
+```
+
+两者必须是相同 CPU 架构。`ldd` 不能出现 `not found`；如果出现 `GLIBC_x.y not found`，需要在更旧的 glibc 环境重新构建插件。
 
 ### 第 6 步：加载
 
@@ -867,6 +904,16 @@ fn notify(req: &CommandRequest) -> CommandResponse {
 ```
 
 使用 `/dynamic-errors` 查看各插件的健康状态，`/dynamic-errors clear` 可以手动重置错误计数。
+
+### 常见加载错误
+
+| 错误关键词 | 原因 | 处理方法 |
+|------|------|------|
+| `Dynamic loading not supported` | 使用了静态 musl 版 QimenBot | 换成同架构 GNU 包或 Docker |
+| `wrong ELF class` / `Exec format error` | CPU 架构不一致 | 按上方 target 表重新构建插件 |
+| `GLIBC_x.y not found` | 插件构建环境比运行环境新 | 在相同或更旧的 glibc 环境重建 |
+| `cannot open shared object file` | 插件依赖的共享库缺失 | 执行 `ldd 插件文件`，安装缺失依赖 |
+| `undefined symbol` | 插件依赖或导出符号不兼容 | 核对插件 API、依赖版本和构建产物 |
 
 ## 注意事项
 

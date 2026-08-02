@@ -26,6 +26,7 @@ QQBOT_APPID=你的AppID
 QQBOT_SECRET=你的Secret
 QIMEN_ADMIN_TOKEN=随机管理Token
 RUST_LOG=info
+NO_COLOR=1
 ```
 
 `config/base.toml` 中的对应字段要写成 `${QQBOT_APPID}`、`${QQBOT_SECRET}` 和 `${QIMEN_ADMIN_TOKEN}`，否则只设置环境变量不会覆盖 TOML。
@@ -216,6 +217,8 @@ server {
 | WinSW | WinSW 生成的滚动日志 |
 
 管理面板的实时日志是内存缓冲区，重启后会清空。`admin-audit.jsonl` 只记录管理操作，不是完整运行日志。
+
+QimenBot 会在 stdout 不是终端时自动关闭 ANSI 颜色。旧版本或把日志伪装成终端的采集器如果显示 `ESC[2m`、`ESC[0m` 一类字符，在 systemd 环境文件、Docker 环境变量或服务配置中加入 `NO_COLOR=1`，然后重启服务。
 
 ```bash
 curl --fail --silent http://127.0.0.1:3210/healthz

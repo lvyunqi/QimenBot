@@ -196,16 +196,22 @@ docker compose --env-file deploy/docker/.env logs --tail 100 qimenbot
 
 ### 1. 下载正确版本
 
-| 系统 | Release 文件名中包含 |
-| --- | --- |
-| Windows 64 位 | `x86_64-pc-windows-msvc` |
-| 常见 Linux 64 位，glibc 2.31+ | `x86_64-unknown-linux-gnu` |
-| Linux ARM64，glibc 2.31+ | `aarch64-unknown-linux-gnu` |
-| Alpine Linux 64 位 | `x86_64-unknown-linux-musl` |
-| macOS Intel | `x86_64-apple-darwin` |
-| macOS Apple 芯片 | `aarch64-apple-darwin` |
+| 系统 | Release 文件名中包含 | 动态插件 target |
+| --- | --- | --- |
+| Windows 64 位 | `x86_64-pc-windows-msvc` | `x86_64-pc-windows-msvc` |
+| 常见 Linux 64 位，glibc 2.31+ | `x86_64-unknown-linux-gnu` | `x86_64-unknown-linux-gnu` |
+| Linux ARM64，glibc 2.31+ | `aarch64-unknown-linux-gnu` | `aarch64-unknown-linux-gnu` |
+| Alpine 或无合适 glibc 的 Linux 64 位 | `x86_64-unknown-linux-musl` | 不支持动态插件 |
+| macOS Intel | `x86_64-apple-darwin` | `x86_64-apple-darwin` |
+| macOS Apple 芯片 | `aarch64-apple-darwin` | `aarch64-apple-darwin` |
 
-Linux 用 `uname -m` 查看 CPU 架构，用 `ldd --version` 判断 glibc。下一版 GNU 包按 glibc 2.31 构建，Ubuntu 20.04/22.04、Debian 11/12 通常可以直接运行；更旧的系统请优先选择 musl 包（当前提供 x86_64 musl）。
+Linux 用 `uname -m` 查看 CPU 架构，用 `ldd --version` 判断 glibc。从下一个版本起，GNU 包按 glibc 2.31 构建，Ubuntu 20.04/22.04、Debian 11/12 通常可以直接运行。当前 `v0.1.15` GNU 包如果提示缺少 `GLIBC_2.39`，又需要使用动态插件，请暂时改用 Docker，或在服务器兼容的 GNU 环境自行构建；不要改用 musl 包。
+
+::: danger 使用动态插件不要下载 musl 包
+musl 包是静态程序，不能通过 `dlopen` 加载 `.so`，日志会出现 `Dynamic loading not supported`。需要动态插件但服务器 glibc 低于 2.31 时，请使用 Docker，或升级系统后改用同 CPU 架构的 GNU 包。只有完全不使用动态插件时才选择 musl 包。
+:::
+
+Docker 镜像使用 GNU/glibc。`linux/amd64` 镜像对应 `x86_64-unknown-linux-gnu` 插件，`linux/arm64` 镜像对应 `aarch64-unknown-linux-gnu` 插件。完整构建、检查和错误对照见[动态插件开发](/plugin/dynamic#quickstart)。
 
 ### 2. 解压并创建配置
 
@@ -342,7 +348,8 @@ QQ 官方 Bot 通过出站 HTTPS 和 WSS 连接，一般不需要额外开放入
 | OneBot 在宿主机但容器连不上 | endpoint 改为 `host.docker.internal`，并让 OneBot 监听 Docker 网桥可访问的地址 |
 | QQ 官方 Bot 鉴权失败 | 重新核对 AppID、Secret、沙箱环境，检查值前后是否有空格 |
 | 私聊正常但群内 @ 不回复 | 按[官方 QQ Bot 接入](/guide/qq-official-quickstart)检查事件权限和 Intents |
-| 动态插件加载失败 | 确认 `.so` 的系统、CPU 架构和插件 API 版本与容器一致 |
+| `Dynamic loading not supported` | 当前是静态 musl 包；换用同 CPU 架构的 GNU 包或 Docker |
+| 动态插件加载失败 | 用 `file`、`ldd` 检查 `.so`，确认系统、CPU、GNU target、glibc 和插件 API 均与 QimenBot 一致 |
 | 源码构建后面板显示未构建 | 先执行 `npm --prefix web/admin run build`，再重新构建 Rust |
 
 排障时不要先删除配置目录或 `.qimen-update/`。先保存日志和配置副本，再做修改。

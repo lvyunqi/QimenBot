@@ -184,4 +184,6 @@ jobs:
             普通用户只需要下载与系统对应的 `QimenBot-*.zip` 或 `QimenBot-*.tar.gz` 完整安装包，解压后运行 `qimenbot`。
 
             `qimenbotd-*` 及其校验文件仅用于兼容已有安装的核心自动更新，不用于首次安装。
+
+            使用动态插件的 Linux 用户请选择与 CPU 架构对应的 `*-unknown-linux-gnu` 完整包或 Docker。静态链接的 `x86_64-unknown-linux-musl` 包不能加载 `.so` 动态插件。
           files: artifacts/*

@@ -3,7 +3,7 @@ use abi_stable_host_api::{PluginDescriptor, WebhookDescriptorEntry, is_compatibl
 use qimen_admin_web::AdminServer;
 use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
-use qimen_framework::Runtime;
+use qimen_framework::{Runtime, dynamic_runtime::dynamic_library_load_error_message};
 use qimen_host_types::{
     DynamicCommandEntry, DynamicInterceptorEntry, DynamicPluginReportEntry, DynamicRouteEntry,
     DynamicWebhookEntry, HostModuleReportEntry, HostPluginReport, PluginState, load_plugin_state,
@@ -423,12 +423,8 @@ fn uses_descriptor_collections(api_version: &str) -> bool {
 
 fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
     unsafe {
-        let library = libloading::Library::new(path).map_err(|err| {
-            QimenError::Module(format!(
-                "failed to load library '{}': {err}",
-                path.display()
-            ))
-        })?;
+        let library = libloading::Library::new(path)
+            .map_err(|err| QimenError::Module(dynamic_library_load_error_message(path, err)))?;
 
         // Try v0.2 symbol name first, then fallback to v0.1 legacy name
         let descriptor: PluginDescriptor = if let Ok(symbol) =

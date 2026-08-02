@@ -107,6 +107,8 @@ chmod +x qimenbot
 
 Windows PowerShell 使用 `.\qimenbot.exe run`。生产环境只注册 `qimenbot`，不要单独启动 `runtime/qimenbotd`。
 
+> 需要动态插件时，Linux 必须下载与 CPU 对应的 `*-unknown-linux-gnu` 包，或使用 Docker。静态链接的 `x86_64-unknown-linux-musl` 包不能加载 `.so` 动态插件。
+
 ### 源码构建
 
 ```bash
@@ -680,7 +682,7 @@ scp target/release/libqimen_dynamic_plugin_myplugin.so user@bot-host:/opt/qimenb
 # 4. 在 Bot 中执行 /plugins reload 热重载
 ```
 
-动态库必须针对 QimenBot 宿主的操作系统和 CPU 架构构建。完整流程见[动态插件开发文档](docs/plugin/dynamic.md)。
+动态库必须与 QimenBot 的操作系统、CPU 架构和 C 运行时一致。Docker `linux/amd64` 使用 `x86_64-unknown-linux-gnu` 插件，Docker `linux/arm64` 使用 `aarch64-unknown-linux-gnu` 插件；musl 发行包不支持动态插件。完整 target 对照和排错流程见[动态插件开发文档](docs/plugin/dynamic.md)。
 
 ### 宏属性一览
 

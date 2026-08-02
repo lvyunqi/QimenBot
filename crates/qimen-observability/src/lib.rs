@@ -2,6 +2,7 @@ use chrono::{SecondsFormat, Utc};
 use qimen_error::{QimenError, Result};
 use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
+use std::io::IsTerminal;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
@@ -158,11 +159,22 @@ pub fn init_with_log_store(
     } else {
         Registry::default()
             .with(filter)
-            .with(fmt::layer())
+            .with(fmt::layer().with_ansi(terminal_ansi_enabled()))
             .with(capture_layer)
             .try_init()
             .map_err(|error| QimenError::Runtime(error.to_string()))
     }
+}
+
+fn terminal_ansi_enabled() -> bool {
+    should_emit_ansi(
+        std::io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").is_some(),
+    )
+}
+
+fn should_emit_ansi(is_terminal: bool, no_color: bool) -> bool {
+    is_terminal && !no_color
 }
 
 #[cfg(test)]
@@ -188,5 +200,12 @@ mod tests {
             .map(|entry| entry.message)
             .collect();
         assert_eq!(messages, ["two", "three"]);
+    }
+
+    #[test]
+    fn ansi_is_used_only_for_an_interactive_terminal() {
+        assert!(should_emit_ansi(true, false));
+        assert!(!should_emit_ansi(false, false));
+        assert!(!should_emit_ansi(true, true));
     }
 }
