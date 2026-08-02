@@ -81,7 +81,7 @@ Compose 和宿主机相关变量：
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `QIMENBOT_IMAGE` | `mryunqi/qimenbot` | Docker Hub 镜像名 |
-| `QIMENBOT_TAG` | `latest` | 镜像版本；生产环境建议固定为 `0.1.15` 这类版本号 |
+| `QIMENBOT_TAG` | `latest` | 镜像版本；生产环境建议固定为 `0.1.16` 这类版本号 |
 | `QIMEN_CONFIG_DIR` | `./data/config` | 宿主机配置目录 |
 | `QIMEN_PLUGIN_DIR` | `./data/plugins` | 宿主机动态插件目录 |
 | `QIMEN_LOG_DIR` | `./data/logs` | 宿主机日志或插件文件目录 |
@@ -90,7 +90,7 @@ Compose 和宿主机相关变量：
 
 ```dotenv
 QIMENBOT_IMAGE=mryunqi/qimenbot
-QIMENBOT_TAG=0.1.15
+QIMENBOT_TAG=0.1.16
 
 QIMEN_CONFIG_DIR=/srv/qimenbot/config
 QIMEN_PLUGIN_DIR=/srv/qimenbot/plugins
@@ -205,7 +205,7 @@ docker compose --env-file deploy/docker/.env logs --tail 100 qimenbot
 | macOS Intel | `x86_64-apple-darwin` | `x86_64-apple-darwin` |
 | macOS Apple 芯片 | `aarch64-apple-darwin` | `aarch64-apple-darwin` |
 
-Linux 用 `uname -m` 查看 CPU 架构，用 `ldd --version` 判断 glibc。从下一个版本起，GNU 包按 glibc 2.31 构建，Ubuntu 20.04/22.04、Debian 11/12 通常可以直接运行。当前 `v0.1.15` GNU 包如果提示缺少 `GLIBC_2.39`，又需要使用动态插件，请暂时改用 Docker，或在服务器兼容的 GNU 环境自行构建；不要改用 musl 包。
+Linux 用 `uname -m` 查看 CPU 架构，用 `ldd --version` 判断 glibc。从 `v0.1.16` 起，GNU 包按 glibc 2.31 构建，Ubuntu 20.04/22.04、Debian 11/12 通常可以直接运行。旧的 `v0.1.15` GNU 包如果提示缺少 `GLIBC_2.39`，请升级到 `v0.1.16`；需要动态插件时不要改用 musl 包。
 
 ::: danger 使用动态插件不要下载 musl 包
 musl 包是静态程序，不能通过 `dlopen` 加载 `.so`，日志会出现 `Dynamic loading not supported`。需要动态插件但服务器 glibc 低于 2.31 时，请使用 Docker，或升级系统后改用同 CPU 架构的 GNU 包。只有完全不使用动态插件时才选择 musl 包。
@@ -290,7 +290,7 @@ $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 
 ### 5. 校验下载文件（可选）
 
-完整压缩包带有同名 `.sha256`。以下命令以将来的 `v0.1.16` Linux x86_64 GNU 包为例：
+完整压缩包带有同名 `.sha256`。以下命令以 `v0.1.16` Linux x86_64 GNU 包为例：
 
 ```bash
 sha256sum -c QimenBot-v0.1.16-x86_64-unknown-linux-gnu.tar.gz.sha256
