@@ -96,8 +96,11 @@ jobs:
           tar czf "release-assets/${DIR}.tar.gz" "${DIR}"
           cp "target/${TARGET}/release/${{ matrix.daemon }}" "release-assets/${DAEMON_ASSET}"
           cp "target/${TARGET}/release/${{ matrix.launcher }}" "release-assets/${LAUNCHER_ASSET}"
-          sha256sum "release-assets/${DAEMON_ASSET}" > "release-assets/${DAEMON_ASSET}.sha256"
-          sha256sum "release-assets/${LAUNCHER_ASSET}" > "release-assets/${LAUNCHER_ASSET}.sha256"
+          (
+            cd release-assets
+            sha256sum "${DAEMON_ASSET}" > "${DAEMON_ASSET}.sha256"
+            sha256sum "${LAUNCHER_ASSET}" > "${LAUNCHER_ASSET}.sha256"
+          )
 
       - name: Prepare release assets (Windows)
         if: runner.os == 'Windows'

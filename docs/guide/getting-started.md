@@ -1,21 +1,24 @@
 # 快速开始
 
-本指南说明 QimenBot 的安装、OneBot 连接配置和首次启动流程。
+本指南说明 QimenBot 的安装、机器人连接配置和首次启动流程。生产服务器的 Docker、systemd、Windows Service、备份和升级步骤见[完整部署指南](/advanced/deployment)。
 
 ## 环境准备
 
-QimenBot 不直接连接 QQ 等聊天平台，而是通过 **OneBot 协议** 与一个"中间人"通信。整体结构如下：
+QimenBot 支持两条接入路径。使用 QQ 官方 Bot 时直接连接官方 Gateway 和 OpenAPI；使用个人 QQ 或其他 OneBot 场景时，通过 OneBot 实现转发事件和操作。
 
 ```
-用户消息 → QQ → OneBot 实现 → WebSocket → QimenBot → 处理 → 回复
+QQ 官方 Bot：用户消息 → QQ Gateway → QimenBot → OpenAPI 回复
+OneBot 11： 用户消息 → QQ → OneBot 实现 → WebSocket → QimenBot → OneBot 操作
 ```
 
-运行环境包含以下组件：
+按接入方式准备组件：
 
 | 组件 | 说明 | 准备工作 |
 |------|------|----------|
-| **Rust 编译器** | 编译 QimenBot 框架 | 安装 Rust 1.89+ |
-| **OneBot 11 实现** | 充当 QQ 与 QimenBot 之间的桥梁 | 选择一个实现并部署 |
+| **QimenBot** | Bot 宿主与管理面板 | Docker、Release 或源码三选一 |
+| **QQ 官方 Bot 凭据** | 官方 Gateway 和 OpenAPI 鉴权 | 仅官方 Bot 需要 |
+| **OneBot 11 实现** | 充当聊天平台与 QimenBot 之间的桥梁 | 仅 OneBot 接入需要 |
+| **Rust 与 Node.js** | 编译 daemon 和管理面板 | 仅源码构建需要 |
 
 ### 推荐的 OneBot 11 实现
 
@@ -34,19 +37,33 @@ OneBot 是聊天平台实现与 Bot 框架之间的标准协议。Lagrange、Nap
 
 ## 获取 QimenBot
 
-### 方式一：下载预编译版本（推荐新手）
+### 方式一：Docker Compose
+
+已安装 Docker 时，可以直接使用 Docker Hub 的 `mryunqi/qimenbot` 多架构镜像：
+
+```bash
+git clone --depth 1 https://github.com/lvyunqi/QimenBot.git
+cd QimenBot
+cp deploy/docker/.env.example deploy/docker/.env
+```
+
+填写 `deploy/docker/.env` 后执行 `docker compose --env-file deploy/docker/.env up -d`。QQ 官方 Bot 可以直接使用容器默认模板；OneBot 的容器网络和配置步骤见[Docker Compose 部署](/advanced/deployment#docker-compose)。
+
+### 方式二：下载预编译版本（推荐新手）
 
 前往 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载对应平台的压缩包，解压即可运行。
 
 支持平台：Linux x86_64/ARM64、macOS x86_64/ARM64、Windows x86_64。
 
-下载后保留压缩包内的 `qimen-launcher` 和 `qimenbotd`，再跳到 [第 3 步：修改配置](#第-3-步-修改配置) 继续。
+下载后保留压缩包内的 `qimen-launcher`、`qimenbotd`、`config/` 和 `plugins/`，再跳到[修改配置](#修改配置)继续。
 
-### 方式二：从源码编译
+### 方式三：从源码编译
 
-## 第 1 步：安装 Rust
+源码用户继续完成下面两项准备；使用 Release 的用户可以直接跳到[修改配置](#修改配置)。
 
-未安装 Rust 时，执行：
+#### 安装构建工具
+
+只有源码构建需要这一步。安装 Node.js 22 和 Rust 1.89+；未安装 Rust 时执行：
 
 ```bash
 # Linux / macOS
@@ -60,16 +77,27 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```bash
 rustc --version
 # 输出应该 >= 1.89.0
+node --version
+# 输出应该是 v22.x
 ```
 
-## 第 2 步：获取源码
+#### 获取源码
 
 ```bash
 git clone https://github.com/lvyunqi/QimenBot.git
 cd QimenBot
 ```
 
-## 第 3 步：修改配置
+## 修改配置
+
+Release 压缩包先复制示例文件；源码仓库已经包含 `config/base.toml`：
+
+```bash
+cp -n config/base.toml.example config/base.toml
+cp -n config/launcher.toml.example config/launcher.toml
+```
+
+Windows PowerShell 可使用 `Copy-Item`。如果当前目录中没有 `.example` 文件，说明正在使用源码仓库，直接编辑已有的 `config/base.toml`。
 
 编辑 `config/base.toml` 中的以下两项：
 
@@ -102,26 +130,29 @@ owners    = ["管理员QQ号"]           # ← 具有最高权限的 QQ 号
 不同 OneBot 实现的默认端口不同，常见端口包括 `3001`、`6700` 和 `8080`。具体值以对应实现的文档为准。
 :::
 
-## 第 4 步：启动
+## 启动
 
 下载预编译版本时启动 launcher：
 
 ```bash
 # Linux / macOS
-./qimen-launcher run
+chmod +x qimen-launcher qimenbotd
+./qimen-launcher run --config ./config/launcher.toml
 
 # Windows PowerShell
-.\qimen-launcher.exe run
+.\qimen-launcher.exe run --config .\config\launcher.toml
 ```
 
-从源码开发时仍可直接运行：
+从源码开发时先构建管理面板，再启动 daemon：
 
 ```bash
-cargo run
+npm --prefix web/admin ci
+npm --prefix web/admin run build
+cargo run --package qimenbotd
 ```
 
 ::: info 首次编译
-首次运行需要下载依赖并编译，可能需要 **3-5 分钟**（取决于网速和机器配置）。后续启动会快很多。
+首次运行需要下载 npm 和 Cargo 依赖并编译，耗时取决于网络与机器配置。后续增量构建会快很多。
 :::
 
 看到类似这样的日志就说明启动成功了：
@@ -134,7 +165,7 @@ INFO  qimen_transport_ws  > WebSocket 连接已建立
 INFO  qimen_runtime       > Bot [my-bot] 已就绪
 ```
 
-## 第 5 步：验证
+## 验证
 
 向 Bot 发送消息，看看它是否正常工作：
 

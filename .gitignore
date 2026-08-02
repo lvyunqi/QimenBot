@@ -3,6 +3,7 @@
 /.vscode/
 *.log
 .env
+/data/
 
 # 插件运行时文件（配置、二进制、数据库、图片资源）
 config/plugins/*.toml

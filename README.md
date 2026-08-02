@@ -60,27 +60,58 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 
 ## 快速开始
 
-### 环境要求
+先按运行环境选择安装方式：
 
-- Rust 1.89+（2024 Edition）
-- 一个 OneBot 11 实现（如 [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core)、[NapCat](https://github.com/NapNeko/NapCatQQ) 等）
+| 方式 | 适合场景 | 额外要求 |
+| --- | --- | --- |
+| Docker Compose | Linux 服务器、NAS、Portainer | Docker Engine、Compose v2 |
+| Release 二进制 | Windows、macOS、普通 Linux 主机 | 无需 Rust 和 Node.js |
+| 源码构建 | 修改框架、开发静态插件 | Rust 1.89+、Node.js 22 |
 
-如果接入官方 QQ Bot，不需要 OneBot 实现端。凭据、事件权限、群内 @ 测试和常见错误见 [官方 QQ Bot 接入](docs/guide/qq-official-quickstart.md)，插件开发见 [官方 QQ Bot 插件适配](docs/plugin/qq-official.md)。
+接入官方 QQ Bot 不需要 OneBot 实现端。凭据、事件权限和群内 @ 测试见[官方 QQ Bot 接入](docs/guide/qq-official-quickstart.md)。接入 OneBot 11 时，需要先准备 [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core)、[NapCat](https://github.com/NapNeko/NapCatQQ) 等实现。
 
-### 构建 & 运行
+### Docker Compose
+
+```bash
+git clone --depth 1 https://github.com/lvyunqi/QimenBot.git
+cd QimenBot
+cp deploy/docker/.env.example deploy/docker/.env
+```
+
+编辑 `deploy/docker/.env`，设置随机的 `QIMEN_ADMIN_TOKEN`。使用 QQ 官方 Bot 时再填写 `QQBOT_APPID` 和 `QQBOT_SECRET`，然后启动：
+
+```bash
+docker compose --env-file deploy/docker/.env up -d
+docker compose --env-file deploy/docker/.env ps
+docker compose --env-file deploy/docker/.env logs -f qimenbot
+```
+
+镜像默认为 [`mryunqi/qimenbot`](https://hub.docker.com/r/mryunqi/qimenbot)，支持 `linux/amd64` 和 `linux/arm64`。管理面板默认位于 `http://127.0.0.1:3210/`。
+
+### Release 二进制
+
+从 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载系统对应的压缩包，保留其中的 `qimen-launcher`、`qimenbotd`、`config/` 和 `plugins/`。复制示例配置并修改 Bot 信息：
+
+```bash
+cp config/base.toml.example config/base.toml
+cp config/launcher.toml.example config/launcher.toml
+chmod +x qimen-launcher qimenbotd
+./qimen-launcher run --config ./config/launcher.toml
+```
+
+Windows PowerShell 使用 `.\qimen-launcher.exe run --config .\config\launcher.toml`。生产环境只注册 launcher，由它监督 daemon、执行优雅重启和受控更新。
+
+### 源码构建
 
 ```bash
 git clone https://github.com/lvyunqi/QimenBot.git
 cd QimenBot
-
-# 编辑配置（修改 endpoint、owners 等）
-vim config/base.toml
-
-# 运行
-cargo run
+npm --prefix web/admin ci
+npm --prefix web/admin run build
+cargo run --package qimenbotd
 ```
 
-生产环境建议下载 Release 压缩包并启动 `qimen-launcher`，Docker Hub、systemd、Windows Service 和在线更新步骤见[部署与更新](docs/advanced/deployment.md)。
+管理面板会嵌入 Rust 二进制，所以前端必须先构建。Docker 更新、systemd、Windows Service、HTTPS 反向代理、备份恢复和故障排查见[完整部署指南](docs/advanced/deployment.md)。
 
 ## 配置详解
 
