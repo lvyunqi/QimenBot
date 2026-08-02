@@ -16,7 +16,7 @@ COPY crates/ crates/
 COPY plugins/qimen-plugin-example/ plugins/qimen-plugin-example/
 COPY web/admin/ web/admin/
 COPY --from=admin-builder /src/web/admin/dist web/admin/dist
-RUN cargo build --release --locked --package qimenbotd
+RUN cargo +1.89.0 build --release --locked --package qimenbotd
 
 FROM debian:bookworm-slim AS runtime
 ARG QIMEN_VERSION=dev

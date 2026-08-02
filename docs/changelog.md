@@ -8,6 +8,8 @@
 - Release 不再单独发布启动器文件；普通用户只下载 `QimenBot-*` 完整包，已有安装继续通过 `qimenbotd-*` 资产自动更新核心。
 - 完整安装包新增 SHA256，面板和部署文档统一使用 `qimenbot` 这一入口名称。
 - GNU/Linux Release 固定使用 Rust 1.89.0 与 Debian Bullseye（glibc 2.31）构建，并在流水线拒绝更高的 GLIBC 运行时要求。
+- Release 的原生构建、交叉构建和 Docker 构建统一固定使用 Rust 1.89.0，避免仓库工具链覆盖导致目标标准库缺失。
+- ARM64 GNU/Linux 交叉构建补齐 glibc 开发头文件，修复 `ring` 编译时找不到 `bits/libc-header-start.h` 的问题。
 - 动态插件加载失败时识别静态 musl 限制，并提示改用同 CPU 架构的 GNU 包或 Docker；文档补齐所有发行平台与插件 target 对照。
 - 文本日志只在交互式终端输出 ANSI 颜色，并支持使用 `NO_COLOR=1` 强制关闭，避免服务日志出现控制字符。
 
