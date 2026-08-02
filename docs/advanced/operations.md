@@ -4,18 +4,18 @@
 
 ## Linux systemd
 
-systemd 只管理 `qimen-launcher`，launcher 再管理 `qimenbotd`。以下示例使用 `/opt/qimenbot`。
+systemd 只管理根目录的 `qimenbot`，它再管理 `runtime/qimenbotd`。以下示例使用 `/opt/qimenbot`。
 
 ### 准备目录
 
 ```bash
 sudo useradd --system --home /opt/qimenbot --shell /usr/sbin/nologin qimenbot
 sudo install -d -o qimenbot -g qimenbot /opt/qimenbot
-sudo tar -xzf qimenbot-v0.1.15-x86_64-unknown-linux-gnu.tar.gz \
+sudo tar -xzf QimenBot-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz \
   -C /opt/qimenbot --strip-components=1
 sudo -u qimenbot cp -n /opt/qimenbot/config/base.toml.example /opt/qimenbot/config/base.toml
-sudo -u qimenbot cp -n /opt/qimenbot/config/launcher.toml.example /opt/qimenbot/config/launcher.toml
-sudo chmod 0755 /opt/qimenbot/qimenbotd /opt/qimenbot/qimen-launcher
+sudo -u qimenbot cp -n /opt/qimenbot/config/qimenbot.toml.example /opt/qimenbot/config/qimenbot.toml
+sudo chmod 0755 /opt/qimenbot/qimenbot /opt/qimenbot/runtime/qimenbotd
 sudo chown -R qimenbot:qimenbot /opt/qimenbot
 ```
 
@@ -43,7 +43,7 @@ systemd 环境文件不写 `export`。值中包含空格时使用双引号。
 
 ```ini
 [Unit]
-Description=QimenBot launcher
+Description=QimenBot
 After=network-online.target
 Wants=network-online.target
 
@@ -53,7 +53,7 @@ User=qimenbot
 Group=qimenbot
 WorkingDirectory=/opt/qimenbot
 EnvironmentFile=-/opt/qimenbot/.env
-ExecStart=/opt/qimenbot/qimen-launcher run --config /opt/qimenbot/config/launcher.toml
+ExecStart=/opt/qimenbot/qimenbot run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=45
@@ -68,7 +68,7 @@ ReadWritePaths=/opt/qimenbot
 WantedBy=multi-user.target
 ```
 
-launcher 更新时需要替换安装目录中的 daemon，因此 `ReadWritePaths` 要包含整个 `/opt/qimenbot`。
+更新时需要替换 `runtime/qimenbotd`，因此 `ReadWritePaths` 要包含整个 `/opt/qimenbot`。
 
 ```bash
 sudo systemctl daemon-reload
@@ -80,15 +80,14 @@ sudo journalctl -u qimenbot -f
 命令行检查更新时使用服务账号：
 
 ```bash
-sudo -u qimenbot /opt/qimenbot/qimen-launcher check \
-  --config /opt/qimenbot/config/launcher.toml
+sudo -u qimenbot /opt/qimenbot/qimenbot check
 ```
 
 修改 service 文件后执行 `systemctl daemon-reload`；修改 `.env` 后执行 `systemctl restart qimenbot`。
 
 ## Windows Service
 
-Windows 可以用 NSSM 或 WinSW 包装 `qimen-launcher.exe`，不要把 launcher 和 daemon 分别注册成两个服务。
+Windows 可以用 NSSM 或 WinSW 包装 `qimenbot.exe`。不要再为 `runtime/qimenbotd.exe` 单独创建服务。
 
 ### NSSM
 
@@ -96,11 +95,11 @@ Windows 可以用 NSSM 或 WinSW 包装 `qimen-launcher.exe`，不要把 launche
 
 ```powershell
 New-Item -ItemType Directory -Force C:\QimenBot\logs | Out-Null
-nssm install QimenBot "C:\QimenBot\qimen-launcher.exe"
-nssm set QimenBot AppParameters "run --config C:\QimenBot\config\launcher.toml"
+nssm install QimenBot "C:\QimenBot\qimenbot.exe"
+nssm set QimenBot AppParameters "run"
 nssm set QimenBot AppDirectory "C:\QimenBot"
-nssm set QimenBot AppStdout "C:\QimenBot\logs\launcher.log"
-nssm set QimenBot AppStderr "C:\QimenBot\logs\launcher-error.log"
+nssm set QimenBot AppStdout "C:\QimenBot\logs\qimenbot.log"
+nssm set QimenBot AppStderr "C:\QimenBot\logs\qimenbot-error.log"
 nssm set QimenBot AppRotateFiles 1
 nssm set QimenBot AppRotateOnline 1
 nssm set QimenBot AppRotateBytes 10485760
@@ -131,9 +130,9 @@ Get-Service QimenBot
 <service>
   <id>QimenBot</id>
   <name>QimenBot</name>
-  <description>QimenBot launcher service</description>
-  <executable>%BASE%\qimen-launcher.exe</executable>
-  <arguments>run --config "%BASE%\config\launcher.toml"</arguments>
+  <description>QimenBot service</description>
+  <executable>%BASE%\qimenbot.exe</executable>
+  <arguments>run</arguments>
   <workingdirectory>%BASE%</workingdirectory>
   <startmode>Automatic</startmode>
   <onfailure action="restart" delay="10 sec" />
@@ -213,7 +212,7 @@ server {
 | --- | --- |
 | Docker Compose | `docker compose --env-file deploy/docker/.env logs -f qimenbot` |
 | systemd | `journalctl -u qimenbot -f` |
-| NSSM | `C:\QimenBot\logs\launcher*.log` |
+| NSSM | `C:\QimenBot\logs\qimenbot*.log` |
 | WinSW | WinSW 生成的滚动日志 |
 
 管理面板的实时日志是内存缓冲区，重启后会清空。`admin-audit.jsonl` 只记录管理操作，不是完整运行日志。
@@ -226,7 +225,7 @@ curl --fail --silent http://127.0.0.1:3210/healthz
 
 ## 完整备份与恢复
 
-Docker 停止容器后备份 `.env` 和所有映射目录。二进制部署停止 launcher 后备份整个安装目录。
+Docker 停止容器后备份 `.env` 和所有映射目录。二进制部署停止 `qimenbot` 后备份整个安装目录。
 
 ```bash
 docker compose --env-file deploy/docker/.env stop qimenbot
@@ -244,6 +243,6 @@ SQLite 数据库不要在写入时直接复制。备份包含 Secret 和管理 T
 
 ## 更新中断说明
 
-单实例更新需要断开 QQ Gateway 或 OneBot WebSocket，再由新进程重新连接，通常会中断数秒。launcher 会优雅关闭并在新版本健康检查失败时自动回滚，但不保证严格零停机。
+单实例更新需要断开 QQ Gateway 或 OneBot WebSocket，再由新进程重新连接，通常会中断数秒。`qimenbot` 会优雅关闭并在新版本健康检查失败时自动回滚，但不保证严格零停机。
 
 同一 QQ 官方 Bot 的并行 Gateway 会话受官方平台限制。在没有验证事件去重和会话接管前，不要同时启动两个实例模拟滚动更新。

@@ -18,7 +18,7 @@ async fn main() -> ExitCode {
     match execute().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            tracing::error!(error = %error, "launcher 执行失败");
+            tracing::error!(error = %error, "qimenbot 执行失败");
             ExitCode::FAILURE
         }
     }
@@ -32,7 +32,7 @@ async fn execute() -> Result<(), DynError> {
         .unwrap_or("run");
     match command {
         "--version" | "-V" => {
-            println!("qimen-launcher {}", env!("CARGO_PKG_VERSION"));
+            println!("qimenbot {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         "--help" | "-h" | "help" => {
@@ -46,14 +46,14 @@ async fn execute() -> Result<(), DynError> {
         "check" => queue_command(&arguments, LauncherCommandAction::Check),
         "install" => queue_command(&arguments, LauncherCommandAction::Install),
         "restart" => queue_command(&arguments, LauncherCommandAction::Restart),
-        other => Err(format!("unknown launcher command '{other}'").into()),
+        other => Err(format!("unknown qimenbot command '{other}'").into()),
     }
 }
 
 fn queue_command(arguments: &[OsString], action: LauncherCommandAction) -> Result<(), DynError> {
     let config = ResolvedConfig::load(option_path(arguments, "--config")?)?;
     let id = enqueue_launcher_command(&config.update_dir, action)?;
-    println!("launcher command queued: {id}");
+    println!("qimenbot command queued: {id}");
     Ok(())
 }
 
@@ -86,10 +86,10 @@ fn init_logging() {
 
 fn print_help() {
     println!(
-        "QimenBot binary supervisor and updater\n\n\
+        "QimenBot process supervisor and updater\n\n\
          Usage:\n  \
-         qimen-launcher run [--config PATH]\n  \
-         qimen-launcher check|install|restart [--config PATH]\n\n\
+         qimenbot run [--config PATH]\n  \
+         qimenbot check|install|restart [--config PATH]\n\n\
          Updates are applied only from the configured GitHub repository."
     );
 }

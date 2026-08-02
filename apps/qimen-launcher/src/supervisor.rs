@@ -31,7 +31,7 @@ pub async fn run(config: ResolvedConfig) -> Result<(), DynError> {
             plan = %plan_path.display(),
             "检测到更新中断且 daemon 文件缺失，正在恢复旧版本"
         );
-        rollback_plan(&plan_path, "launcher 在文件替换期间意外中断").await?;
+        rollback_plan(&plan_path, "qimenbot 在文件替换期间意外中断").await?;
     }
     if !config.binary_path.is_file() {
         return Err(format!(
@@ -123,7 +123,7 @@ pub async fn run(config: ResolvedConfig) -> Result<(), DynError> {
 
         match reason {
             ExitReason::Termination => {
-                tracing::info!("launcher 收到关闭信号");
+                tracing::info!("qimenbot 收到关闭信号");
                 graceful_stop(&mut child, &config).await?;
                 return Ok(());
             }
@@ -212,7 +212,7 @@ async fn update_loop(
                             }
                         }
                     }
-                    Err(error) => tracing::warn!(error = %error, "读取 launcher 控制命令失败"),
+                    Err(error) => tracing::warn!(error = %error, "读取 qimenbot 控制命令失败"),
                 }
             }
             _ = scheduled_check.tick(), if config.raw.update.enabled => {
@@ -237,7 +237,7 @@ async fn check_only(
     status: &Arc<Mutex<UpdateStatus>>,
 ) -> Result<Option<ReleaseInfo>, DynError> {
     if !config.raw.update.enabled {
-        return Err("launcher update checks are disabled in config/launcher.toml".into());
+        return Err("update checks are disabled in the qimenbot configuration".into());
     }
     set_phase(
         config,
@@ -488,7 +488,7 @@ pub fn current_target() -> Option<&'static str> {
     release_target(std::env::consts::OS, std::env::consts::ARCH, environment)
 }
 
-/// 只返回 Release 工作流实际发布、可由 launcher 安装的目标。
+/// 只返回 Release 工作流实际发布、可由 qimenbot 安装的目标。
 fn release_target(os: &str, architecture: &str, environment: &str) -> Option<&'static str> {
     match (os, architecture, environment) {
         ("windows", "x86_64", "msvc") => Some("x86_64-pc-windows-msvc"),

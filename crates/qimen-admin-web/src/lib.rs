@@ -597,13 +597,13 @@ async fn updates() -> Result<Json<ApiEnvelope<UpdateView>>, AdminError> {
         DeploymentKind::BinaryManaged => status
             .as_ref()
             .map(|value| value.message.clone())
-            .unwrap_or_else(|| "launcher 尚未写入更新状态".to_string()),
+            .unwrap_or_else(|| "qimenbot 尚未写入更新状态".to_string()),
         DeploymentKind::Docker => {
             "当前由 Docker 编排层管理，请使用 docker compose pull && docker compose up -d 更新"
                 .to_string()
         }
         DeploymentKind::DirectBinary => {
-            "当前不是由 launcher 启动，先使用 qimen-launcher run 才能启用受控更新".to_string()
+            "当前未由 qimenbot 启动，请改用 qimenbot run 启用受控更新".to_string()
         }
     };
     Ok(Json(ApiEnvelope::new(UpdateView {
@@ -639,7 +639,7 @@ async fn queue_update_command(
 ) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
     let Some(update_dir) = managed_update_dir() else {
         return Err(AdminError::Conflict(
-            "当前进程没有由 qimen-launcher 管理，无法执行受控更新或重启".to_string(),
+            "当前进程没有由 qimenbot 管理，无法执行受控更新或重启".to_string(),
         ));
     };
     let id = enqueue_launcher_command(&update_dir, action)?;
@@ -649,7 +649,7 @@ async fn queue_update_command(
             LauncherCommandAction::Install => "update.install",
             LauncherCommandAction::Restart => "runtime.restart",
         },
-        "launcher",
+        "qimenbot",
         "success",
         format!("{}（命令 {}）", message, id),
     )?;

@@ -1095,23 +1095,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qimen-launcher"
-version = "0.1.15"
-dependencies = [
- "futures-util",
- "qimen-update-protocol",
- "reqwest",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "qimen-message"
 version = "0.1.15"
 dependencies = [
@@ -1364,6 +1347,23 @@ version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "qimenbot"
+version = "0.1.15"
+dependencies = [
+ "futures-util",
+ "qimen-update-protocol",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

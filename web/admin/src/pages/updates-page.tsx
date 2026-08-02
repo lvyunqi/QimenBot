@@ -21,7 +21,7 @@ const phaseLabels: Record<UpdatePhase, string> = {
 }
 
 const deploymentLabels: Record<DeploymentKind, string> = {
-  binary_managed: "launcher 托管二进制",
+  binary_managed: "QimenBot 托管运行",
   docker: "Docker 编排托管",
   direct_binary: "直接启动二进制",
 }
@@ -81,8 +81,8 @@ export function UpdatesPage() {
   const summary = useMemo(() => {
     if (!view) return "正在读取部署方式"
     if (view.deployment === "docker") return "镜像由 Docker Hub 发布，更新应由 Compose 或编排平台拉取新镜像。"
-    if (view.deployment === "direct_binary") return "当前进程没有 launcher 的监督与回滚能力。"
-    return "launcher 会先下载并校验两个二进制，健康检查通过后才清理旧版本。"
+    if (view.deployment === "direct_binary") return "当前核心进程没有监督与回滚能力，请改用 qimenbot 启动。"
+    return "qimenbot 会下载并校验新核心，健康检查通过后才清理旧版本。"
   }, [view])
 
   return (

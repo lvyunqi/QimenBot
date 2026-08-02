@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Docker 一键安装 | Linux 服务器，接入 QQ 官方机器人 | 重新拉取镜像 |
 | Docker Compose | NAS、Portainer、OneBot、自定义数据盘 | 修改镜像 Tag 后重建容器 |
-| Release 二进制 | Windows、macOS、没有 Docker 的 Linux | `qimen-launcher` 受控更新 |
+| Release 二进制 | Windows、macOS、没有 Docker 的 Linux | `qimenbot` 受控更新 |
 | 源码构建 | 修改框架或静态插件 | 拉取代码后重新构建 |
 
 Docker Hub 镜像是 [`mryunqi/qimenbot`](https://hub.docker.com/r/mryunqi/qimenbot)，支持 `linux/amd64` 和 `linux/arm64`。预编译二进制在 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases)。
@@ -192,34 +192,34 @@ docker compose --env-file deploy/docker/.env logs --tail 100 qimenbot
 
 ## Release 二进制
 
-不能使用 Docker 时，下载包含 `qimen-launcher` 和 `qimenbotd` 的完整压缩包。launcher 负责启动、重启、更新和失败回滚，生产环境不要单独守护 `qimenbotd`。
+不能使用 Docker 时，下载 `QimenBot-*` 完整压缩包。根目录的 `qimenbot` 是唯一入口，负责启动、重启、更新和失败回滚；`runtime/qimenbotd` 是内部核心，不要单独运行。
 
 ### 1. 下载正确版本
 
 | 系统 | Release 文件名中包含 |
 | --- | --- |
 | Windows 64 位 | `x86_64-pc-windows-msvc` |
-| 常见 Linux 64 位 | `x86_64-unknown-linux-gnu` |
-| Linux ARM64 | `aarch64-unknown-linux-gnu` |
+| 常见 Linux 64 位，glibc 2.31+ | `x86_64-unknown-linux-gnu` |
+| Linux ARM64，glibc 2.31+ | `aarch64-unknown-linux-gnu` |
 | Alpine Linux 64 位 | `x86_64-unknown-linux-musl` |
 | macOS Intel | `x86_64-apple-darwin` |
 | macOS Apple 芯片 | `aarch64-apple-darwin` |
 
-Linux 用 `uname -m` 查看 CPU 架构，用 `ldd --version` 判断 glibc。Ubuntu、Debian、Rocky Linux 通常选择 `gnu`，Alpine 选择 `musl`。
+Linux 用 `uname -m` 查看 CPU 架构，用 `ldd --version` 判断 glibc。下一版 GNU 包按 glibc 2.31 构建，Ubuntu 20.04/22.04、Debian 11/12 通常可以直接运行；更旧的系统请优先选择 musl 包（当前提供 x86_64 musl）。
 
 ### 2. 解压并创建配置
 
 ```bash
 cp -n config/base.toml.example config/base.toml
-cp -n config/launcher.toml.example config/launcher.toml
-chmod +x qimen-launcher qimenbotd
+cp -n config/qimenbot.toml.example config/qimenbot.toml
+chmod +x qimenbot
 ```
 
 Windows PowerShell：
 
 ```powershell
 Copy-Item .\config\base.toml.example .\config\base.toml -ErrorAction SilentlyContinue
-Copy-Item .\config\launcher.toml.example .\config\launcher.toml -ErrorAction SilentlyContinue
+Copy-Item .\config\qimenbot.toml.example .\config\qimenbot.toml -ErrorAction SilentlyContinue
 ```
 
 编辑 `config/base.toml`，或者先使用包内默认配置启动，再从本机管理面板修改。QQ 官方 Bot 的完整配置见[官方 QQ Bot 接入](/guide/qq-official-quickstart)。
@@ -244,7 +244,7 @@ owners = []
 admins = []
 ```
 
-然后在启动 launcher 的同一个终端设置变量：
+然后在启动 `qimenbot` 的同一个终端设置变量：
 
 ```bash
 export QQBOT_APPID='你的 AppID'
@@ -258,37 +258,36 @@ $env:QQBOT_SECRET = "你的 Secret"
 $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 ```
 
-### 3. 启动 launcher
+### 3. 启动 QimenBot
 
 ```bash
-./qimen-launcher run --config ./config/launcher.toml
+./qimenbot run
 ```
 
 ```powershell
-.\qimen-launcher.exe run --config .\config\launcher.toml
+.\qimenbot.exe run
 ```
 
 打开 `http://127.0.0.1:3210/`。服务器远程访问不要直接暴露无加密面板，按[生产环境运维](/advanced/operations)配置 systemd、Windows Service 或 HTTPS 反向代理。
 
 ### 4. 在线更新
 
-管理面板的“版本更新”页可以检查和安装 Release。命令行也可以向正在运行的 launcher 投递操作：
+管理面板的“版本更新”页可以检查和安装 Release。命令行也可以向正在运行的 `qimenbot` 投递操作：
 
 ```bash
-./qimen-launcher check --config ./config/launcher.toml
-./qimen-launcher install --config ./config/launcher.toml
-./qimen-launcher restart --config ./config/launcher.toml
+./qimenbot check
+./qimenbot install
+./qimenbot restart
 ```
 
-更新只替换 `qimenbotd`，不会改动配置、插件和数据库。新版本未通过 `/healthz` 时会自动恢复旧 daemon。launcher 自身需要升级时，停止服务后用新压缩包中的 launcher 手工覆盖。
+更新只替换 `runtime/qimenbotd`，不会改动配置、插件和数据库。新版本未通过 `/healthz` 时会自动恢复旧核心。根目录的 `qimenbot` 需要升级时，停止服务后用新压缩包中的同名文件手工覆盖。
 
 ### 5. 校验下载文件（可选）
 
-Release 中的原始二进制带有同名 `.sha256`。以 Linux x86_64 GNU 为例：
+完整压缩包带有同名 `.sha256`。以下命令以将来的 `v0.1.16` Linux x86_64 GNU 包为例：
 
 ```bash
-sha256sum -c qimenbotd-v0.1.15-x86_64-unknown-linux-gnu.sha256
-sha256sum -c qimen-launcher-v0.1.15-x86_64-unknown-linux-gnu.sha256
+sha256sum -c QimenBot-v0.1.16-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 ## 从源码构建
@@ -300,7 +299,7 @@ git clone https://github.com/lvyunqi/QimenBot.git
 cd QimenBot
 npm --prefix web/admin ci
 npm --prefix web/admin run build
-cargo build --release --locked --package qimenbotd --package qimen-launcher
+cargo build --release --locked --package qimenbotd --package qimenbot
 ```
 
 本地开发可以在仓库根目录运行：
@@ -321,7 +320,7 @@ tar -czf "qimenbot-$(date +%Y%m%d-%H%M%S).tar.gz" data deploy/docker/.env
 docker compose --env-file deploy/docker/.env start qimenbot
 ```
 
-使用绝对映射路径时，把命令里的 `data` 换成实际的配置、插件和日志目录。二进制部署直接在停止 launcher 后备份整个安装目录。备份中含有明文凭据，应加密并限制读取权限。
+使用绝对映射路径时，把命令里的 `data` 换成实际的配置、插件和日志目录。二进制部署直接在停止 `qimenbot` 后备份整个安装目录。备份中含有明文凭据，应加密并限制读取权限。
 
 ## 默认端口
 

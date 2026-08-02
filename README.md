@@ -96,16 +96,16 @@ docker compose --env-file deploy/docker/.env logs -f qimenbot
 
 ### Release 二进制
 
-从 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载系统对应的压缩包，保留其中的 `qimen-launcher`、`qimenbotd`、`config/` 和 `plugins/`。复制示例配置并修改 Bot 信息：
+从 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载系统对应的 `QimenBot-*` 完整压缩包。根目录的 `qimenbot` 是唯一启动入口，`runtime/` 是内部目录。复制示例配置并修改 Bot 信息：
 
 ```bash
 cp config/base.toml.example config/base.toml
-cp config/launcher.toml.example config/launcher.toml
-chmod +x qimen-launcher qimenbotd
-./qimen-launcher run --config ./config/launcher.toml
+cp config/qimenbot.toml.example config/qimenbot.toml
+chmod +x qimenbot
+./qimenbot run
 ```
 
-Windows PowerShell 使用 `.\qimen-launcher.exe run --config .\config\launcher.toml`。生产环境只注册 launcher，由它监督 daemon、执行优雅重启和受控更新。
+Windows PowerShell 使用 `.\qimenbot.exe run`。生产环境只注册 `qimenbot`，不要单独启动 `runtime/qimenbotd`。
 
 ### 源码构建
 

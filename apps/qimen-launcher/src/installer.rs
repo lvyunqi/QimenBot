@@ -76,7 +76,7 @@ pub fn read_plan(path: &Path) -> Result<UpdatePlan, DynError> {
     Ok(plan)
 }
 
-/// launcher 保持常驻，只在 daemon 停止后替换受监督的可执行文件。
+/// qimenbot 保持常驻，只在核心进程停止后替换受监督的可执行文件。
 pub async fn apply_plan(plan_path: &Path) -> Result<(), DynError> {
     let plan = read_plan(plan_path)?;
     let mut status = read_or_default_status(&plan);
@@ -118,7 +118,7 @@ pub async fn apply_plan(plan_path: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 健康检查失败时由仍在运行的 launcher 原位恢复 daemon。
+/// 健康检查失败时由仍在运行的 qimenbot 原位恢复核心程序。
 pub async fn rollback_plan(plan_path: &Path, reason: &str) -> Result<(), DynError> {
     let plan = read_plan(plan_path)?;
     let daemon_backup = plan.backup_dir.join(crate::config::daemon_file_name());
@@ -150,7 +150,7 @@ pub fn finalize_plan(plan_path: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
-/// launcher 异常退出后从持久化标记恢复尚未完成的健康检查。
+/// qimenbot 异常退出后从持久化标记恢复尚未完成的健康检查。
 pub fn pending_plan(update_dir: &Path) -> Result<Option<PathBuf>, DynError> {
     let marker = update_dir.join(PENDING_PLAN_FILE);
     let raw = match fs::read_to_string(marker) {
@@ -289,7 +289,7 @@ mod tests {
 
     fn test_root() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "qimen-launcher-installer-{}-{}",
+            "qimenbot-installer-{}-{}",
             std::process::id(),
             qimen_update_protocol::epoch_millis()
         ))
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!(fs::read(&daemon_target).unwrap(), b"new-daemon");
         assert_eq!(pending_plan(&update_dir).unwrap(), Some(plan_path.clone()));
 
-        // 模拟替换完成后 launcher 与文件系统同时中断，回滚仍须恢复缺失的目标文件。
+        // 模拟替换完成后 qimenbot 与文件系统同时中断，回滚仍须恢复缺失的目标文件。
         fs::remove_file(&daemon_target).unwrap();
         rollback_plan(&plan_path, "health timeout").await.unwrap();
         assert_eq!(fs::read(&daemon_target).unwrap(), b"old-daemon");

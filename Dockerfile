@@ -8,7 +8,7 @@ COPY web/admin/ ./
 COPY logo.jpg /src/logo.jpg
 RUN npm run build
 
-FROM rust:1.89-bookworm AS rust-builder
+FROM rust:1.89.0-bookworm AS rust-builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY apps/ apps/

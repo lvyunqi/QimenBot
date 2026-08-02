@@ -1,9 +1,14 @@
 [package]
-name = "qimen-launcher"
+name = "qimenbot"
+autobins = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 version.workspace = true
+
+[[bin]]
+name = "qimenbot"
+path = "src/main.rs"
 
 [dependencies]
 futures-util.workspace = true

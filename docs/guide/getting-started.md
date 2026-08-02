@@ -53,7 +53,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/lvyunqi/QimenBot/main/deploy
 
 支持平台：Linux x86_64/ARM64、macOS x86_64/ARM64、Windows x86_64。
 
-下载后保留压缩包内的 `qimen-launcher`、`qimenbotd`、`config/` 和 `plugins/`，再跳到[修改配置](#修改配置)继续。
+下载后保留完整目录。普通用户只运行根目录的 `qimenbot`，不要单独运行 `runtime/qimenbotd`。然后跳到[修改配置](#修改配置)继续。
 
 ### 方式三：从源码编译
 
@@ -88,14 +88,14 @@ cd QimenBot
 
 ## 修改配置
 
-Release 压缩包先复制示例文件；源码仓库已经包含 `config/base.toml`：
+Release 压缩包先复制示例文件；源码仓库已经包含 `config/base.toml`。下面两条复制命令只适用于 Release 压缩包：
 
 ```bash
 cp -n config/base.toml.example config/base.toml
-cp -n config/launcher.toml.example config/launcher.toml
+cp -n config/qimenbot.toml.example config/qimenbot.toml
 ```
 
-Windows PowerShell 可使用 `Copy-Item`。如果当前目录中没有 `.example` 文件，说明正在使用源码仓库，直接编辑已有的 `config/base.toml`。
+Windows PowerShell 可使用 `Copy-Item`。如果当前目录中没有 `config/qimenbot.toml.example`，说明正在使用源码仓库，直接编辑已有的 `config/base.toml`，源码开发时运行 `cargo run --package qimenbotd`。
 
 编辑 `config/base.toml` 中的以下两项：
 
@@ -130,15 +130,15 @@ owners    = ["管理员QQ号"]           # ← 具有最高权限的 QQ 号
 
 ## 启动
 
-下载预编译版本时启动 launcher：
+下载预编译版本时启动 QimenBot：
 
 ```bash
 # Linux / macOS
-chmod +x qimen-launcher qimenbotd
-./qimen-launcher run --config ./config/launcher.toml
+chmod +x qimenbot
+./qimenbot run
 
 # Windows PowerShell
-.\qimen-launcher.exe run --config .\config\launcher.toml
+.\qimenbot.exe run
 ```
 
 从源码开发时先构建管理面板，再启动 daemon：

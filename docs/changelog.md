@@ -1,5 +1,14 @@
 # 更新日志
 
+## 未发布
+
+### 安装包收口
+
+- 发行包统一使用根目录的 `qimenbot` 作为唯一启动入口，内部核心移动到 `runtime/qimenbotd`。
+- Release 不再单独发布启动器文件；普通用户只下载 `QimenBot-*` 完整包，已有安装继续通过 `qimenbotd-*` 资产自动更新核心。
+- 完整安装包新增 SHA256，面板和部署文档统一使用 `qimenbot` 这一入口名称。
+- GNU/Linux Release 固定使用 Rust 1.89.0 与 Debian Bullseye（glibc 2.31）构建，并在流水线拒绝更高的 GLIBC 运行时要求。
+
 ## v0.1.15 (2026-08-02)
 
 ### 部署与更新

@@ -107,16 +107,17 @@ pub struct ResolvedConfig {
 }
 
 impl ResolvedConfig {
-    /// 加载 launcher 配置，并把所有部署路径固定到绝对路径。
+    /// 加载启动配置，并把所有部署路径固定到绝对路径。
     pub fn load(requested_path: Option<PathBuf>) -> Result<Self, DynError> {
-        let launcher_path = std::env::current_exe()?.canonicalize()?;
-        let install_dir = launcher_path
+        let executable_path = std::env::current_exe()?.canonicalize()?;
+        let install_dir = executable_path
             .parent()
-            .ok_or("launcher executable has no parent directory")?
+            .ok_or("qimenbot executable has no parent directory")?
             .to_path_buf();
         let config_path = requested_path
+            .or_else(|| std::env::var_os("QIMENBOT_LAUNCH_CONFIG").map(PathBuf::from))
             .or_else(|| std::env::var_os("QIMEN_LAUNCHER_CONFIG").map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("config/launcher.toml"));
+            .unwrap_or_else(default_config_path);
         let config_path = absolute_from(&std::env::current_dir()?, &config_path);
 
         if !config_path.exists() {
@@ -129,7 +130,7 @@ impl ResolvedConfig {
                 tracing::info!(
                     source = %example_path.display(),
                     destination = %config_path.display(),
-                    "已从示例创建 launcher 配置"
+                    "已从示例创建 qimenbot 配置"
                 );
             }
         }
@@ -146,7 +147,7 @@ impl ResolvedConfig {
             .process
             .binary
             .as_ref()
-            .map(|path| absolute_from(&install_dir, path))
+            .map(|path| configured_binary_path(&install_dir, path))
             .unwrap_or_else(|| install_dir.join(daemon_file_name()));
         let update_dir = absolute_from(&install_dir, &raw.update.update_dir);
 
@@ -160,6 +161,16 @@ impl ResolvedConfig {
 
     pub fn shutdown_timeout(&self) -> Duration {
         Duration::from_secs(self.raw.process.graceful_shutdown_secs)
+    }
+}
+
+fn default_config_path() -> PathBuf {
+    let preferred = PathBuf::from("config/qimenbot.toml");
+    let preferred_example = PathBuf::from("config/qimenbot.toml.example");
+    if preferred.exists() || preferred_example.exists() {
+        preferred
+    } else {
+        PathBuf::from("config/launcher.toml")
     }
 }
 
@@ -233,6 +244,14 @@ fn absolute_from(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
+fn configured_binary_path(base: &Path, path: &Path) -> PathBuf {
+    let mut resolved = absolute_from(base, path);
+    if cfg!(windows) && resolved.extension().is_none() {
+        resolved.set_extension("exe");
+    }
+    resolved
+}
+
 pub fn daemon_file_name() -> &'static str {
     if cfg!(windows) {
         "qimenbotd.exe"
@@ -260,5 +279,19 @@ mod tests {
         assert!(validate_health_url("http://localhost:3210/healthz").is_ok());
         assert!(validate_health_url("https://localhost:3210/healthz").is_err());
         assert!(validate_health_url("http://127.0.0.1:80@invalid.example").is_err());
+    }
+
+    #[test]
+    fn configured_binary_uses_the_platform_executable_suffix() {
+        let resolved =
+            configured_binary_path(Path::new("install-root"), Path::new("runtime/qimenbotd"));
+        if cfg!(windows) {
+            assert_eq!(
+                resolved.extension().and_then(|value| value.to_str()),
+                Some("exe")
+            );
+        } else {
+            assert!(resolved.extension().is_none());
+        }
     }
 }
