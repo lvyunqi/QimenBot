@@ -1,0 +1,61 @@
+schema_version = 1
+version = "0.1.8"
+released_at = "2026-08-03T15:00:42Z"
+release_tag = "newapi-status-bot-v0.1.8"
+channel = "stable"
+qimenbot = ">=0.1.12, <0.2.0"
+dynamic_api = "0.4"
+yanked = false
+data_schema_version = 2
+rollback_safe = true
+changelog = "首次商城收录。支持 New API 白名单模型状态查询、SQLite 历史聚合、健康检查、手动刷新和主动推送；提供六个平台的可验证构建资产。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message", "meta"]
+outbound = ["reply", "proactive"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_newapi_status_bot-x86_64-pc-windows-msvc.dll"
+sha256 = "e489aa5856bba15c74650d8920cbdcded9e79a65467db64767146bfaf7294989"
+size_bytes = 7438336
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_newapi_status_bot-aarch64-pc-windows-msvc.dll"
+sha256 = "99e89cec8b9cf6dc0cf89ed17c6ae7ece4d0bd387a78cf35250637774750a5d8"
+size_bytes = 6506496
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-x86_64-unknown-linux-gnu.so"
+sha256 = "4182aedffe98f48c90d449215974fc075f615b8b5738c9fbd0c44bfda878c84c"
+size_bytes = 9627864
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-aarch64-unknown-linux-gnu.so"
+sha256 = "537c82d9ffeb0012d849c2b0204bb5314a8e3158147d87465a0f092574143a46"
+size_bytes = 9512920
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-x86_64-apple-darwin.dylib"
+sha256 = "f30cf67ea9af757a296e3259ff90b15e5a84e6c322334a6a6ec123f74823294b"
+size_bytes = 8378900
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-aarch64-apple-darwin.dylib"
+sha256 = "16a05a3ebdd5d950683c4b26f51d59b7a2061333ec1ceb73ca9305504e90b962"
+size_bytes = 8069520
+github_attestation = true
