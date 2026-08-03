@@ -268,7 +268,7 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
 
     ensure_table(document, "marketplace");
     document["marketplace"]["enabled"] = value(update.marketplace_enabled);
-    document["marketplace"]["catalog_url"] = value(update.marketplace_catalog_url.trim());
+    remove_legacy_marketplace_catalog_url(document);
     document["marketplace"]["cache_dir"] = value(update.marketplace_cache_dir.trim());
     document["marketplace"]["lock_path"] = value(update.marketplace_lock_path.trim());
     document["marketplace"]["request_timeout_secs"] =
@@ -307,6 +307,12 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
 fn ensure_table(document: &mut DocumentMut, key: &str) {
     if document.get(key).is_none_or(|item| !item.is_table()) {
         document[key] = Item::Table(Table::new());
+    }
+}
+
+fn remove_legacy_marketplace_catalog_url(document: &mut DocumentMut) {
+    if let Some(table) = document.get_mut("marketplace").and_then(Item::as_table_mut) {
+        table.remove("catalog_url");
     }
 }
 
@@ -434,15 +440,12 @@ mod tests {
     }
 
     #[test]
-    fn adding_marketplace_settings_to_an_older_config_is_safe() {
-        let mut document = "[runtime]\nenv = \"test\"\n"
+    fn legacy_marketplace_catalog_url_is_removed_on_save() {
+        let mut document = "[marketplace]\ncatalog_url = \"https://example.com/index.json\"\n"
             .parse::<DocumentMut>()
             .unwrap();
-        ensure_table(&mut document, "marketplace");
-        document["marketplace"]["enabled"] = value(true);
-        document["marketplace"]["catalog_url"] = value("https://example.com/index.json");
-        assert!(document["marketplace"].as_table().is_some());
-        assert_eq!(document["marketplace"]["enabled"].as_bool(), Some(true));
+        remove_legacy_marketplace_catalog_url(&mut document);
+        assert!(document["marketplace"].get("catalog_url").is_none());
     }
 
     #[tokio::test]

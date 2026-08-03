@@ -108,7 +108,6 @@ audit_path = "config/admin-audit.jsonl"
 ```toml
 [marketplace]
 enabled = true
-catalog_url = "https://lvyunqi.github.io/QimenBot/marketplace/index.json"
 cache_dir = "cache/marketplace"
 lock_path = "config/marketplace-lock.toml"
 request_timeout_secs = 30
@@ -116,9 +115,9 @@ allow_prerelease = false
 auto_update = false
 ```
 
-商城索引由 GitHub Pages 静态托管，只在打开商城或手动刷新时读取。`cache_dir` 保存目录缓存、下载资产、历史审核版本和文件替换事务；`lock_path` 保存当前安装的仓库数字 ID、版本、target、SHA256、固定和回滚状态。两个目录都应放在持久化磁盘并纳入备份。
+商城目录源文件位于 [`lvyunqi/QimenBot`](https://github.com/lvyunqi/QimenBot) 主仓库。插件投稿 PR 合并到 `main` 后，GitHub Pages 流水线会重新校验目录、生成索引并自动发布，通常一到几分钟后可以读取。客户端固定使用这个官方索引，不能通过配置或管理面板改成其他来源。
 
-远程 `catalog_url` 必须使用 HTTPS，本机开发允许回环 HTTP。请求超时允许 1-300 秒。`allow_prerelease` 只控制 beta、rc 等版本是否参与选择，不会自动安装。当前版本要求 `auto_update = false`，第三方插件更新必须在 Web 面板人工确认。完整说明见[插件商城](/plugin/marketplace)。
+`cache_dir` 保存目录缓存、下载资产、历史审核版本和文件替换事务；`lock_path` 保存当前安装的仓库数字 ID、版本、target、SHA256、固定和回滚状态。两个目录都应放在持久化磁盘并纳入备份。请求超时允许 1-300 秒。`allow_prerelease` 只控制 beta、rc 等版本是否参与选择，不会自动安装。当前版本要求 `auto_update = false`，第三方插件更新必须在 Web 面板人工确认。完整说明见[插件商城](/plugin/marketplace)。
 
 ## `[official_host]` — 全局模块加载
 

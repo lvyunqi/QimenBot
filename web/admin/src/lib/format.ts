@@ -126,7 +126,6 @@ export function generalToMutation(
     log_capacity: general.log_capacity,
     audit_path: general.audit_path,
     marketplace_enabled: general.marketplace_enabled,
-    marketplace_catalog_url: general.marketplace_catalog_url,
     marketplace_cache_dir: general.marketplace_cache_dir,
     marketplace_lock_path: general.marketplace_lock_path,
     marketplace_request_timeout_secs: general.marketplace_request_timeout_secs,

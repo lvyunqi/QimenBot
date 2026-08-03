@@ -45,9 +45,8 @@ audit_path = "config/admin-audit.jsonl"
 
 # ── 插件商城 / Plugin Marketplace ─────────────────────────────────────────
 [marketplace]
-# 商城索引由 GitHub Pages 托管，只在打开商城或手动刷新时访问。
+# 官方商城索引由 QimenBot 主仓库审核并自动发布，只在打开商城或手动刷新时访问。
 enabled = true
-catalog_url = "https://lvyunqi.github.io/QimenBot/marketplace/index.json"
 
 # 索引缓存、已审核历史版本和安装锁。只有 plugins/bin 中的活动版本会被宿主扫描。
 cache_dir = "cache/marketplace"

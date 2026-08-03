@@ -20,7 +20,6 @@ use std::time::Duration;
 #[derive(Debug, Serialize)]
 pub struct MarketplaceView {
     enabled: bool,
-    catalog_url: String,
     allow_prerelease: bool,
     auto_update: bool,
     source: Option<CatalogSource>,
@@ -520,10 +519,9 @@ async fn operation_context(state: &AdminState) -> Result<OperationContext, Admin
         .active_plugin_state_path()
         .ok_or_else(|| AdminError::Conflict("当前 Runtime 没有配置插件状态文件".to_string()))?
         .to_string();
-    let client = MarketplaceClient::new(
-        &stored.config.marketplace.catalog_url,
-        Duration::from_secs(stored.config.marketplace.request_timeout_secs),
-    )
+    let client = MarketplaceClient::new(Duration::from_secs(
+        stored.config.marketplace.request_timeout_secs,
+    ))
     .map_err(marketplace_error)?;
     let paths = MarketplacePaths::new(
         &stored.config.marketplace.cache_dir,
@@ -589,7 +587,6 @@ async fn build_view(state: &AdminState, refresh: bool) -> Result<MarketplaceView
     if !config.enabled {
         return Ok(MarketplaceView {
             enabled: false,
-            catalog_url: config.catalog_url.clone(),
             allow_prerelease: config.allow_prerelease,
             auto_update: config.auto_update,
             source: None,
@@ -599,11 +596,8 @@ async fn build_view(state: &AdminState, refresh: bool) -> Result<MarketplaceView
             plugins: Vec::new(),
         });
     }
-    let client = MarketplaceClient::new(
-        &config.catalog_url,
-        Duration::from_secs(config.request_timeout_secs),
-    )
-    .map_err(marketplace_error)?;
+    let client = MarketplaceClient::new(Duration::from_secs(config.request_timeout_secs))
+        .map_err(marketplace_error)?;
     let paths = MarketplacePaths::new(
         &config.cache_dir,
         &config.lock_path,
@@ -726,7 +720,6 @@ async fn build_view(state: &AdminState, refresh: bool) -> Result<MarketplaceView
     });
     Ok(MarketplaceView {
         enabled: true,
-        catalog_url: config.catalog_url.clone(),
         allow_prerelease: config.allow_prerelease,
         auto_update: config.auto_update,
         source,

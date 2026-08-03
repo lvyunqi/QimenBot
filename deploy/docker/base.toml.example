@@ -17,7 +17,6 @@ audit_path = "config/admin-audit.jsonl"
 
 [marketplace]
 enabled = true
-catalog_url = "https://lvyunqi.github.io/QimenBot/marketplace/index.json"
 cache_dir = "cache/marketplace"
 lock_path = "config/marketplace-lock.toml"
 request_timeout_secs = 30

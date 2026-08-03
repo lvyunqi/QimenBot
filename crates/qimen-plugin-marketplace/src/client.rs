@@ -15,6 +15,8 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 const MAX_CATALOG_BYTES: usize = 8 * 1024 * 1024;
+// Generated from marketplace/ in lvyunqi/QimenBot; Pages is only the read endpoint.
+const OFFICIAL_CATALOG_URL: &str = "https://lvyunqi.github.io/QimenBot/marketplace/index.json";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -50,8 +52,8 @@ pub struct MarketplaceClient {
 }
 
 impl MarketplaceClient {
-    pub fn new(catalog_url: &str, timeout: Duration) -> Result<Self> {
-        let catalog_url = validate_catalog_url(catalog_url)?;
+    pub fn new(timeout: Duration) -> Result<Self> {
+        let catalog_url = validate_catalog_url(OFFICIAL_CATALOG_URL)?;
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("QimenBot-Marketplace"));
         headers.insert(
@@ -602,6 +604,7 @@ mod tests {
 
     #[test]
     fn catalog_url_rejects_remote_plain_http_and_credentials() {
+        assert!(validate_catalog_url(OFFICIAL_CATALOG_URL).is_ok());
         assert!(validate_catalog_url("http://example.com/index.json").is_err());
         assert!(validate_catalog_url("https://user@example.com/index.json").is_err());
         assert!(validate_catalog_url("http://127.0.0.1:8080/index.json").is_ok());

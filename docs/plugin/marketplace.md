@@ -1,6 +1,6 @@
 # 插件商城
 
-QimenBot 的插件商城使用 GitHub 保存源码、Release 资产和审核目录，不需要单独部署商城服务器。管理面板从 GitHub Pages 读取静态索引，安装时再到插件自己的 GitHub Release 下载对应二进制。
+QimenBot 的插件商城使用 GitHub 保存源码、Release 资产和审核目录，不需要单独部署商城服务器。插件作者向 [`lvyunqi/QimenBot`](https://github.com/lvyunqi/QimenBot) 主仓库提交目录 PR；合并后，管理面板从该仓库自动发布的 GitHub Pages 索引读取数据，安装时再到插件自己的 GitHub Release 下载对应二进制。
 
 商城只自动管理动态插件。静态插件可以展示源码和兼容范围，但必须重新构建 `qimenbotd`，不能在运行中的宿主里一键安装。
 
@@ -15,6 +15,8 @@ QimenBot 的插件商城使用 GitHub 保存源码、Release 资产和审核目�
 | 插件仓库的 GitHub Releases | Windows、Linux、macOS 动态库 | 插件作者发布 |
 
 主仓库不接收第三方 DLL、SO、dylib、配置或数据库。PR 流水线只检查 TOML 和 GitHub 元数据，不会下载、编译或执行投稿插件。
+
+目录 PR 合并到 `main` 后会触发 Pages 流水线。流水线再次校验目录并生成静态索引，部署成功后客户端自动读取新内容，不需要发布新的 QimenBot 版本。这个过程不是严格实时，通常需要一到几分钟；部署失败时继续保留上一次成功发布的目录。
 
 ## 在管理面板安装
 
@@ -148,7 +150,6 @@ SemVer 的 `+build` 元数据不表示更高版本。商城不会把 `1.0.0+buil
 ```toml
 [marketplace]
 enabled = true
-catalog_url = "https://lvyunqi.github.io/QimenBot/marketplace/index.json"
 cache_dir = "cache/marketplace"
 lock_path = "config/marketplace-lock.toml"
 request_timeout_secs = 30
@@ -159,14 +160,13 @@ auto_update = false
 | 字段 | 说明 |
 |---|---|
 | `enabled` | 是否允许面板读取商城目录和执行商城安装 |
-| `catalog_url` | 静态 `index.json` 地址，远程地址必须使用 HTTPS |
 | `cache_dir` | 目录缓存、下载资产、历史审核版本和临时事务目录 |
 | `lock_path` | 本地安装锁，保存版本、仓库 ID、target、SHA256、固定和回滚状态 |
 | `request_timeout_secs` | 目录、GitHub API 和下载请求的超时，允许 1-300 秒 |
 | `allow_prerelease` | 是否让预发布版本参与兼容性选择 |
 | `auto_update` | 当前必须为 `false`，第三方插件更新需要人工确认 |
 
-目录地址可以在离线环境中改成内网 HTTPS 静态站点。本机开发允许 `http://127.0.0.1` 或 `http://localhost`，远程明文 HTTP 会被拒绝。
+商城来源固定为 QimenBot 主仓库发布的官方目录。配置文件和管理面板都不提供来源切换，旧配置中的 `catalog_url` 会被忽略，并在下次通过管理面板保存配置时移除。
 
 ### Docker 持久化
 

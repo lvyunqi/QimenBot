@@ -30,7 +30,7 @@ marketplace/
 - 经过审核的 Release 资产名称、大小和 SHA256；
 - 数据版本以及能否安全回滚。
 
-`qimen-marketplace-index` 会验证这些文件并生成 `docs/public/marketplace/index.json`。GitHub Pages 发布文档时会重新生成索引，Web 管理面板直接读取这个静态 JSON。
+`qimen-marketplace-index` 会验证这些文件并生成 `docs/public/marketplace/index.json`。商城 PR 合并到本仓库的 `main` 后，GitHub Pages 流水线会重新生成并发布索引，Web 管理面板随后自动读取新内容。发布通常需要一到几分钟，不是严格实时，也不需要另建文档仓库或发布新的 QimenBot 版本。
 
 ## 从哪里开始
 

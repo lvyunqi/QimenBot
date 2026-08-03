@@ -45,10 +45,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("validated {} marketplace plugin(s)", index.plugins.len());
 
     if verify_github {
-        let client = MarketplaceClient::new(
-            "https://lvyunqi.github.io/QimenBot/marketplace/index.json",
-            Duration::from_secs(30),
-        )?;
+        let client = MarketplaceClient::new(Duration::from_secs(30))?;
         let results = client.verify_catalog_sources(&index).await;
         let mut failed = false;
         for result in results {

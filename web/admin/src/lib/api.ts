@@ -67,7 +67,6 @@ export interface GeneralConfigView {
   log_capacity: number
   audit_path: string
   marketplace_enabled: boolean
-  marketplace_catalog_url: string
   marketplace_cache_dir: string
   marketplace_lock_path: string
   marketplace_request_timeout_secs: number
@@ -234,7 +233,6 @@ export interface MarketplacePluginView {
 
 export interface MarketplaceView {
   enabled: boolean
-  catalog_url: string
   allow_prerelease: boolean
   auto_update: boolean
   source?: "network" | "cache" | null
@@ -465,7 +463,6 @@ export interface GeneralMutation {
   log_capacity: number
   audit_path: string
   marketplace_enabled: boolean
-  marketplace_catalog_url: string
   marketplace_cache_dir: string
   marketplace_lock_path: string
   marketplace_request_timeout_secs: number

@@ -66,8 +66,6 @@ impl Default for AdminWebConfig {
 pub struct MarketplaceConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_marketplace_catalog_url")]
-    pub catalog_url: String,
     #[serde(default = "default_marketplace_cache_dir")]
     pub cache_dir: String,
     #[serde(default = "default_marketplace_lock_path")]
@@ -84,7 +82,6 @@ impl Default for MarketplaceConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            catalog_url: default_marketplace_catalog_url(),
             cache_dir: default_marketplace_cache_dir(),
             lock_path: default_marketplace_lock_path(),
             request_timeout_secs: default_marketplace_request_timeout_secs(),
@@ -278,12 +275,11 @@ impl AppConfig {
             }
         }
 
-        if self.marketplace.catalog_url.trim().is_empty()
-            || self.marketplace.cache_dir.trim().is_empty()
+        if self.marketplace.cache_dir.trim().is_empty()
             || self.marketplace.lock_path.trim().is_empty()
         {
             return Err(QimenError::Config(
-                "marketplace catalog_url, cache_dir, and lock_path cannot be empty".to_string(),
+                "marketplace cache_dir and lock_path cannot be empty".to_string(),
             ));
         }
         if self.marketplace.request_timeout_secs == 0 || self.marketplace.request_timeout_secs > 300
@@ -482,10 +478,6 @@ fn default_admin_web_audit_path() -> String {
     "config/admin-audit.jsonl".to_string()
 }
 
-fn default_marketplace_catalog_url() -> String {
-    "https://lvyunqi.github.io/QimenBot/marketplace/index.json".to_string()
-}
-
 fn default_marketplace_cache_dir() -> String {
     "cache/marketplace".to_string()
 }
@@ -602,6 +594,25 @@ endpoint = "ws://127.0.0.1:3001"
 "#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn legacy_marketplace_catalog_url_is_ignored_and_not_serialized() {
+        let config: MarketplaceConfig = toml::from_str(
+            r#"
+enabled = true
+catalog_url = "https://example.com/index.json"
+cache_dir = "cache/marketplace"
+lock_path = "config/marketplace-lock.toml"
+request_timeout_secs = 30
+allow_prerelease = false
+auto_update = false
+"#,
+        )
+        .unwrap();
+
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(!serialized.contains("catalog_url"));
     }
 
     #[test]

@@ -481,7 +481,7 @@ function MarketplaceSection({
   return (
     <ConfigSection
       title="插件商城"
-      description="配置 GitHub Pages 静态目录、本地审核缓存和安装锁。目录只在打开商城或手动刷新时访问。"
+      description="官方目录由 QimenBot 仓库自动发布；这里管理商城开关、本地审核缓存和安装锁。"
       badge={<Badge variant={general.marketplace_enabled ? "success" : "neutral"}>{general.marketplace_enabled ? "已启用" : "已关闭"}</Badge>}
     >
       <div className="config-form-grid">
@@ -497,12 +497,6 @@ function MarketplaceSection({
           checked={general.marketplace_allow_prerelease}
           onChange={(marketplace_allow_prerelease) => patch({ marketplace_allow_prerelease })}
         />
-        <Field label="目录地址" hint="生产环境必须使用 HTTPS；HTTP 只允许本机调试。" wide>
-          <Input
-            value={general.marketplace_catalog_url}
-            onChange={(event) => patch({ marketplace_catalog_url: event.target.value })}
-          />
-        </Field>
         <Field label="缓存目录" hint="保存目录缓存、下载资产和可回滚的历史二进制。">
           <Input
             value={general.marketplace_cache_dir}
