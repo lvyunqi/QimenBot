@@ -1,0 +1,14 @@
+schema_version = 1
+id = "newapi-status-bot"
+name = "New API 模型状态监控"
+summary = "采集 New API 管理日志，提供模型可用率、延迟和异常状态查询与推送。"
+description = "面向 New API 运维场景的动态插件。插件按模型白名单轮询管理日志，使用本地 SQLite 聚合请求结果、TTFT 和总耗时，并向 OneBot 11 私聊或群聊返回紧凑状态报告；可按周期、状态变化或异常主动推送。"
+type = "dynamic"
+repository = "lvyunqi/newapi-status-bot"
+repository_id = 1297583488
+license = "Apache-2.0"
+authors = ["lvyunqi"]
+categories = ["operations", "monitoring"]
+keywords = ["newapi", "status", "metrics", "latency", "onebot11"]
+homepage = "https://github.com/lvyunqi/newapi-status-bot"
+trust = "community"
