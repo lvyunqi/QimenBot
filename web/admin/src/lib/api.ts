@@ -210,25 +210,38 @@ export interface MarketplaceUnmanagedView {
   reason: string
 }
 
-export interface MarketplacePluginView {
+export type MarketplaceFilter = "all" | "dynamic" | "static" | "installed" | "updates"
+
+export interface MarketplacePluginSummaryView {
   id: string
   name: string
   summary: string
-  description: string
   kind: MarketplacePluginKind
-  repository: string
-  repository_url: string
-  repository_id: number
   license: string
-  authors: string[]
-  categories: string[]
-  keywords: string[]
   trust: MarketplaceTrust
   catalog_listed: boolean
   latest_compatible?: string | null
-  versions: MarketplaceVersionView[]
+  drivers: MarketplaceDriverSupport[]
   installed?: MarketplaceInstalledView | null
   unmanaged?: MarketplaceUnmanagedView | null
+}
+
+export interface MarketplacePluginView extends MarketplacePluginSummaryView {
+  description: string
+  repository: string
+  repository_url: string
+  repository_id: number
+  authors: string[]
+  categories: string[]
+  keywords: string[]
+  versions: MarketplaceVersionView[]
+}
+
+export interface MarketplaceListParams {
+  page: number
+  page_size: number
+  query: string
+  filter: MarketplaceFilter
 }
 
 export interface MarketplaceView {
@@ -248,7 +261,14 @@ export interface MarketplaceView {
     dynamic_loading: boolean
     supported_dynamic_apis: string[]
   }
-  plugins: MarketplacePluginView[]
+  counts: Record<MarketplaceFilter, number>
+  pagination: {
+    page: number
+    page_size: number
+    total_items: number
+    total_pages: number
+  }
+  plugins: MarketplacePluginSummaryView[]
 }
 
 export interface RevisionView {
@@ -349,13 +369,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return envelope.data
 }
 
+function marketplacePath(path: string, params: MarketplaceListParams) {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    page_size: String(params.page_size),
+    query: params.query,
+    filter: params.filter,
+  })
+  return `${path}?${query}`
+}
+
 export const api = {
   snapshot: () => request<AdminSnapshot>("/snapshot"),
   bots: () => request<BotView[]>("/bots"),
   config: () => request<ConfigView>("/config"),
   plugins: () => request<PluginView[]>("/plugins"),
-  marketplace: () => request<MarketplaceView>("/marketplace"),
-  refreshMarketplace: () => request<MarketplaceView>("/marketplace/refresh", { method: "POST" }),
+  marketplace: (params: MarketplaceListParams) =>
+    request<MarketplaceView>(marketplacePath("/marketplace", params)),
+  refreshMarketplace: (params: MarketplaceListParams) =>
+    request<MarketplaceView>(marketplacePath("/marketplace/refresh", params), { method: "POST" }),
+  marketplacePlugin: (id: string) =>
+    request<MarketplacePluginView>("/marketplace/plugins/" + encodeURIComponent(id)),
   logs: (params?: URLSearchParams) => request<LogsView>("/logs" + (params ? "?" + params : "")),
   audit: () => request<AuditEntry[]>("/audit"),
   updates: () => request<UpdateView>("/updates"),

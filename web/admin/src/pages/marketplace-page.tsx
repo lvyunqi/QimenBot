@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import * as AlertDialog from "@radix-ui/react-alert-dialog"
 import {
   AlertTriangle,
@@ -7,6 +7,7 @@ import {
   Box,
   Cable,
   Check,
+  ChevronLeft,
   ChevronRight,
   CircleOff,
   Download,
@@ -38,6 +39,8 @@ import { toast } from "sonner"
 import {
   api,
   type MarketplaceDriverSupport,
+  type MarketplaceFilter,
+  type MarketplacePluginSummaryView,
   type MarketplacePluginView,
   type MarketplaceVersionView,
   type MarketplaceView,
@@ -49,20 +52,21 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 
-type MarketFilter = "all" | "dynamic" | "static" | "installed" | "updates"
 type PendingAction = {
   kind: "install" | "adopt" | "rollback" | "uninstall"
   plugin: MarketplacePluginView
   version?: string
 }
 
-const filterLabels: Array<{ id: MarketFilter; label: string }> = [
+const filterLabels: Array<{ id: MarketplaceFilter; label: string }> = [
   { id: "all", label: "全部" },
   { id: "dynamic", label: "动态" },
   { id: "static", label: "静态" },
   { id: "installed", label: "已安装" },
   { id: "updates", label: "可更新" },
 ]
+
+const pageSizeOptions = [10, 20, 50]
 
 export function MarketplacePage({ onOpenConfig }: { onOpenConfig?: () => void }) {
   const [market, setMarket] = useState<MarketplaceView | null>(null)
@@ -71,73 +75,84 @@ export function MarketplacePage({ onOpenConfig }: { onOpenConfig?: () => void })
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<MarketFilter>("all")
+  const [debouncedQuery, setDebouncedQuery] = useState("")
+  const [filter, setFilter] = useState<MarketplaceFilter>("all")
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selected, setSelected] = useState<MarketplacePluginView | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [catalogRevision, setCatalogRevision] = useState(0)
   const [selectedVersions, setSelectedVersions] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<PendingAction | null>(null)
+  const listRequestId = useRef(0)
+  const detailRequestId = useRef(0)
 
   const load = useCallback(async (refresh = false) => {
+    const requestId = ++listRequestId.current
     if (refresh) setRefreshing(true)
+    else setLoading(true)
     try {
-      const next = refresh ? await api.refreshMarketplace() : await api.marketplace()
+      const params = { page, page_size: pageSize, query: debouncedQuery, filter }
+      const next = refresh ? await api.refreshMarketplace(params) : await api.marketplace(params)
+      if (requestId !== listRequestId.current) return
       setMarket(next)
+      setPage(next.pagination.page)
       setError(null)
-      setSelectedId((current) => current ?? next.plugins[0]?.id ?? null)
+      setSelectedId((current) =>
+        current && next.plugins.some((plugin) => plugin.id === current)
+          ? current
+          : next.plugins[0]?.id ?? null,
+      )
+      setCatalogRevision((current) => current + 1)
     } catch (caught) {
+      if (requestId !== listRequestId.current) return
       setError(caught instanceof Error ? caught.message : "插件目录连接失败")
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      if (requestId === listRequestId.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
-  }, [])
+  }, [debouncedQuery, filter, page, pageSize])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  const counts = useMemo(() => {
-    const plugins = market?.plugins ?? []
-    return {
-      all: plugins.length,
-      dynamic: plugins.filter((plugin) => plugin.kind === "dynamic").length,
-      static: plugins.filter((plugin) => plugin.kind === "static").length,
-      installed: plugins.filter((plugin) => plugin.installed).length,
-      updates: plugins.filter((plugin) => plugin.installed?.update_available).length,
-    }
-  }, [market])
-
-  const visible = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return (market?.plugins ?? []).filter((plugin) => {
-      if (filter === "dynamic" && plugin.kind !== "dynamic") return false
-      if (filter === "static" && plugin.kind !== "static") return false
-      if (filter === "installed" && !plugin.installed) return false
-      if (filter === "updates" && !plugin.installed?.update_available) return false
-      if (!needle) return true
-      return [
-        plugin.id,
-        plugin.name,
-        plugin.summary,
-        plugin.description,
-        plugin.repository,
-        plugin.license,
-        ...plugin.authors,
-        ...plugin.categories,
-        ...plugin.keywords,
-        ...pluginDriverSearchTerms(plugin),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(needle)
-    })
-  }, [filter, market, query])
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [query])
 
   useEffect(() => {
-    if (selectedId && visible.some((plugin) => plugin.id === selectedId)) return
-    setSelectedId(visible[0]?.id ?? null)
-  }, [selectedId, visible])
+    const requestId = ++detailRequestId.current
+    if (!selectedId) {
+      setSelected(null)
+      setDetailError(null)
+      setDetailLoading(false)
+      return
+    }
+    setSelected(null)
+    setDetailError(null)
+    setDetailLoading(true)
+    void api.marketplacePlugin(selectedId)
+      .then((plugin) => {
+        if (requestId !== detailRequestId.current) return
+        setSelected(plugin)
+      })
+      .catch((caught) => {
+        if (requestId !== detailRequestId.current) return
+        setDetailError(caught instanceof Error ? caught.message : "插件详情读取失败")
+      })
+      .finally(() => {
+        if (requestId === detailRequestId.current) setDetailLoading(false)
+      })
+  }, [catalogRevision, selectedId])
 
-  const selected = visible.find((plugin) => plugin.id === selectedId) ?? null
+  const counts = market?.counts ?? { all: 0, dynamic: 0, static: 0, installed: 0, updates: 0 }
+  const plugins = market?.plugins ?? []
   const selectedVersion = selected ? resolveSelectedVersion(selected, selectedVersions[selected.id]) : null
 
   const run = async (action: PendingAction) => {
@@ -240,7 +255,10 @@ export function MarketplacePage({ onOpenConfig }: { onOpenConfig?: () => void })
               <Search />
               <Input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  setPage(1)
+                }}
                 placeholder="搜索插件、驱动、场景或分类"
                 className="h-7 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
               />
@@ -252,7 +270,10 @@ export function MarketplacePage({ onOpenConfig }: { onOpenConfig?: () => void })
                   key={item.id}
                   className={filter === item.id ? "is-active" : ""}
                   aria-pressed={filter === item.id}
-                  onClick={() => setFilter(item.id)}
+                  onClick={() => {
+                    setFilter(item.id)
+                    setPage(1)
+                  }}
                 >
                   <span>{item.label}</span>
                   <span>{counts[item.id]}</span>
@@ -265,17 +286,17 @@ export function MarketplacePage({ onOpenConfig }: { onOpenConfig?: () => void })
             <div className="marketplace-catalog" aria-label="插件目录">
               <div className="marketplace-list-head">
                 <span>目录</span>
-                <small>{loading ? "正在读取" : `${visible.length} 个结果`}</small>
+                <small>{loading ? "正在读取" : `${market?.pagination.total_items ?? 0} 个结果`}</small>
               </div>
               {loading ? (
                 <MarketplaceSkeleton />
-              ) : visible.length ? (
+              ) : plugins.length ? (
                 <div className="marketplace-list">
-                  {visible.map((plugin) => (
+                  {plugins.map((plugin) => (
                     <PluginRow
                       key={plugin.id}
                       plugin={plugin}
-                      selected={plugin.id === selected?.id}
+                      selected={plugin.id === selectedId}
                       busy={busyId === plugin.id}
                       onSelect={() => setSelectedId(plugin.id)}
                     />
@@ -284,14 +305,37 @@ export function MarketplacePage({ onOpenConfig }: { onOpenConfig?: () => void })
               ) : (
                 <div className="marketplace-empty">
                   <PackageSearch />
-                  <strong>{market?.plugins.length ? "没有符合条件的插件" : "目录暂时没有插件"}</strong>
-                  <span>{market?.plugins.length ? "调整搜索词或筛选条件。" : "首个通过审核的插件会显示在这里。"}</span>
+                  <strong>{counts.all ? "没有符合条件的插件" : "目录暂时没有插件"}</strong>
+                  <span>{counts.all ? "调整搜索词或筛选条件。" : "首个通过审核的插件会显示在这里。"}</span>
                 </div>
+              )}
+              {market && market.pagination.total_items > 0 && (
+                <MarketplacePagination
+                  pagination={market.pagination}
+                  pageSize={pageSize}
+                  disabled={loading || refreshing || Boolean(busyId)}
+                  onPageChange={setPage}
+                  onPageSizeChange={(nextPageSize) => {
+                    setPageSize(nextPageSize)
+                    setPage(1)
+                  }}
+                />
               )}
             </div>
 
             <div className="marketplace-detail-wrap">
-              {selected ? (
+              {detailLoading ? (
+                <div className="marketplace-detail-empty">
+                  <LoaderCircle className="animate-spin-slow" />
+                  <span>正在读取插件详情。</span>
+                </div>
+              ) : detailError ? (
+                <div className="marketplace-detail-empty is-error">
+                  <AlertTriangle />
+                  <span>{detailError}</span>
+                  {selectedId && <Button variant="outline" size="sm" onClick={() => setCatalogRevision((current) => current + 1)}>重试</Button>}
+                </div>
+              ) : selected ? (
                 <PluginDetail
                   plugin={selected}
                   selectedVersion={selectedVersion}
@@ -366,14 +410,13 @@ function PluginRow({
   busy,
   onSelect,
 }: {
-  plugin: MarketplacePluginView
+  plugin: MarketplacePluginSummaryView
   selected: boolean
   busy: boolean
   onSelect: () => void
 }) {
   const Icon = plugin.kind === "dynamic" ? PackageOpen : FileCode2
   const state = pluginState(plugin)
-  const displayVersion = resolveSelectedVersion(plugin)
   return (
     <button type="button" className={cn("marketplace-row", selected && "is-selected")} onClick={onSelect}>
       <span className={cn("marketplace-row-icon", plugin.kind === "static" && "is-static")}>
@@ -385,9 +428,9 @@ function PluginRow({
           <code>{plugin.id}</code>
         </span>
         <span className="marketplace-row-summary">{plugin.summary}</span>
-        {displayVersion && displayVersion.drivers.length > 0 && (
+        {plugin.drivers.length > 0 && (
           <span className="marketplace-row-drivers">
-            {displayVersion.drivers.map((support) => <DriverBadge key={support.driver} driver={support.driver} compact />)}
+            {plugin.drivers.map((support) => <DriverBadge key={support.driver} driver={support.driver} compact />)}
           </span>
         )}
         <span className="marketplace-row-meta">
@@ -667,7 +710,7 @@ function CapabilityLine({
   )
 }
 
-function TrustBadge({ trust, compact = false }: { trust: MarketplacePluginView["trust"]; compact?: boolean }) {
+function TrustBadge({ trust, compact = false }: { trust: MarketplacePluginSummaryView["trust"]; compact?: boolean }) {
   const content =
     trust === "official"
       ? { label: "官方", icon: ShieldCheck, variant: "success" as const }
@@ -684,6 +727,63 @@ function MarketplaceSkeleton() {
       {[0, 1, 2, 3].map((item) => (
         <div key={item}><span /><p><i /><i /><i /></p></div>
       ))}
+    </div>
+  )
+}
+
+function MarketplacePagination({
+  pagination,
+  pageSize,
+  disabled,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  pagination: MarketplaceView["pagination"]
+  pageSize: number
+  disabled: boolean
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
+}) {
+  const start = (pagination.page - 1) * pagination.page_size + 1
+  const end = Math.min(pagination.page * pagination.page_size, pagination.total_items)
+  return (
+    <div className="marketplace-pagination">
+      <span className="marketplace-pagination-range">
+        <strong>{start}-{end}</strong>
+        <small>共 {pagination.total_items} 个</small>
+      </span>
+      <div className="marketplace-pagination-controls" aria-label="商城分页">
+        <Select
+          value={String(pageSize)}
+          onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          disabled={disabled}
+          aria-label="每页插件数量"
+        >
+          {pageSizeOptions.map((size) => <option key={size} value={size}>每页 {size}</option>)}
+        </Select>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onPageChange(pagination.page - 1)}
+          disabled={disabled || pagination.page <= 1}
+          title="上一页"
+        >
+          <ChevronLeft />
+        </Button>
+        <span className="marketplace-pagination-page">
+          <strong>{pagination.page}</strong>
+          <small>/ {pagination.total_pages}</small>
+        </span>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onPageChange(pagination.page + 1)}
+          disabled={disabled || pagination.page >= pagination.total_pages}
+          title="下一页"
+        >
+          <ChevronRight />
+        </Button>
+      </div>
     </div>
   )
 }
@@ -745,20 +845,7 @@ function resolveSelectedVersion(plugin: MarketplacePluginView, selected?: string
   return version ?? null
 }
 
-function pluginDriverSearchTerms(plugin: MarketplacePluginView) {
-  return plugin.versions.flatMap((version) =>
-    (version.drivers ?? []).flatMap((support) => [
-      support.driver,
-      driverLabels[support.driver].label,
-      driverLabels[support.driver].detail,
-      ...support.scenes.flatMap((scene) => [scene, sceneLabels[scene]]),
-      ...support.events.flatMap((event) => [event, eventLabels[event]]),
-      ...support.outbound.flatMap((capability) => [capability, outboundLabels[capability]]),
-    ]),
-  )
-}
-
-function pluginState(plugin: MarketplacePluginView): { label: string; variant: "success" | "warning" | "danger" | "neutral" | "default" } {
+function pluginState(plugin: MarketplacePluginSummaryView): { label: string; variant: "success" | "warning" | "danger" | "neutral" | "default" } {
   if (!plugin.catalog_listed) return { label: "目录已下架", variant: "danger" }
   if (plugin.unmanaged) return { label: plugin.unmanaged.can_adopt ? "待关联" : "校验不符", variant: "warning" }
   if (plugin.installed?.update_available) return { label: "可更新", variant: "default" }

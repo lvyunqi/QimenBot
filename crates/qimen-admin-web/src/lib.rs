@@ -104,7 +104,7 @@ impl AdminServer {
             .route("/marketplace/refresh", post(marketplace::refresh))
             .route(
                 "/marketplace/plugins/{id}",
-                axum::routing::delete(marketplace::uninstall),
+                get(marketplace::detail).delete(marketplace::uninstall),
             )
             .route(
                 "/marketplace/plugins/{id}/install",
