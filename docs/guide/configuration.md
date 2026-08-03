@@ -67,15 +67,24 @@ metrics_bind = "127.0.0.1:9090"   # Metrics 暴露地址（预留）
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|-------|------|
-| `level` | `String` | `"info"` | 日志级别：`trace` / `debug` / `info` / `warn` / `error` |
+| `level` | `String` | `"info"` | tracing 过滤表达式，可填写 `trace` / `debug` / `info` / `warn` / `error` 或按模块组合 |
 | `json_logs` | `bool` | `false` | `true` 时输出 JSON 格式（适合 ELK / Loki 等日志采集系统） |
 | `metrics_bind` | `String` | `"127.0.0.1:9090"` | Metrics HTTP 端点地址（预留功能） |
 
 ::: tip 日志级别选择
-- **开发调试** → `debug` 或 `trace`（信息量大，包含事件原始数据）
+- **开发调试** → `debug` 或 `trace`（包含收到和发出的原始消息 JSON）
 - **日常运行** → `info`（推荐，记录关键操作）
 - **生产环境** → `warn`（只记录警告和错误）
 :::
+
+原始消息使用独立日志 target `qimen_raw_message`。只想临时查看收发内容、又不想打开其他模块的调试日志时，可以使用 EnvFilter 写法：
+
+```toml
+[observability]
+level = "info,qimen_raw_message=debug"
+```
+
+这类日志的正文就是协议侧完整 JSON，附带 `direction`、`bot_id`、`protocol`、`transport`、`action` 等检索字段。`inbound` 表示收到的消息，`outbound` 表示机器人回复或主动发送。原始内容可能包含用户消息、OpenID、群号和媒体地址，只应在开发或临时排错时开启。
 
 ## `[admin_web]` — Web 管理面板
 
@@ -92,7 +101,23 @@ audit_path = "config/admin-audit.jsonl"
 
 本机只监听回环地址时可以不配置 Token。只要 `bind` 使用非回环地址，就必须提供 `access_token`。面板中的管理 Token 和 Webhook Token 只写不读，页面只显示“已配置”或“未配置”徽标；留空保存会保留原值。
 
-配置页分为运行时、面板安全、模块与插件、Webhook、配置版本五个分区。保存前会先校验 TOML 并备份当前版本，涉及监听地址、鉴权或启动期模块的修改会标记为“需要重启”。完整操作说明见 [Web 管理面板](/guide/web-admin)。
+配置页分为运行时、面板安全、模块与插件、插件商城、Webhook、配置版本六个分区。保存前会先校验 TOML 并备份当前版本，涉及监听地址、鉴权或启动期模块的修改会标记为“需要重启”。完整操作说明见 [Web 管理面板](/guide/web-admin)。
+
+## `[marketplace]` — 插件商城
+
+```toml
+[marketplace]
+enabled = true
+cache_dir = "cache/marketplace"
+lock_path = "config/marketplace-lock.toml"
+request_timeout_secs = 30
+allow_prerelease = false
+auto_update = false
+```
+
+商城目录源文件位于 [`lvyunqi/QimenBot`](https://github.com/lvyunqi/QimenBot) 主仓库。插件投稿 PR 合并到 `main` 后，GitHub Pages 流水线会重新校验目录、生成索引并自动发布，通常一到几分钟后可以读取。客户端固定使用这个官方索引，不能通过配置或管理面板改成其他来源。
+
+`cache_dir` 保存目录缓存、下载资产、历史审核版本和文件替换事务；`lock_path` 保存当前安装的仓库数字 ID、版本、target、SHA256、固定和回滚状态。两个目录都应放在持久化磁盘并纳入备份。请求超时允许 1-300 秒。`allow_prerelease` 只控制 beta、rc 等版本是否参与选择，不会自动安装。当前版本要求 `auto_update = false`，第三方插件更新必须在 Web 面板人工确认。完整说明见[插件商城](/plugin/marketplace)。
 
 ## `[official_host]` — 全局模块加载
 

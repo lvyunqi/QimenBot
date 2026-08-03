@@ -1,0 +1,39 @@
+schema_version = 1
+version = "1.0.0"
+released_at = "2026-08-03T00:00:00Z"
+release_tag = "v1.0.0"
+channel = "stable"
+qimenbot = ">=0.1.16, <0.2.0"
+dynamic_api = "0.5"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "首次发布。"
+
+# 驱动兼容性按版本声明。只填写已经实际测试过的场景和能力。
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message", "notice", "request", "meta"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at", "channel-at", "channel-private"]
+events = ["message", "notice"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_group_tools-x86_64-pc-windows-msvc.dll"
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+size_bytes = 123456
+github_attestation = false
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_group_tools-x86_64-unknown-linux-gnu.so"
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+size_bytes = 123456
+min_glibc = "2.31"
+github_attestation = false

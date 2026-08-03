@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Save,
   ShieldCheck,
+  Store,
   Webhook,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -26,12 +27,13 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 
-type ConfigTab = "runtime" | "panel" | "plugins" | "webhook" | "history"
+type ConfigTab = "runtime" | "panel" | "plugins" | "marketplace" | "webhook" | "history"
 
 const tabs = [
   { id: "runtime", label: "运行时", icon: Gauge },
   { id: "panel", label: "面板安全", icon: PanelTop },
   { id: "plugins", label: "插件", icon: Puzzle },
+  { id: "marketplace", label: "插件商城", icon: Store },
   { id: "webhook", label: "Webhook", icon: Webhook },
   { id: "history", label: "配置版本", icon: History },
 ] satisfies Array<{ id: ConfigTab; label: string; icon: typeof Gauge }>
@@ -246,6 +248,9 @@ export function ConfigPage({ onRefreshSnapshot }: { onRefreshSnapshot: () => voi
               <TabsPrimitive.Content value="plugins" className="config-tabpanel">
                 <PluginsSection general={general} modules={moduleCatalog} patch={patch} />
               </TabsPrimitive.Content>
+              <TabsPrimitive.Content value="marketplace" className="config-tabpanel">
+                <MarketplaceSection general={general} patch={patch} />
+              </TabsPrimitive.Content>
               <TabsPrimitive.Content value="webhook" className="config-tabpanel">
                 <WebhookSection
                   general={general}
@@ -310,10 +315,11 @@ function RuntimeSection({
             <option value="test">test</option>
           </Select>
         </Field>
-        <Field label="日志级别" hint="日常运行建议 info，排查问题时临时使用 debug。">
+        <Field label="日志级别" hint="日常运行建议 info；临时切换 debug 可查看原始收发消息。">
           <Select value={general.log_level} onChange={(event) => patch({ log_level: event.target.value })}>
             <option value="trace">trace</option>
             <option value="debug">debug</option>
+            <option value="info,qimen_raw_message=debug">info + 原始消息</option>
             <option value="info">info</option>
             <option value="warn">warn</option>
             <option value="error">error</option>
@@ -460,6 +466,71 @@ function PluginsSection({
           unit="秒"
           onChange={(proactive_offline_ttl_secs) => patch({ proactive_offline_ttl_secs })}
         />
+      </div>
+    </ConfigSection>
+  )
+}
+
+function MarketplaceSection({
+  general,
+  patch,
+}: {
+  general: GeneralConfigView
+  patch: (next: Partial<GeneralConfigView>) => void
+}) {
+  return (
+    <ConfigSection
+      title="插件商城"
+      description="官方目录由 QimenBot 仓库自动发布；这里管理商城开关、本地审核缓存和安装锁。"
+      badge={<Badge variant={general.marketplace_enabled ? "success" : "neutral"}>{general.marketplace_enabled ? "已启用" : "已关闭"}</Badge>}
+    >
+      <div className="config-form-grid">
+        <ToggleSetting
+          label="启用插件商城"
+          description="关闭后不再连接目录，已经安装的插件仍照常加载。"
+          checked={general.marketplace_enabled}
+          onChange={(marketplace_enabled) => patch({ marketplace_enabled })}
+        />
+        <ToggleSetting
+          label="接收预发布版本"
+          description="允许 beta、rc 等版本参与兼容性选择，不会自动安装。"
+          checked={general.marketplace_allow_prerelease}
+          onChange={(marketplace_allow_prerelease) => patch({ marketplace_allow_prerelease })}
+        />
+        <Field label="缓存目录" hint="保存目录缓存、下载资产和可回滚的历史二进制。">
+          <Input
+            value={general.marketplace_cache_dir}
+            onChange={(event) => patch({ marketplace_cache_dir: event.target.value })}
+          />
+        </Field>
+        <Field label="安装锁" hint="记录仓库数字 ID、版本、target、SHA256 和固定状态。">
+          <Input
+            value={general.marketplace_lock_path}
+            onChange={(event) => patch({ marketplace_lock_path: event.target.value })}
+          />
+        </Field>
+        <NumberField
+          label="请求超时"
+          hint="目录、GitHub API 和 Release 下载的单次请求上限。"
+          value={general.marketplace_request_timeout_secs}
+          unit="秒"
+          onChange={(marketplace_request_timeout_secs) => patch({ marketplace_request_timeout_secs })}
+        />
+        <ToggleSetting
+          label="第三方自动更新"
+          description="当前版本只支持人工确认更新，避免未经检查直接执行新代码。"
+          checked={general.marketplace_auto_update}
+          onChange={() => undefined}
+          disabled
+          statusLabel="暂未开放"
+        />
+      </div>
+      <div className="security-note">
+        <ShieldCheck />
+        <div>
+          <strong>审核信息与运行文件分离</strong>
+          <span>历史版本保存在缓存目录，动态扫描目录始终只有一个活动版本。</span>
+        </div>
       </div>
     </ConfigSection>
   )
@@ -687,11 +758,15 @@ function ToggleSetting({
   description,
   checked,
   onChange,
+  disabled = false,
+  statusLabel,
 }: {
   label: string
   description: string
   checked: boolean
   onChange: (checked: boolean) => void
+  disabled?: boolean
+  statusLabel?: string
 }) {
   const id = useId()
 
@@ -701,8 +776,8 @@ function ToggleSetting({
         <strong>{label}</strong>
         <small>{description}</small>
       </label>
-      <Badge variant={checked ? "success" : "neutral"}>{checked ? "已启用" : "已关闭"}</Badge>
-      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+      <Badge variant={checked ? "success" : "neutral"}>{statusLabel || (checked ? "已启用" : "已关闭")}</Badge>
+      <Switch id={id} checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
   )
 }

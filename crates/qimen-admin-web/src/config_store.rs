@@ -266,6 +266,16 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
         set_secret(&mut document["admin_web"], "access_token", token);
     }
 
+    ensure_table(document, "marketplace");
+    document["marketplace"]["enabled"] = value(update.marketplace_enabled);
+    remove_legacy_marketplace_catalog_url(document);
+    document["marketplace"]["cache_dir"] = value(update.marketplace_cache_dir.trim());
+    document["marketplace"]["lock_path"] = value(update.marketplace_lock_path.trim());
+    document["marketplace"]["request_timeout_secs"] =
+        value(update.marketplace_request_timeout_secs as i64);
+    document["marketplace"]["allow_prerelease"] = value(update.marketplace_allow_prerelease);
+    document["marketplace"]["auto_update"] = value(update.marketplace_auto_update);
+
     document["official_host"]["builtin_modules"] = string_array(&update.builtin_modules);
     document["official_host"]["plugin_modules"] = string_array(&update.plugin_modules);
     document["official_host"]["plugin_state_path"] = value(update.plugin_state_path.trim());
@@ -291,6 +301,18 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
             "access_token",
             token,
         );
+    }
+}
+
+fn ensure_table(document: &mut DocumentMut, key: &str) {
+    if document.get(key).is_none_or(|item| !item.is_table()) {
+        document[key] = Item::Table(Table::new());
+    }
+}
+
+fn remove_legacy_marketplace_catalog_url(document: &mut DocumentMut) {
+    if let Some(table) = document.get_mut("marketplace").and_then(Item::as_table_mut) {
+        table.remove("catalog_url");
     }
 }
 
@@ -415,6 +437,15 @@ mod tests {
     fn revisions_change_with_content() {
         assert_ne!(revision_for("a"), revision_for("b"));
         assert_eq!(revision_for("a"), revision_for("a"));
+    }
+
+    #[test]
+    fn legacy_marketplace_catalog_url_is_removed_on_save() {
+        let mut document = "[marketplace]\ncatalog_url = \"https://example.com/index.json\"\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        remove_legacy_marketplace_catalog_url(&mut document);
+        assert!(document["marketplace"].get("catalog_url").is_none());
     }
 
     #[tokio::test]

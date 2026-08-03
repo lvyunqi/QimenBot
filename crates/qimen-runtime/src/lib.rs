@@ -571,6 +571,7 @@ pub struct Runtime {
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
     dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
+    dynamic_reload_lock: tokio::sync::Mutex<()>,
     /// Timeout for dynamic plugin FFI calls.
     dynamic_plugin_timeout: Duration,
     /// Static interceptors from compiled plugin bundles (preserved across rescan).
@@ -602,6 +603,7 @@ impl Default for Runtime {
             plugin_state_path: None,
             plugin_bin_dir: None,
             dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
+            dynamic_reload_lock: tokio::sync::Mutex::new(()),
             dynamic_plugin_timeout: Duration::from_secs(30),
             static_interceptors: Vec::new(),
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
@@ -782,6 +784,7 @@ impl Runtime {
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
             dynamic_runtime,
+            dynamic_reload_lock: tokio::sync::Mutex::new(()),
             dynamic_plugin_timeout: Duration::from_secs(
                 config.official_host.dynamic_plugin_timeout_secs,
             ),
@@ -979,6 +982,76 @@ impl Runtime {
         let count = self.rescan_dynamic_plugins().await?;
         self.reconnect_all_bots();
         Ok(count)
+    }
+
+    pub fn active_plugin_bin_dir(&self) -> Option<&str> {
+        self.plugin_bin_dir.as_deref()
+    }
+
+    pub fn active_plugin_state_path(&self) -> Option<&str> {
+        self.plugin_state_path.as_deref()
+    }
+
+    /// Quiesce dynamic plugins, mutate files, and restore the previous files if loading fails.
+    /// The callbacks are synchronous because the managed file operation must stay inside the
+    /// interval where no dynamic library handle is resident.
+    pub async fn reload_dynamic_plugins_transaction<Apply, Rollback>(
+        &self,
+        apply: Apply,
+        rollback: Rollback,
+    ) -> Result<usize>
+    where
+        Apply: FnOnce() -> Result<()>,
+        Rollback: FnOnce() -> Result<()>,
+    {
+        let _reload_guard = self.dynamic_reload_lock.lock().await;
+        self.unload_dynamic_plugins_checked()?;
+
+        if let Err(apply_error) = apply() {
+            let rollback_result = rollback();
+            let reload_result = self.rescan_dynamic_plugins_unlocked().await;
+            self.reconnect_all_bots();
+            return match (rollback_result, reload_result) {
+                (Ok(()), Ok(_)) => Err(apply_error),
+                (rollback_result, reload_result) => Err(QimenError::Runtime(format!(
+                    "dynamic plugin file transaction failed: {apply_error}; rollback: {}; reload: {}",
+                    result_summary(rollback_result),
+                    result_summary(reload_result.map(|_| ()))
+                ))),
+            };
+        }
+
+        match self.rescan_dynamic_plugins_unlocked().await {
+            Ok(count) => {
+                self.reconnect_all_bots();
+                Ok(count)
+            }
+            Err(load_error) => {
+                let unload_result = self.unload_dynamic_plugins_checked();
+                let rollback_result = if unload_result.is_ok() {
+                    rollback()
+                } else {
+                    Err(QimenError::Runtime(
+                        "rollback skipped because a replacement library remained loaded"
+                            .to_string(),
+                    ))
+                };
+                let reload_result = if rollback_result.is_ok() {
+                    self.rescan_dynamic_plugins_unlocked().await.map(|_| ())
+                } else {
+                    Err(QimenError::Runtime(
+                        "reload skipped because file rollback failed".to_string(),
+                    ))
+                };
+                self.reconnect_all_bots();
+                Err(QimenError::Runtime(format!(
+                    "replacement dynamic plugins failed to load: {load_error}; unload: {}; rollback: {}; previous-version reload: {}",
+                    result_summary(unload_result),
+                    result_summary(rollback_result),
+                    result_summary(reload_result)
+                )))
+            }
+        }
     }
 
     pub async fn boot(&self) -> Result<()> {
@@ -1457,22 +1530,33 @@ impl Runtime {
     /// host_plugin_report with freshly discovered dynamic plugins.
     /// Returns the number of dynamic plugins found.
     async fn rescan_dynamic_plugins(&self) -> Result<usize> {
+        let _reload_guard = self.dynamic_reload_lock.lock().await;
+        self.unload_dynamic_plugins_checked()?;
+        self.rescan_dynamic_plugins_unlocked().await
+    }
+
+    async fn rescan_dynamic_plugins_unlocked(&self) -> Result<usize> {
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.pause_and_wait();
+        }
+
+        // A transaction suspends new handles before changing files. Resume only after every
+        // previous handle has been released and the plugin directory is stable again.
+        {
+            let mut runtime = self
+                .dynamic_runtime
+                .lock()
+                .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
+            runtime.unload_all();
+            runtime.resume_loading();
+        }
+
         let dir = match &self.plugin_bin_dir {
             Some(d) => d.clone(),
             None => return Ok(0),
         };
 
         tracing::info!(dir = %dir, "rescanning dynamic plugins");
-
-        if let Some(gateway) = &self.webhook_gateway {
-            gateway.pause_and_wait();
-        }
-
-        // Unload all cached libraries so stale handles are dropped
-        self.dynamic_runtime
-            .lock()
-            .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
-            .unload_all();
 
         let mut new_entries = match dynamic_runtime::scan_dynamic_plugins(&dir) {
             Ok(entries) => entries,
@@ -1529,6 +1613,22 @@ impl Runtime {
 
         tracing::info!(count = count, "dynamic plugin rescan complete");
         Ok(count)
+    }
+
+    fn unload_dynamic_plugins_checked(&self) -> Result<()> {
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.pause_and_wait();
+        }
+        let mut runtime = self
+            .dynamic_runtime
+            .lock()
+            .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
+        runtime.suspend_loading();
+        if let Err(error) = runtime.unload_all_checked(self.dynamic_plugin_timeout) {
+            runtime.resume_loading();
+            return Err(error);
+        }
+        Ok(())
     }
 
     async fn run_qqbot_gateway(
@@ -2088,6 +2188,16 @@ impl Runtime {
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionSignal> {
         let payload: Value = serde_json::from_str(text)?;
+        if is_inbound_message_payload(&payload) {
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "inbound",
+                bot_id = %bot.id,
+                protocol = "onebot11",
+                transport = ?bot.transport,
+                message = %text,
+            );
+        }
         let runtime_ctx = OneBotRuntimeContext {
             runtime: self,
             bot,
@@ -2172,7 +2282,6 @@ impl Runtime {
         tracing::info!(
             bot_id = %bot.id,
             kind = ?event.kind,
-            raw = %event.raw_json,
             "received OneBot event"
         );
 
@@ -2207,6 +2316,11 @@ impl Runtime {
             client: api_client,
         };
         let payload = serde_json::to_value(&gateway_event)?;
+        let raw_payload = tracing::enabled!(
+            target: "qimen_raw_message",
+            tracing::Level::DEBUG
+        )
+        .then(|| payload.to_string());
         let packet = IncomingPacket {
             protocol: ProtocolId::QqOfficial,
             transport_mode: TransportMode::Gateway,
@@ -2217,6 +2331,18 @@ impl Runtime {
 
         let event = adapter.decode_event(packet).await?;
         self.record_bot_event(&bot.id);
+        if matches!(event.kind, EventKind::Message | EventKind::MessageSent)
+            && let Some(raw_payload) = raw_payload
+        {
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "inbound",
+                bot_id = %bot.id,
+                protocol = "qq-official",
+                transport = "gateway",
+                message = %raw_payload,
+            );
+        }
         tracing::info!(
             bot_id = %bot.id,
             kind = ?event.kind,
@@ -2755,6 +2881,18 @@ impl Runtime {
             .to_string();
         let packet = adapter.encode_action(&action).await?;
         let serialized = serde_json::to_string(&packet.payload)?;
+        if is_outbound_message_action(&action.action) {
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "outbound",
+                bot_id = %bot.id,
+                protocol = "onebot11",
+                transport = ?bot.transport,
+                action = %action.action,
+                source = %action.metadata.source,
+                message = %serialized,
+            );
+        }
         let raw_response = client
             .send_text_await_echo(&serialized, &echo, Duration::from_secs(5))
             .await?;
@@ -3805,6 +3943,13 @@ fn epoch_millis() -> u64 {
         .min(u128::from(u64::MAX)) as u64
 }
 
+fn result_summary<T>(result: Result<T>) -> String {
+    match result {
+        Ok(_) => "ok".to_string(),
+        Err(error) => error.to_string(),
+    }
+}
+
 enum SessionSignal {
     EventHandled,
     Heartbeat(u64),
@@ -3817,6 +3962,19 @@ enum NormalizedCommandOutcome {
         reply_action: Option<NormalizedActionRequest>,
     },
     None,
+}
+
+fn is_inbound_message_payload(payload: &Value) -> bool {
+    matches!(
+        payload.get("post_type").and_then(Value::as_str),
+        Some("message" | "message_sent")
+    )
+}
+
+fn is_outbound_message_action(action: &str) -> bool {
+    matches!(action, "send_msg" | "send_message" | "send_dms")
+        || action.ends_with("_msg")
+        || action.ends_with("_message")
 }
 
 fn build_send_msg_action(
@@ -4568,6 +4726,31 @@ mod tests {
     use qimen_plugin_api::MessageEventInterceptor;
     use qimen_protocol_core::{ActorRef, ChatRef};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn raw_message_logging_filters_protocol_payloads() {
+        assert!(is_inbound_message_payload(
+            &json!({ "post_type": "message" })
+        ));
+        assert!(is_inbound_message_payload(
+            &json!({ "post_type": "message_sent" })
+        ));
+        assert!(!is_inbound_message_payload(
+            &json!({ "post_type": "meta_event" })
+        ));
+
+        for action in [
+            "send_msg",
+            "send_group_msg",
+            "send_private_message",
+            "send_group_forward_msg",
+            "send_dms",
+        ] {
+            assert!(is_outbound_message_action(action), "{action}");
+        }
+        assert!(!is_outbound_message_action("set_group_ban"));
+        assert!(!is_outbound_message_action("get_login_info"));
+    }
 
     #[tokio::test]
     async fn internal_shutdown_request_wakes_waiters() {

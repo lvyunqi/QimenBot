@@ -508,6 +508,16 @@ impl ProactiveActionExecutor for OneBot11ProactiveExecutor {
             .to_string();
         let packet = adapter.encode_action(&action).await?;
         let serialized = serde_json::to_string(&packet.payload)?;
+        tracing::debug!(
+            target: "qimen_raw_message",
+            direction = "outbound",
+            bot_id = %self.bot.id,
+            protocol = "onebot11",
+            transport = ?self.bot.transport,
+            action = %action.action,
+            source = %action.metadata.source,
+            message = %serialized,
+        );
         let raw_response = self
             .sender
             .send_text_await_echo(&serialized, &echo, Duration::from_millis(action.timeout_ms))

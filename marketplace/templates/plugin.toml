@@ -1,0 +1,14 @@
+schema_version = 1
+id = "group-tools"
+name = "群管理工具"
+summary = "提供可审计的群管理命令。"
+description = "说明插件解决的问题、需要的权限以及主要功能。"
+type = "dynamic"
+repository = "owner/qimen-plugin-group-tools"
+repository_id = 123456789
+license = "MIT"
+authors = ["作者或组织名称"]
+categories = ["management"]
+keywords = ["group", "moderation"]
+homepage = "https://github.com/owner/qimen-plugin-group-tools"
+trust = "community"

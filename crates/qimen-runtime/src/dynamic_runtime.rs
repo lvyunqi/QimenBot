@@ -76,6 +76,7 @@ pub(crate) type LibraryHandle = Arc<LoadedLibrary>;
 pub struct DynamicPluginRuntime {
     libraries: HashMap<String, LibraryHandle>,
     host_api_bindings: HashMap<String, Box<ProactiveHostContext>>,
+    loading_suspended: bool,
 }
 
 /// Response from a dynamic plugin callback.
@@ -105,6 +106,7 @@ impl DynamicPluginRuntime {
         Self {
             libraries: HashMap::new(),
             host_api_bindings: HashMap::new(),
+            loading_suspended: false,
         }
     }
 
@@ -113,6 +115,11 @@ impl DynamicPluginRuntime {
     /// background threads whose code lives in the dynamic library.
     /// The caller should drop the outer lock immediately after calling this.
     pub(crate) fn get_library(&mut self, path: &str) -> Result<LibraryHandle> {
+        if self.loading_suspended {
+            return Err(QimenError::Runtime(
+                "dynamic plugin loading is suspended during reload".to_string(),
+            ));
+        }
         self.ensure_library(path)?;
         self.libraries
             .get(path)
@@ -869,6 +876,51 @@ impl DynamicPluginRuntime {
         }
     }
 
+    /// Wait for borrowed handles, then unload every library. Loading remains suspended until the
+    /// caller either rescans the stable directory or explicitly resumes it after an error.
+    pub fn unload_all_checked(&mut self, timeout: Duration) -> Result<()> {
+        self.suspend_loading();
+        let started = Instant::now();
+        loop {
+            let mut borrowed = self
+                .libraries
+                .iter()
+                .filter(|(_, handle)| Arc::strong_count(handle) > 1)
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>();
+            if borrowed.is_empty() {
+                break;
+            }
+            if started.elapsed() >= timeout {
+                borrowed.sort();
+                return Err(QimenError::Runtime(format!(
+                    "dynamic plugin callbacks did not release library handles before timeout: {}",
+                    borrowed.join(", ")
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        self.unload_all();
+        if self.libraries.is_empty() {
+            return Ok(());
+        }
+        let mut remaining = self.libraries.keys().cloned().collect::<Vec<_>>();
+        remaining.sort();
+        Err(QimenError::Runtime(format!(
+            "dynamic plugin unload did not complete for: {}",
+            remaining.join(", ")
+        )))
+    }
+
+    pub fn suspend_loading(&mut self) {
+        self.loading_suspended = true;
+    }
+
+    pub fn resume_loading(&mut self) {
+        self.loading_suspended = false;
+    }
+
     fn ensure_library(&mut self, path: &str) -> Result<()> {
         if !self.libraries.contains_key(path) {
             let library = unsafe {
@@ -921,6 +973,51 @@ mod lifecycle_tests {
         runtime.unload_library(TEST_LIBRARY);
 
         assert!(!runtime.libraries.contains_key(TEST_LIBRARY));
+    }
+
+    #[test]
+    fn checked_unload_confirms_that_file_replacement_is_safe() {
+        let mut runtime = DynamicPluginRuntime::new();
+        let handle = runtime.get_library(TEST_LIBRARY).unwrap();
+        drop(handle);
+        runtime
+            .unload_all_checked(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(runtime.libraries.is_empty());
+    }
+
+    #[test]
+    fn checked_unload_rejects_an_outstanding_library_handle() {
+        let mut runtime = DynamicPluginRuntime::new();
+        let handle = runtime.get_library(TEST_LIBRARY).unwrap();
+
+        assert!(
+            runtime
+                .unload_all_checked(std::time::Duration::ZERO)
+                .is_err()
+        );
+        assert!(runtime.libraries.contains_key(TEST_LIBRARY));
+
+        drop(handle);
+        runtime
+            .unload_all_checked(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(runtime.libraries.is_empty());
+    }
+
+    #[test]
+    fn suspended_loading_cannot_reopen_a_library_during_replacement() {
+        let mut runtime = DynamicPluginRuntime::new();
+        runtime.suspend_loading();
+        assert!(runtime.get_library(TEST_LIBRARY).is_err());
+        assert!(runtime.libraries.is_empty());
+
+        runtime.resume_loading();
+        let handle = runtime.get_library(TEST_LIBRARY).unwrap();
+        drop(handle);
+        runtime
+            .unload_all_checked(std::time::Duration::from_secs(1))
+            .unwrap();
     }
 
     #[test]

@@ -34,6 +34,17 @@ impl OneBot11HttpClient {
     pub async fn send_action(&self, action: &str, params: Value) -> Result<Value> {
         let url = format!("{}/{}", self.base_url, action);
 
+        if is_message_action(action) {
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "outbound",
+                protocol = "onebot11",
+                transport = "http-api",
+                action,
+                message = %params,
+            );
+        }
+
         let mut request = self.client.post(&url).json(&params);
 
         if let Some(token) = self.access_token.as_deref().filter(|t| !t.is_empty()) {
@@ -274,7 +285,16 @@ async fn handle_http_connection(
         .map_err(|err| QimenError::Transport(format!("invalid UTF-8 body: {err}")))?;
 
     // Validate it is valid JSON
-    let _: Value = serde_json::from_str(&payload)?;
+    let parsed: Value = serde_json::from_str(&payload)?;
+    if is_message_event(&parsed) {
+        tracing::debug!(
+            target: "qimen_raw_message",
+            direction = "inbound",
+            protocol = "onebot11",
+            transport = "http-post",
+            message = %payload,
+        );
+    }
 
     // Send through channel
     if event_tx.send(payload).await.is_err() {
@@ -293,6 +313,19 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+fn is_message_action(action: &str) -> bool {
+    matches!(action, "send_msg" | "send_message")
+        || action.ends_with("_msg")
+        || action.ends_with("_message")
+}
+
+fn is_message_event(payload: &Value) -> bool {
+    matches!(
+        payload.get("post_type").and_then(Value::as_str),
+        Some("message" | "message_sent")
+    )
+}
+
 async fn write_response(
     stream: &mut TcpStream,
     status: u16,
@@ -309,4 +342,19 @@ async fn write_response(
     };
     stream.write_all(response.as_bytes()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn raw_logging_filters_http_messages() {
+        assert!(is_message_action("send_group_msg"));
+        assert!(is_message_action("send_private_message"));
+        assert!(!is_message_action("get_group_info"));
+        assert!(is_message_event(&json!({ "post_type": "message" })));
+        assert!(!is_message_event(&json!({ "post_type": "heartbeat" })));
+    }
 }

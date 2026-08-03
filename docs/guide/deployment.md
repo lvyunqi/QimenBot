@@ -85,6 +85,7 @@ Compose 和宿主机相关变量：
 | `QIMEN_CONFIG_DIR` | `./data/config` | 宿主机配置目录 |
 | `QIMEN_PLUGIN_DIR` | `./data/plugins` | 宿主机动态插件目录 |
 | `QIMEN_LOG_DIR` | `./data/logs` | 宿主机日志或插件文件目录 |
+| `QIMEN_MARKETPLACE_DIR` | `./data/marketplace` | 宿主机商城缓存和历史审核二进制目录 |
 
 服务器使用独立数据盘时，可以这样填写：
 
@@ -95,6 +96,7 @@ QIMENBOT_TAG=0.1.16
 QIMEN_CONFIG_DIR=/srv/qimenbot/config
 QIMEN_PLUGIN_DIR=/srv/qimenbot/plugins
 QIMEN_LOG_DIR=/srv/qimenbot/logs
+QIMEN_MARKETPLACE_DIR=/srv/qimenbot/marketplace
 
 QIMEN_ADMIN_TOKEN=替换为随机长字符串
 QQBOT_APPID=替换为你的AppID
@@ -118,6 +120,7 @@ openssl rand -hex 32
 | `QIMEN_CONFIG_DIR` | `/data/config` | `base.toml`、插件状态、插件配置、审计记录 | 必须备份 |
 | `QIMEN_PLUGIN_DIR` | `/data/plugins` | `bin/` 下的动态插件 `.so` | 使用动态插件时备份 |
 | `QIMEN_LOG_DIR` | `/data/logs` | 插件写入的文件日志 | 按需要备份 |
+| `QIMEN_MARKETPLACE_DIR` | `/data/cache/marketplace` | 商城目录缓存、下载资产和可回滚版本 | 使用商城时备份 |
 
 删除或重建容器不会删除宿主机目录。不要把它们放在 `/tmp`，也不要提交到 Git。Linux 容器只能加载针对当前 CPU 架构构建的 `.so`，不能加载 Windows `.dll`。
 

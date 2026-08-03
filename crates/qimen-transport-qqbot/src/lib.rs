@@ -401,6 +401,20 @@ impl QqBotOpenApiClient {
         T: Serialize + ?Sized,
     {
         let token = self.bot_authorization().await?;
+        if is_message_api_path(path)
+            && tracing::enabled!(target: "qimen_raw_message", tracing::Level::DEBUG)
+            && let Ok(raw_payload) = serde_json::to_string(payload)
+        {
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "outbound",
+                protocol = "qq-official",
+                transport = "http-api",
+                appid = %self.config.appid,
+                path,
+                message = %raw_payload,
+            );
+        }
         let response = self
             .http
             .post(format!("{}{}", self.config.base_url(), path))
@@ -446,6 +460,10 @@ impl QqBotOpenApiClient {
 
         decode_response(response, path).await
     }
+}
+
+fn is_message_api_path(path: &str) -> bool {
+    path.contains("/messages") || path.ends_with("/files")
 }
 
 async fn decode_response<T>(response: reqwest::Response, path: &str) -> Result<T>
@@ -807,6 +825,14 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn raw_logging_filters_message_api_paths() {
+        assert!(is_message_api_path("/v2/groups/group-1/messages"));
+        assert!(is_message_api_path("/v2/users/user-1/files"));
+        assert!(!is_message_api_path("/gateway/bot"));
+        assert!(!is_message_api_path("/interactions/event-1"));
+    }
 
     #[derive(Debug, Clone)]
     struct RecordedRequest {

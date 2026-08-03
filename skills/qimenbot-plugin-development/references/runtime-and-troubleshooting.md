@@ -55,6 +55,17 @@ enabled = true
 
 动态插件自身配置位于 `config/plugins/<plugin_id>.toml`，只在 init 和热重载时传入。配置文件名必须与动态描述符 ID 完全一致。
 
+## 原始消息日志
+
+开发插件或排查平台差异时，可以只打开原始收发消息日志，不必把所有模块都切到 debug：
+
+```toml
+[observability]
+level = "info,qimen_raw_message=debug"
+```
+
+target 为 `qimen_raw_message` 的日志正文是协议侧完整 JSON。`direction=inbound` 表示收到的消息；`direction=outbound` 表示回复或主动发送，并附带 Bot、协议、传输、动作和来源等字段。它不会记录 QQ Gateway 鉴权帧和心跳，但仍可能包含用户消息、OpenID、群号和媒体地址，只应临时开启。
+
 ## 加载流程
 
 静态插件：

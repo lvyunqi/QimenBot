@@ -2,6 +2,7 @@ mod assets;
 mod audit;
 mod config_store;
 mod error;
+mod marketplace;
 mod types;
 
 use audit::{AuditEntry, AuditLog};
@@ -44,6 +45,7 @@ struct AdminState {
     log_store: LogStore,
     audit: AuditLog,
     restart_required: Arc<AtomicBool>,
+    marketplace_operations: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -70,6 +72,7 @@ impl AdminServer {
                 log_store,
                 audit: AuditLog::open(&config.admin_web.audit_path),
                 restart_required: Arc::new(AtomicBool::new(false)),
+                marketplace_operations: Arc::new(tokio::sync::Mutex::new(())),
             },
             config: config.admin_web.clone(),
         }
@@ -97,6 +100,22 @@ impl AdminServer {
             .route("/plugins", get(plugins))
             .route("/plugins/reload", post(reload_plugins))
             .route("/plugins/{id}", put(toggle_plugin))
+            .route("/marketplace", get(marketplace::catalog))
+            .route("/marketplace/refresh", post(marketplace::refresh))
+            .route(
+                "/marketplace/plugins/{id}",
+                axum::routing::delete(marketplace::uninstall),
+            )
+            .route(
+                "/marketplace/plugins/{id}/install",
+                post(marketplace::install),
+            )
+            .route("/marketplace/plugins/{id}/adopt", post(marketplace::adopt))
+            .route("/marketplace/plugins/{id}/pin", put(marketplace::pin))
+            .route(
+                "/marketplace/plugins/{id}/rollback",
+                post(marketplace::rollback),
+            )
             .route("/config", get(configuration))
             .route("/config/general", put(update_general))
             .route("/config/revisions", get(revisions))
