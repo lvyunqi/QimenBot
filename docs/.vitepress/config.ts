@@ -24,6 +24,7 @@ export default defineConfig({
       { text: '指南', link: '/guide/introduction', activeMatch: '/guide/' },
       { text: '官方 QQ Bot', link: '/guide/qq-official-quickstart', activeMatch: '/guide/qq-official-quickstart' },
       { text: '插件开发', link: '/plugin/overview', activeMatch: '/plugin/' },
+      { text: '商城规范', link: '/marketplace/', activeMatch: '/marketplace/' },
       { text: 'API 参考', link: '/api/plugin-api', activeMatch: '/api/' },
       { text: '进阶', link: '/advanced/runtime', activeMatch: '/advanced/' },
       { text: 'QQ群', link: qqGroupLink },
@@ -93,6 +94,12 @@ export default defineConfig({
             { text: '手动 FFI 写法', link: '/plugin/dynamic#manual-ffi' },
             { text: '运行时管理', link: '/plugin/dynamic#runtime' },
           ]
+        },
+        {
+          text: '分发与安装',
+          items: [
+            { text: '插件商城', link: '/plugin/marketplace' },
+          ]
         }
       ],
       '/api/': [
@@ -104,6 +111,19 @@ export default defineConfig({
             { text: 'OneBot API 客户端', link: '/api/onebot-client' },
             { text: 'FFI 接口', link: '/api/ffi-api' },
             { text: '类型参考', link: '/api/types' },
+          ]
+        }
+      ],
+      '/marketplace/': [
+        {
+          text: '商城规范',
+          items: [
+            { text: '规范总览', link: '/marketplace/' },
+            { text: '开源仓库规范', link: '/marketplace/repository-rules' },
+            { text: '驱动兼容声明', link: '/marketplace/driver-compatibility' },
+            { text: '构建产物命名', link: '/marketplace/artifact-naming' },
+            { text: 'GitHub Actions 发布', link: '/marketplace/release-workflow' },
+            { text: 'PR 与版本规则', link: '/marketplace/pr-rules' },
           ]
         }
       ],

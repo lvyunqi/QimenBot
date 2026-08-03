@@ -9,6 +9,7 @@ members = [
   "crates/qimen-host-types",
   "crates/qimen-command-registry",
   "crates/qimen-admin-web",
+  "crates/qimen-plugin-marketplace",
   "crates/qimen-official-host",
   "crates/qimen-error",
   "crates/qimen-config",

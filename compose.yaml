@@ -20,6 +20,7 @@ services:
       - "${QIMEN_CONFIG_DIR:-./data/config}:/data/config"
       - "${QIMEN_PLUGIN_DIR:-./data/plugins}:/data/plugins"
       - "${QIMEN_LOG_DIR:-./data/logs}:/data/logs"
+      - "${QIMEN_MARKETPLACE_DIR:-./data/marketplace}:/data/cache/marketplace"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3210/healthz"]
       interval: 30s

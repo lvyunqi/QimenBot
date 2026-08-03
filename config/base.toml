@@ -43,6 +43,21 @@ access_token = ""
 log_capacity = 2000
 audit_path = "config/admin-audit.jsonl"
 
+# ── 插件商城 / Plugin Marketplace ─────────────────────────────────────────
+[marketplace]
+# 商城索引由 GitHub Pages 托管，只在打开商城或手动刷新时访问。
+enabled = true
+catalog_url = "https://lvyunqi.github.io/QimenBot/marketplace/index.json"
+
+# 索引缓存、已审核历史版本和安装锁。只有 plugins/bin 中的活动版本会被宿主扫描。
+cache_dir = "cache/marketplace"
+lock_path = "config/marketplace-lock.toml"
+request_timeout_secs = 30
+
+# 预发布版本默认不参与升级选择。第三方插件自动更新暂不启用，需在面板中人工确认。
+allow_prerelease = false
+auto_update = false
+
 # ── Official Host 配置 / Official Host ───────────────────────────────────
 [official_host]
 # 启用的内置模块列表，可选值：

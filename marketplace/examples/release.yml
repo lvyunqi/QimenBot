@@ -1,0 +1,170 @@
+name: Release QimenBot plugin
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  # 改成插件自己的稳定 ID 和 Rust 库文件主体。
+  PLUGIN_ID: group-tools
+  LIB_STEM: qimen_dynamic_plugin_group_tools
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89.0"
+          components: rustfmt, clippy
+      - name: Check plugin identity
+        shell: bash
+        run: |
+          expected="qimen_dynamic_plugin_${PLUGIN_ID//-/_}"
+          test "$LIB_STEM" = "$expected" || {
+            echo "LIB_STEM must be $expected" >&2
+            exit 1
+          }
+      - run: cargo +1.89.0 fmt --check
+      - run: cargo +1.89.0 clippy --locked --all-targets -- -D warnings
+      - run: cargo +1.89.0 test --locked
+
+  linux:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    # Debian 11 将 GNU/Linux 产物的 glibc 基线固定在 2.31。
+    container: rust:1.89-bullseye
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release --target "$TARGET"
+      - name: Prepare marketplace asset
+        env:
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          source="target/${TARGET}/release/lib${LIB_STEM}.so"
+          asset="release-assets/lib${LIB_STEM}-${TARGET}.so"
+          cp "$source" "$asset"
+          sha256sum "$asset" > "${asset}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.target }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  windows:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89.0"
+          targets: ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        run: cargo +1.89.0 build --locked --release --target "${{ matrix.target }}"
+      - name: Prepare marketplace asset
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $source = "target/$env:TARGET/release/$env:LIB_STEM.dll"
+          $asset = "release-assets/$env:LIB_STEM-$env:TARGET.dll"
+          Copy-Item $source $asset
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+          "$hash  $([IO.Path]::GetFileName($asset))" | Set-Content -Encoding ascii "$asset.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.target }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  macos:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89.0"
+          targets: ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo +1.89.0 build --locked --release --target "$TARGET"
+      - name: Prepare marketplace asset
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p release-assets
+          source="target/${TARGET}/release/lib${LIB_STEM}.dylib"
+          asset="release-assets/lib${LIB_STEM}-${TARGET}.dylib"
+          cp "$source" "$asset"
+          shasum -a 256 "$asset" > "${asset}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.target }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  release:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
+          path: release-assets
+          merge-multiple: true
+      - name: List release assets
+        run: find release-assets -maxdepth 1 -type f -printf "%f\n" | sort
+      - name: Generate build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/*.dll
+            release-assets/*.so
+            release-assets/*.dylib
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

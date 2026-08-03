@@ -310,3 +310,5 @@ ldd /opt/qimenbot/plugins/bin/libqimen_dynamic_plugin_myplugin.so
 | 热重载崩溃 | 后台线程或 FFI 回调未结束 | 在 shutdown 停止并 join，避免悬空回调 |
 
 不要提交 QimenBot 主仓库中的 `plugins/bin/`、`config/plugins/*.toml`、数据库或运行时资源。独立插件仓库可自行发布源码和按 target 构建的 Release 资产，但必须清楚标注兼容的宿主、API 和平台。
+
+需要进入 GitHub 插件商城时，继续阅读 [插件商城发布](marketplace-publishing.md)。商城要求公开源码、明确许可证、固定数字仓库 ID、不可变 SemVer、按 target 的资产大小与 SHA256，以及 GNU/Linux 最低 glibc。静态插件只能展示源码，动态插件才支持在线安装。

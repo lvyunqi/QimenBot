@@ -1024,9 +1024,11 @@ dependencies = [
  "qimen-error",
  "qimen-host-types",
  "qimen-observability",
+ "qimen-plugin-marketplace",
  "qimen-runtime",
  "qimen-update-protocol",
  "rust-embed",
+ "semver",
  "serde",
  "serde_json",
  "tokio",
@@ -1234,6 +1236,22 @@ dependencies = [
  "qimen-plugin-api",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "qimen-plugin-marketplace"
+version = "0.1.16"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

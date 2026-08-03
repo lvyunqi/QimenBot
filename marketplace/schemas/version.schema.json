@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lvyunqi.github.io/QimenBot/marketplace/schemas/version.schema.json",
+  "title": "QimenBot marketplace plugin version",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "version", "released_at", "release_tag", "channel", "qimenbot", "drivers"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
+    "released_at": { "type": "string", "format": "date-time" },
+    "release_tag": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "channel": { "enum": ["stable", "prerelease"] },
+    "qimenbot": { "type": "string", "minLength": 1 },
+    "dynamic_api": { "enum": ["0.1", "0.2", "0.3", "0.4", "0.5"] },
+    "yanked": { "type": "boolean" },
+    "data_schema_version": { "type": "integer", "minimum": 0 },
+    "rollback_safe": { "type": "boolean" },
+    "changelog": { "type": "string", "maxLength": 4000 },
+    "drivers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["driver", "scenes"],
+        "properties": {
+          "driver": { "enum": ["onebot11", "qq-official"] },
+          "scenes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["private", "group", "group-at", "channel", "channel-at", "channel-private"] }
+          },
+          "events": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["message", "notice", "request", "meta"] }
+          },
+          "outbound": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["reply", "proactive", "rich-message"] }
+          }
+        },
+        "anyOf": [
+          { "required": ["events"], "properties": { "events": { "minItems": 1 } } },
+          { "required": ["outbound"], "properties": { "outbound": { "minItems": 1 } } }
+        ],
+        "allOf": [
+          {
+            "if": { "required": ["driver"], "properties": { "driver": { "const": "onebot11" } } },
+            "then": { "properties": { "scenes": { "items": { "enum": ["private", "group", "channel", "channel-private"] } } } }
+          },
+          {
+            "if": { "required": ["outbound"], "properties": { "outbound": { "contains": { "const": "rich-message" } } } },
+            "then": { "properties": { "outbound": { "contains": { "enum": ["reply", "proactive"] } } } }
+          }
+        ]
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "asset_name", "sha256", "size_bytes"],
+        "properties": {
+          "target": { "enum": ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"] },
+          "asset_name": { "type": "string", "maxLength": 180, "pattern": "^(lib)?qimen_dynamic_plugin_[a-z0-9]+(?:_[a-z0-9]+)*-(x86_64-pc-windows-msvc|aarch64-pc-windows-msvc|x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin)\\.(dll|so|dylib)$" },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "size_bytes": { "type": "integer", "minimum": 1 },
+          "min_glibc": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$" },
+          "github_attestation": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

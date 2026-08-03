@@ -14,11 +14,12 @@ import { AuditPage } from "@/pages/audit-page"
 import { BotsPage } from "@/pages/bots-page"
 import { ConfigPage } from "@/pages/config-page"
 import { LogsPage } from "@/pages/logs-page"
+import { MarketplacePage } from "@/pages/marketplace-page"
 import { OverviewPage } from "@/pages/overview-page"
 import { PluginsPage } from "@/pages/plugins-page"
 import { UpdatesPage } from "@/pages/updates-page"
 
-type Page = "overview" | "bots" | "logs" | "plugins" | "configuration" | "updates" | "audit"
+type Page = "overview" | "bots" | "logs" | "plugins" | "marketplace" | "configuration" | "updates" | "audit"
 
 function DisplaySettings({
   open,
@@ -146,6 +147,7 @@ function App() {
     if (active === "bots") return <BotsPage snapshotBots={snapshot?.bots ?? []} onRefreshSnapshot={refreshSnapshot} />
     if (active === "logs") return <LogsPage />
     if (active === "plugins") return <PluginsPage onOpenConfig={() => setActive("configuration")} />
+    if (active === "marketplace") return <MarketplacePage onOpenConfig={() => setActive("configuration")} />
     if (active === "configuration") return <ConfigPage onRefreshSnapshot={refreshSnapshot} />
     if (active === "updates") return <UpdatesPage />
     return <AuditPage />

@@ -7,6 +7,7 @@ import {
   ScrollText,
   Settings2,
   ShieldCheck,
+  Store,
   UploadCloud,
 } from "lucide-react"
 
@@ -83,6 +84,7 @@ export function Sidebar({ active, collapsed, logoUrl, snapshot, onNavigate, onCo
     { id: "bots", label: "机器人", icon: Bot, count: snapshot ? String(snapshot.metrics.configured_bots) : undefined },
     { id: "logs", label: "实时日志", icon: ScrollText, count: snapshot ? String(snapshot.resources.log_entries) : undefined },
     { id: "plugins", label: "插件", icon: Puzzle, count: snapshot ? String(snapshot.metrics.loaded_dynamic_plugins) : undefined },
+    { id: "marketplace", label: "插件商城", icon: Store },
   ]
   const secondaryNav: NavItem[] = [
     { id: "configuration", label: "配置", icon: Settings2, count: snapshot?.server.restart_required ? "!" : undefined },

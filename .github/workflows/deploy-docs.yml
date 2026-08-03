@@ -5,11 +5,16 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'marketplace/**'
+      - 'crates/qimen-plugin-marketplace/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+  attestations: read
   pages: write
   id-token: write
 
@@ -34,6 +39,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: docs/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.89.0
+
+      - name: Validate and generate marketplace index
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: cargo +1.89.0 run --locked -p qimen-plugin-marketplace --bin qimen-marketplace-index -- --verify-github marketplace docs/public/marketplace/index.json
 
       - name: Install dependencies
         working-directory: docs

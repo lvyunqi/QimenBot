@@ -1,0 +1,62 @@
+name: Marketplace validation
+
+on:
+  pull_request:
+    paths:
+      - "marketplace/**"
+      - "crates/qimen-plugin-marketplace/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/scripts/validate_marketplace_diff.py"
+      - ".github/workflows/marketplace.yml"
+  push:
+    branches: [main]
+    paths:
+      - "marketplace/**"
+      - "crates/qimen-plugin-marketplace/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/scripts/validate_marketplace_diff.py"
+      - ".github/workflows/marketplace.yml"
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    env:
+      RUSTUP_TOOLCHAIN: 1.89.0
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout catalog metadata
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.89.0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check immutable identities and versions
+        if: github.event_name == 'pull_request'
+        run: python .github/scripts/validate_marketplace_diff.py "${{ github.event.pull_request.base.sha }}"
+
+      - name: Validate manifests and GitHub sources
+        run: cargo +1.89.0 run --locked -p qimen-plugin-marketplace --bin qimen-marketplace-index -- --check --verify-github marketplace
+
+      - name: Generate static index
+        run: cargo +1.89.0 run --locked -p qimen-plugin-marketplace --bin qimen-marketplace-index -- marketplace /tmp/qimen-marketplace-index.json
+
+      - name: Upload validated index
+        uses: actions/upload-artifact@v4
+        with:
+          name: qimen-marketplace-index
+          path: /tmp/qimen-marketplace-index.json

@@ -208,4 +208,29 @@ mod tests {
         assert!(!should_emit_ansi(false, false));
         assert!(!should_emit_ansi(true, true));
     }
+
+    #[test]
+    fn explicit_message_field_is_preserved_for_raw_payload_logs() {
+        let store = LogStore::new(4);
+        let subscriber = Registry::default().with(LogStoreLayer {
+            store: store.clone(),
+        });
+        let raw = r#"{"post_type":"message","message":"/ping"}"#;
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "inbound",
+                message = raw,
+            );
+        });
+
+        let entries = store.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, raw);
+        assert_eq!(
+            entries[0].fields.get("direction").map(String::as_str),
+            Some("inbound")
+        );
+    }
 }

@@ -4,6 +4,7 @@
 *.log
 .env
 /data/
+/cache/
 
 # 插件运行时文件（配置、二进制、数据库、图片资源）
 config/plugins/*.toml
@@ -12,6 +13,7 @@ plugins/bin/
 *.db-shm
 *.db-wal
 config/admin-audit.jsonl
+config/marketplace-lock.toml
 config/.qimen-revisions/
 
 # 本地参考项目

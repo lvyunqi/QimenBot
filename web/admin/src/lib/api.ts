@@ -66,6 +66,13 @@ export interface GeneralConfigView {
   admin_token_configured: boolean
   log_capacity: number
   audit_path: string
+  marketplace_enabled: boolean
+  marketplace_catalog_url: string
+  marketplace_cache_dir: string
+  marketplace_lock_path: string
+  marketplace_request_timeout_secs: number
+  marketplace_allow_prerelease: boolean
+  marketplace_auto_update: boolean
   builtin_modules: string[]
   plugin_modules: string[]
   plugin_state_path: string
@@ -143,6 +150,107 @@ export interface PluginView {
   failures: number
   last_error?: string | null
   live_toggle: boolean
+}
+
+export type MarketplacePluginKind = "dynamic" | "static"
+export type MarketplaceTrust = "community" | "verified-build" | "official"
+export type MarketplaceChannel = "stable" | "prerelease"
+export type MarketplaceDriver = "onebot11" | "qq-official"
+export type MarketplaceMessageScene = "private" | "group" | "group-at" | "channel" | "channel-at" | "channel-private"
+export type MarketplaceDriverEvent = "message" | "notice" | "request" | "meta"
+export type MarketplaceOutboundCapability = "reply" | "proactive" | "rich-message"
+
+export interface MarketplaceDriverSupport {
+  driver: MarketplaceDriver
+  scenes: MarketplaceMessageScene[]
+  events: MarketplaceDriverEvent[]
+  outbound: MarketplaceOutboundCapability[]
+}
+
+export interface MarketplaceVersionView {
+  version: string
+  released_at: string
+  channel: MarketplaceChannel
+  qimenbot: string
+  dynamic_api?: string | null
+  yanked: boolean
+  data_schema_version: number
+  rollback_safe: boolean
+  changelog: string
+  drivers: MarketplaceDriverSupport[]
+  compatible: boolean
+  installable: boolean
+  asset_name?: string | null
+  asset_target?: string | null
+  asset_size_bytes?: number | null
+  asset_sha256?: string | null
+  min_glibc?: string | null
+  github_attestation: boolean
+  issues: string[]
+}
+
+export interface MarketplaceInstalledView {
+  version: string
+  active_file: string
+  target: string
+  sha256: string
+  installed_at: string
+  pinned: boolean
+  active: boolean
+  loaded: boolean
+  update_available: boolean
+  can_rollback: boolean
+  data_schema_version: number
+}
+
+export interface MarketplaceUnmanagedView {
+  version: string
+  file_name: string
+  sha256?: string | null
+  can_adopt: boolean
+  reason: string
+}
+
+export interface MarketplacePluginView {
+  id: string
+  name: string
+  summary: string
+  description: string
+  kind: MarketplacePluginKind
+  repository: string
+  repository_url: string
+  repository_id: number
+  license: string
+  authors: string[]
+  categories: string[]
+  keywords: string[]
+  trust: MarketplaceTrust
+  catalog_listed: boolean
+  latest_compatible?: string | null
+  versions: MarketplaceVersionView[]
+  installed?: MarketplaceInstalledView | null
+  unmanaged?: MarketplaceUnmanagedView | null
+}
+
+export interface MarketplaceView {
+  enabled: boolean
+  catalog_url: string
+  allow_prerelease: boolean
+  auto_update: boolean
+  source?: "network" | "cache" | null
+  fetched_at?: string | null
+  warning?: string | null
+  host: {
+    qimenbot_version: string
+    target: string
+    os: string
+    arch: string
+    environment: string
+    glibc?: string | null
+    dynamic_loading: boolean
+    supported_dynamic_apis: string[]
+  }
+  plugins: MarketplacePluginView[]
 }
 
 export interface RevisionView {
@@ -248,6 +356,8 @@ export const api = {
   bots: () => request<BotView[]>("/bots"),
   config: () => request<ConfigView>("/config"),
   plugins: () => request<PluginView[]>("/plugins"),
+  marketplace: () => request<MarketplaceView>("/marketplace"),
+  refreshMarketplace: () => request<MarketplaceView>("/marketplace/refresh", { method: "POST" }),
   logs: (params?: URLSearchParams) => request<LogsView>("/logs" + (params ? "?" + params : "")),
   audit: () => request<AuditEntry[]>("/audit"),
   updates: () => request<UpdateView>("/updates"),
@@ -275,6 +385,29 @@ export const api = {
   reloadPlugins: () =>
     request<MutationResult>("/plugins/reload", {
       method: "POST",
+    }),
+  installMarketplacePlugin: (id: string, version?: string) =>
+    request<MutationResult>("/marketplace/plugins/" + encodeURIComponent(id) + "/install", {
+      method: "POST",
+      body: JSON.stringify({ version: version || null }),
+    }),
+  adoptMarketplacePlugin: (id: string, version?: string) =>
+    request<MutationResult>("/marketplace/plugins/" + encodeURIComponent(id) + "/adopt", {
+      method: "POST",
+      body: JSON.stringify({ version: version || null }),
+    }),
+  pinMarketplacePlugin: (id: string, pinned: boolean) =>
+    request<MutationResult>("/marketplace/plugins/" + encodeURIComponent(id) + "/pin", {
+      method: "PUT",
+      body: JSON.stringify({ pinned }),
+    }),
+  rollbackMarketplacePlugin: (id: string) =>
+    request<MutationResult>("/marketplace/plugins/" + encodeURIComponent(id) + "/rollback", {
+      method: "POST",
+    }),
+  uninstallMarketplacePlugin: (id: string) =>
+    request<MutationResult>("/marketplace/plugins/" + encodeURIComponent(id), {
+      method: "DELETE",
     }),
   updateGeneral: (revision: string, general: GeneralMutation) =>
     request<MutationResult>("/config/general", {
@@ -331,6 +464,13 @@ export interface GeneralMutation {
   admin_access_token?: string | null
   log_capacity: number
   audit_path: string
+  marketplace_enabled: boolean
+  marketplace_catalog_url: string
+  marketplace_cache_dir: string
+  marketplace_lock_path: string
+  marketplace_request_timeout_secs: number
+  marketplace_allow_prerelease: boolean
+  marketplace_auto_update: boolean
   builtin_modules: string[]
   plugin_modules: string[]
   plugin_state_path: string

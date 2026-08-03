@@ -9,6 +9,7 @@ pub enum AdminError {
     Unauthorized,
     NotFound(String),
     Conflict(String),
+    Unavailable(String),
     Internal(String),
 }
 
@@ -40,6 +41,7 @@ impl IntoResponse for AdminError {
             ),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, "not_found", message),
             Self::Conflict(message) => (StatusCode::CONFLICT, "revision_conflict", message),
+            Self::Unavailable(message) => (StatusCode::BAD_GATEWAY, "service_unavailable", message),
             Self::Internal(message) => {
                 tracing::error!(error = %message, "admin API request failed");
                 (

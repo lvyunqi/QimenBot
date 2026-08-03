@@ -36,7 +36,8 @@ compose_file="${install_dir}/compose.yaml"
 mkdir -p \
   "${install_dir}/data/config" \
   "${install_dir}/data/plugins" \
-  "${install_dir}/data/logs"
+  "${install_dir}/data/logs" \
+  "${install_dir}/data/marketplace"
 chmod 700 "${install_dir}"
 
 generate_token() {
@@ -84,6 +85,7 @@ if [[ ! -f "${env_file}" ]]; then
     printf 'QIMEN_CONFIG_DIR=%s\n' "${install_dir}/data/config"
     printf 'QIMEN_PLUGIN_DIR=%s\n' "${install_dir}/data/plugins"
     printf 'QIMEN_LOG_DIR=%s\n' "${install_dir}/data/logs"
+    printf 'QIMEN_MARKETPLACE_DIR=%s\n' "${install_dir}/data/marketplace"
     printf 'QIMEN_ADMIN_TOKEN=%s\n' "${admin_token}"
     printf 'QQBOT_APPID=%s\n' "${appid}"
     printf 'QQBOT_SECRET=%s\n' "${secret}"
@@ -126,6 +128,7 @@ echo
 echo "安装目录: ${install_dir}"
 echo "配置目录: ${install_dir}/data/config"
 echo "插件目录: ${install_dir}/data/plugins"
+echo "商城缓存: ${install_dir}/data/marketplace"
 echo "日志目录: ${install_dir}/data/logs"
 
 if [[ "${healthy}" == true ]]; then

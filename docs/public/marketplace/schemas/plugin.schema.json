@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lvyunqi.github.io/QimenBot/marketplace/schemas/plugin.schema.json",
+  "title": "QimenBot marketplace plugin manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "name", "summary", "type", "repository", "repository_id", "license"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9]|-(?!-)){0,62}[a-z0-9]$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 180 },
+    "description": { "type": "string", "maxLength": 4000 },
+    "type": { "enum": ["dynamic", "static"] },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "repository_id": { "type": "integer", "minimum": 1 },
+    "license": { "type": "string", "minLength": 1 },
+    "authors": { "type": "array", "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 80 }, "uniqueItems": true },
+    "categories": { "type": "array", "maxItems": 8, "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }, "uniqueItems": true },
+    "keywords": { "type": "array", "maxItems": 12, "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }, "uniqueItems": true },
+    "homepage": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "trust": { "enum": ["community", "verified-build", "official"] }
+  }
+}

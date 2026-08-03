@@ -14,11 +14,13 @@ qimen-config = { path = "../qimen-config" }
 qimen-error = { path = "../qimen-error" }
 qimen-host-types = { path = "../qimen-host-types" }
 qimen-observability = { path = "../qimen-observability" }
+qimen-plugin-marketplace = { path = "../qimen-plugin-marketplace" }
 qimen-runtime = { path = "../qimen-runtime" }
 qimen-update-protocol = { path = "../qimen-update-protocol" }
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+semver.workspace = true
 tokio.workspace = true
 toml.workspace = true
 toml_edit.workspace = true

@@ -266,6 +266,16 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
         set_secret(&mut document["admin_web"], "access_token", token);
     }
 
+    ensure_table(document, "marketplace");
+    document["marketplace"]["enabled"] = value(update.marketplace_enabled);
+    document["marketplace"]["catalog_url"] = value(update.marketplace_catalog_url.trim());
+    document["marketplace"]["cache_dir"] = value(update.marketplace_cache_dir.trim());
+    document["marketplace"]["lock_path"] = value(update.marketplace_lock_path.trim());
+    document["marketplace"]["request_timeout_secs"] =
+        value(update.marketplace_request_timeout_secs as i64);
+    document["marketplace"]["allow_prerelease"] = value(update.marketplace_allow_prerelease);
+    document["marketplace"]["auto_update"] = value(update.marketplace_auto_update);
+
     document["official_host"]["builtin_modules"] = string_array(&update.builtin_modules);
     document["official_host"]["plugin_modules"] = string_array(&update.plugin_modules);
     document["official_host"]["plugin_state_path"] = value(update.plugin_state_path.trim());
@@ -291,6 +301,12 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
             "access_token",
             token,
         );
+    }
+}
+
+fn ensure_table(document: &mut DocumentMut, key: &str) {
+    if document.get(key).is_none_or(|item| !item.is_table()) {
+        document[key] = Item::Table(Table::new());
     }
 }
 
@@ -415,6 +431,18 @@ mod tests {
     fn revisions_change_with_content() {
         assert_ne!(revision_for("a"), revision_for("b"));
         assert_eq!(revision_for("a"), revision_for("a"));
+    }
+
+    #[test]
+    fn adding_marketplace_settings_to_an_older_config_is_safe() {
+        let mut document = "[runtime]\nenv = \"test\"\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        ensure_table(&mut document, "marketplace");
+        document["marketplace"]["enabled"] = value(true);
+        document["marketplace"]["catalog_url"] = value("https://example.com/index.json");
+        assert!(document["marketplace"].as_table().is_some());
+        assert_eq!(document["marketplace"]["enabled"].as_bool(), Some(true));
     }
 
     #[tokio::test]

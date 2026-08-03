@@ -14,6 +14,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub admin_web: AdminWebConfig,
     #[serde(default)]
+    pub marketplace: MarketplaceConfig,
+    #[serde(default)]
     pub official_host: OfficialHostConfig,
     #[serde(default)]
     pub bots: Vec<BotConfig>,
@@ -56,6 +58,38 @@ impl Default for AdminWebConfig {
             access_token: String::new(),
             log_capacity: default_admin_web_log_capacity(),
             audit_path: default_admin_web_audit_path(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MarketplaceConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_marketplace_catalog_url")]
+    pub catalog_url: String,
+    #[serde(default = "default_marketplace_cache_dir")]
+    pub cache_dir: String,
+    #[serde(default = "default_marketplace_lock_path")]
+    pub lock_path: String,
+    #[serde(default = "default_marketplace_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+    #[serde(default)]
+    pub allow_prerelease: bool,
+    #[serde(default)]
+    pub auto_update: bool,
+}
+
+impl Default for MarketplaceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            catalog_url: default_marketplace_catalog_url(),
+            cache_dir: default_marketplace_cache_dir(),
+            lock_path: default_marketplace_lock_path(),
+            request_timeout_secs: default_marketplace_request_timeout_secs(),
+            allow_prerelease: false,
+            auto_update: false,
         }
     }
 }
@@ -244,6 +278,27 @@ impl AppConfig {
             }
         }
 
+        if self.marketplace.catalog_url.trim().is_empty()
+            || self.marketplace.cache_dir.trim().is_empty()
+            || self.marketplace.lock_path.trim().is_empty()
+        {
+            return Err(QimenError::Config(
+                "marketplace catalog_url, cache_dir, and lock_path cannot be empty".to_string(),
+            ));
+        }
+        if self.marketplace.request_timeout_secs == 0 || self.marketplace.request_timeout_secs > 300
+        {
+            return Err(QimenError::Config(
+                "marketplace.request_timeout_secs must be between 1 and 300".to_string(),
+            ));
+        }
+        if self.marketplace.auto_update {
+            return Err(QimenError::Config(
+                "marketplace.auto_update is not available yet; keep it false and review updates in the Web panel"
+                    .to_string(),
+            ));
+        }
+
         if self.official_host.proactive_send.queue_capacity == 0 {
             return Err(QimenError::Config(
                 "official_host.proactive_send.queue_capacity must be greater than zero".to_string(),
@@ -425,6 +480,22 @@ fn default_admin_web_log_capacity() -> usize {
 
 fn default_admin_web_audit_path() -> String {
     "config/admin-audit.jsonl".to_string()
+}
+
+fn default_marketplace_catalog_url() -> String {
+    "https://lvyunqi.github.io/QimenBot/marketplace/index.json".to_string()
+}
+
+fn default_marketplace_cache_dir() -> String {
+    "cache/marketplace".to_string()
+}
+
+fn default_marketplace_lock_path() -> String {
+    "config/marketplace-lock.toml".to_string()
+}
+
+fn default_marketplace_request_timeout_secs() -> u64 {
+    30
 }
 
 fn default_builtin_modules() -> Vec<String> {

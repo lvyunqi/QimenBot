@@ -29,7 +29,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gosu tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /home/qimenbot qimenbot \
-    && mkdir -p /opt/qimenbot/defaults /data/config /data/plugins/bin /data/logs \
+    && mkdir -p /opt/qimenbot/defaults /data/config /data/plugins/bin /data/logs /data/cache/marketplace \
     && chown -R qimenbot:qimenbot /opt/qimenbot /data
 
 COPY --from=rust-builder /src/target/release/qimenbotd /usr/local/bin/qimenbotd
