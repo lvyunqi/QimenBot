@@ -2,13 +2,14 @@ use crate::AdminState;
 use crate::error::AdminError;
 use crate::types::{ApiEnvelope, MutationResult};
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use qimen_host_types::load_plugin_state;
 use qimen_plugin_marketplace::{
-    CatalogIndex, CatalogPlugin, CatalogSource, DriverSupport, HostProfile, InstalledPlugin,
-    InstalledVersion, MarketplaceClient, MarketplaceError, MarketplaceLock, MarketplacePaths,
-    PluginKind, ReleaseChannel, TrustLevel, VersionCompatibility, compatible_versions,
-    evaluate_version, select_latest_compatible, sha256_file,
+    CatalogIndex, CatalogPlugin, CatalogSource, DriverEventKind, DriverSupport, HostProfile,
+    InstalledPlugin, InstalledVersion, MarketplaceClient, MarketplaceError, MarketplaceLock,
+    MarketplacePaths, MessageScene, OutboundCapability, PluginDriver, PluginKind, ReleaseChannel,
+    TrustLevel, VersionCompatibility, compatible_versions, evaluate_version,
+    select_latest_compatible, sha256_file,
 };
 use qimen_runtime::dynamic_runtime::scan_dynamic_plugins;
 use semver::Version;
@@ -16,6 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path as FsPath;
 use std::time::Duration;
+
+const DEFAULT_MARKETPLACE_PAGE_SIZE: usize = 20;
+const MAX_MARKETPLACE_PAGE_SIZE: usize = 100;
 
 #[derive(Debug, Serialize)]
 pub struct MarketplaceView {
@@ -26,11 +30,13 @@ pub struct MarketplaceView {
     fetched_at: Option<String>,
     warning: Option<String>,
     host: HostProfile,
-    plugins: Vec<MarketplacePluginView>,
+    counts: MarketplaceCountsView,
+    pagination: MarketplacePaginationView,
+    plugins: Vec<MarketplacePluginSummaryView>,
 }
 
-#[derive(Debug, Serialize)]
-struct MarketplacePluginView {
+#[derive(Debug, Serialize, Clone)]
+pub struct MarketplacePluginView {
     id: String,
     name: String,
     summary: String,
@@ -51,7 +57,7 @@ struct MarketplacePluginView {
     unmanaged: Option<UnmanagedPluginView>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct MarketplaceVersionView {
     version: String,
     released_at: String,
@@ -74,7 +80,7 @@ struct MarketplaceVersionView {
     issues: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct MarketplaceInstalledView {
     version: String,
     active_file: String,
@@ -89,13 +95,82 @@ struct MarketplaceInstalledView {
     data_schema_version: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct UnmanagedPluginView {
     version: String,
     file_name: String,
     sha256: Option<String>,
     can_adopt: bool,
     reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MarketplacePluginSummaryView {
+    id: String,
+    name: String,
+    summary: String,
+    kind: PluginKind,
+    license: String,
+    trust: TrustLevel,
+    catalog_listed: bool,
+    latest_compatible: Option<String>,
+    drivers: Vec<DriverSupport>,
+    installed: Option<MarketplaceInstalledView>,
+    unmanaged: Option<UnmanagedPluginView>,
+}
+
+#[derive(Debug, Default, Serialize, PartialEq, Eq)]
+struct MarketplaceCountsView {
+    all: usize,
+    dynamic: usize,
+    #[serde(rename = "static")]
+    static_plugins: usize,
+    installed: usize,
+    updates: usize,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct MarketplacePaginationView {
+    page: usize,
+    page_size: usize,
+    total_items: usize,
+    total_pages: usize,
+}
+
+#[derive(Debug)]
+struct MarketplaceSnapshot {
+    enabled: bool,
+    allow_prerelease: bool,
+    auto_update: bool,
+    source: Option<CatalogSource>,
+    fetched_at: Option<String>,
+    warning: Option<String>,
+    host: HostProfile,
+    plugins: Vec<MarketplacePluginView>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum MarketplaceFilter {
+    #[default]
+    All,
+    Dynamic,
+    Static,
+    Installed,
+    Updates,
+}
+
+#[derive(Debug, Deserialize)]
+/// 商城列表的服务端搜索、筛选和分页参数。
+pub struct MarketplaceQuery {
+    #[serde(default = "default_marketplace_page")]
+    page: usize,
+    #[serde(default = "default_marketplace_page_size")]
+    page_size: usize,
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    filter: MarketplaceFilter,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,18 +190,42 @@ pub struct PinRequest {
     pinned: bool,
 }
 
+/// 从最近一次成功保存的目录中读取商城列表。
 pub async fn catalog(
     State(state): State<AdminState>,
+    Query(query): Query<MarketplaceQuery>,
 ) -> Result<Json<ApiEnvelope<MarketplaceView>>, AdminError> {
     let _operation = state.marketplace_operations.lock().await;
-    Ok(Json(ApiEnvelope::new(build_view(&state, true).await?)))
+    let snapshot = build_snapshot(&state, false).await?;
+    Ok(Json(ApiEnvelope::new(paginate_snapshot(snapshot, &query))))
 }
 
+/// 同步官方目录后返回当前筛选条件下的商城列表。
 pub async fn refresh(
     State(state): State<AdminState>,
+    Query(query): Query<MarketplaceQuery>,
 ) -> Result<Json<ApiEnvelope<MarketplaceView>>, AdminError> {
     let _operation = state.marketplace_operations.lock().await;
-    Ok(Json(ApiEnvelope::new(build_view(&state, true).await?)))
+    let snapshot = build_snapshot(&state, true).await?;
+    Ok(Json(ApiEnvelope::new(paginate_snapshot(snapshot, &query))))
+}
+
+/// 按插件 ID 读取完整元数据和版本记录。
+pub async fn detail(
+    State(state): State<AdminState>,
+    Path(plugin_id): Path<String>,
+) -> Result<Json<ApiEnvelope<MarketplacePluginView>>, AdminError> {
+    let _operation = state.marketplace_operations.lock().await;
+    let snapshot = build_snapshot(&state, false).await?;
+    if !snapshot.enabled {
+        return Err(AdminError::BadRequest("插件商城已在配置中关闭".to_string()));
+    }
+    let plugin = snapshot
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.id == plugin_id)
+        .ok_or_else(|| AdminError::NotFound(format!("商城中没有插件 '{plugin_id}'")))?;
+    Ok(Json(ApiEnvelope::new(plugin)))
 }
 
 pub async fn install(
@@ -580,12 +679,15 @@ async fn local_operation_context(state: &AdminState) -> Result<LocalOperationCon
     })
 }
 
-async fn build_view(state: &AdminState, refresh: bool) -> Result<MarketplaceView, AdminError> {
+async fn build_snapshot(
+    state: &AdminState,
+    refresh: bool,
+) -> Result<MarketplaceSnapshot, AdminError> {
     let stored = state.config_store.read().await?;
     let config = &stored.config.marketplace;
     let host = HostProfile::current(env!("CARGO_PKG_VERSION"));
     if !config.enabled {
-        return Ok(MarketplaceView {
+        return Ok(MarketplaceSnapshot {
             enabled: false,
             allow_prerelease: config.allow_prerelease,
             auto_update: config.auto_update,
@@ -718,7 +820,7 @@ async fn build_view(state: &AdminState, refresh: bool) -> Result<MarketplaceView
             .cmp(&marketplace_priority(right))
             .then_with(|| left.name.cmp(&right.name))
     });
-    Ok(MarketplaceView {
+    Ok(MarketplaceSnapshot {
         enabled: true,
         allow_prerelease: config.allow_prerelease,
         auto_update: config.auto_update,
@@ -728,6 +830,182 @@ async fn build_view(state: &AdminState, refresh: bool) -> Result<MarketplaceView
         host,
         plugins,
     })
+}
+
+fn paginate_snapshot(snapshot: MarketplaceSnapshot, query: &MarketplaceQuery) -> MarketplaceView {
+    // 徽标展示整份目录的分类规模，搜索后的实际数量由 pagination 返回。
+    let counts = marketplace_counts(&snapshot.plugins);
+    let needle = query.query.trim().to_lowercase();
+    let filtered = snapshot
+        .plugins
+        .into_iter()
+        .filter(|plugin| marketplace_filter_matches(plugin, query.filter))
+        .filter(|plugin| needle.is_empty() || marketplace_query_matches(plugin, &needle))
+        .collect::<Vec<_>>();
+    let page_size = query.page_size.clamp(1, MAX_MARKETPLACE_PAGE_SIZE);
+    let total_items = filtered.len();
+    let total_pages = total_items.div_ceil(page_size).max(1);
+    let page = query.page.max(1).min(total_pages);
+    let offset = (page - 1).saturating_mul(page_size).min(total_items);
+    let plugins = filtered
+        .into_iter()
+        .skip(offset)
+        .take(page_size)
+        .map(plugin_summary_view)
+        .collect();
+
+    MarketplaceView {
+        enabled: snapshot.enabled,
+        allow_prerelease: snapshot.allow_prerelease,
+        auto_update: snapshot.auto_update,
+        source: snapshot.source,
+        fetched_at: snapshot.fetched_at,
+        warning: snapshot.warning,
+        host: snapshot.host,
+        counts,
+        pagination: MarketplacePaginationView {
+            page,
+            page_size,
+            total_items,
+            total_pages,
+        },
+        plugins,
+    }
+}
+
+fn marketplace_counts(plugins: &[MarketplacePluginView]) -> MarketplaceCountsView {
+    MarketplaceCountsView {
+        all: plugins.len(),
+        dynamic: plugins
+            .iter()
+            .filter(|plugin| plugin.kind == PluginKind::Dynamic)
+            .count(),
+        static_plugins: plugins
+            .iter()
+            .filter(|plugin| plugin.kind == PluginKind::Static)
+            .count(),
+        installed: plugins
+            .iter()
+            .filter(|plugin| plugin.installed.is_some())
+            .count(),
+        updates: plugins
+            .iter()
+            .filter(|plugin| {
+                plugin
+                    .installed
+                    .as_ref()
+                    .is_some_and(|installed| installed.update_available)
+            })
+            .count(),
+    }
+}
+
+fn marketplace_filter_matches(plugin: &MarketplacePluginView, filter: MarketplaceFilter) -> bool {
+    match filter {
+        MarketplaceFilter::All => true,
+        MarketplaceFilter::Dynamic => plugin.kind == PluginKind::Dynamic,
+        MarketplaceFilter::Static => plugin.kind == PluginKind::Static,
+        MarketplaceFilter::Installed => plugin.installed.is_some(),
+        MarketplaceFilter::Updates => plugin
+            .installed
+            .as_ref()
+            .is_some_and(|installed| installed.update_available),
+    }
+}
+
+fn marketplace_query_matches(plugin: &MarketplacePluginView, needle: &str) -> bool {
+    let mut terms = vec![
+        plugin.id.as_str(),
+        plugin.name.as_str(),
+        plugin.summary.as_str(),
+        plugin.description.as_str(),
+        plugin.repository.as_str(),
+        plugin.license.as_str(),
+    ];
+    terms.extend(plugin.authors.iter().map(String::as_str));
+    terms.extend(plugin.categories.iter().map(String::as_str));
+    terms.extend(plugin.keywords.iter().map(String::as_str));
+    if terms
+        .into_iter()
+        .any(|term| term.to_lowercase().contains(needle))
+    {
+        return true;
+    }
+
+    plugin.versions.iter().any(|version| {
+        version.drivers.iter().any(|support| {
+            driver_search_terms(support)
+                .into_iter()
+                .any(|term| term.contains(needle))
+        })
+    })
+}
+
+fn driver_search_terms(support: &DriverSupport) -> Vec<&'static str> {
+    let mut terms = match support.driver {
+        PluginDriver::OneBot11 => vec!["onebot11", "onebot 11", "普通消息驱动"],
+        PluginDriver::QqOfficial => vec!["qq-official", "官方 qq bot", "开放平台驱动"],
+    };
+    terms.extend(support.scenes.iter().map(|scene| match scene {
+        MessageScene::Private => "私聊",
+        MessageScene::Group => "群聊",
+        MessageScene::GroupAt => "群内 @",
+        MessageScene::Channel => "频道消息",
+        MessageScene::ChannelAt => "频道 @",
+        MessageScene::ChannelPrivate => "频道私信",
+    }));
+    terms.extend(support.events.iter().map(|event| match event {
+        DriverEventKind::Message => "消息",
+        DriverEventKind::Notice => "通知",
+        DriverEventKind::Request => "请求",
+        DriverEventKind::Meta => "元事件",
+    }));
+    terms.extend(support.outbound.iter().map(|capability| match capability {
+        OutboundCapability::Reply => "回复",
+        OutboundCapability::Proactive => "主动发送",
+        OutboundCapability::RichMessage => "富媒体",
+    }));
+    terms
+}
+
+fn plugin_summary_view(plugin: MarketplacePluginView) -> MarketplacePluginSummaryView {
+    // 列表不返回完整版本数组，只保留最能代表当前可用状态的一组驱动能力。
+    let drivers = plugin
+        .versions
+        .iter()
+        .find(|version| Some(version.version.as_str()) == plugin.latest_compatible.as_deref())
+        .or_else(|| {
+            plugin.versions.iter().find(|version| {
+                plugin
+                    .installed
+                    .as_ref()
+                    .is_some_and(|installed| installed.version == version.version)
+            })
+        })
+        .or_else(|| plugin.versions.first())
+        .map(|version| version.drivers.clone())
+        .unwrap_or_default();
+    MarketplacePluginSummaryView {
+        id: plugin.id,
+        name: plugin.name,
+        summary: plugin.summary,
+        kind: plugin.kind,
+        license: plugin.license,
+        trust: plugin.trust,
+        catalog_listed: plugin.catalog_listed,
+        latest_compatible: plugin.latest_compatible,
+        drivers,
+        installed: plugin.installed,
+        unmanaged: plugin.unmanaged,
+    }
+}
+
+fn default_marketplace_page() -> usize {
+    1
+}
+
+fn default_marketplace_page_size() -> usize {
+    DEFAULT_MARKETPLACE_PAGE_SIZE
 }
 
 fn marketplace_priority(plugin: &MarketplacePluginView) -> u8 {
@@ -1106,6 +1384,153 @@ mod tests {
         DriverEventKind, DriverSupport, MessageScene, OutboundCapability, PluginAsset,
         PluginDriver, PluginManifest, VersionManifest,
     };
+
+    fn test_snapshot(plugins: Vec<MarketplacePluginView>) -> MarketplaceSnapshot {
+        MarketplaceSnapshot {
+            enabled: true,
+            allow_prerelease: false,
+            auto_update: false,
+            source: Some(CatalogSource::Cache),
+            fetched_at: None,
+            warning: None,
+            host: HostProfile {
+                qimenbot_version: "0.1.17".into(),
+                target: "x86_64-pc-windows-msvc".into(),
+                os: "windows".into(),
+                arch: "x86_64".into(),
+                environment: "msvc".into(),
+                glibc: None,
+                dynamic_loading: true,
+                supported_dynamic_apis: vec!["0.5".into()],
+            },
+            plugins,
+        }
+    }
+
+    fn test_plugin(id: &str, kind: PluginKind) -> MarketplacePluginView {
+        MarketplacePluginView {
+            id: id.into(),
+            name: format!("Plugin {id}"),
+            summary: "测试插件".into(),
+            description: String::new(),
+            kind,
+            repository: format!("example/{id}"),
+            repository_url: format!("https://github.com/example/{id}"),
+            repository_id: 42,
+            license: "MIT".into(),
+            authors: vec!["developer".into()],
+            categories: vec!["tools".into()],
+            keywords: Vec::new(),
+            trust: TrustLevel::Community,
+            catalog_listed: true,
+            latest_compatible: None,
+            versions: Vec::new(),
+            installed: None,
+            unmanaged: None,
+        }
+    }
+
+    #[test]
+    fn marketplace_pagination_returns_only_the_requested_page() {
+        let plugins = (0..25)
+            .map(|index| test_plugin(&format!("plugin-{index:02}"), PluginKind::Dynamic))
+            .collect();
+        let query = MarketplaceQuery {
+            page: 2,
+            page_size: 10,
+            query: String::new(),
+            filter: MarketplaceFilter::All,
+        };
+
+        let view = paginate_snapshot(test_snapshot(plugins), &query);
+
+        assert_eq!(view.pagination.page, 2);
+        assert_eq!(view.pagination.page_size, 10);
+        assert_eq!(view.pagination.total_items, 25);
+        assert_eq!(view.pagination.total_pages, 3);
+        assert_eq!(view.plugins.len(), 10);
+        assert_eq!(view.plugins[0].id, "plugin-10");
+        assert_eq!(view.plugins[9].id, "plugin-19");
+    }
+
+    #[test]
+    fn marketplace_pagination_clamps_page_and_preserves_category_counts() {
+        let mut installed = test_plugin("installed", PluginKind::Dynamic);
+        installed.installed = Some(MarketplaceInstalledView {
+            version: "1.0.0".into(),
+            active_file: "plugin.dll".into(),
+            target: "x86_64-pc-windows-msvc".into(),
+            sha256: "a".repeat(64),
+            installed_at: "2026-08-04T00:00:00Z".into(),
+            pinned: false,
+            active: true,
+            loaded: true,
+            update_available: true,
+            can_rollback: false,
+            data_schema_version: 1,
+        });
+        let query = MarketplaceQuery {
+            page: usize::MAX,
+            page_size: 1,
+            query: String::new(),
+            filter: MarketplaceFilter::Static,
+        };
+
+        let view = paginate_snapshot(
+            test_snapshot(vec![
+                installed,
+                test_plugin("source-only", PluginKind::Static),
+            ]),
+            &query,
+        );
+
+        assert_eq!(view.counts.all, 2);
+        assert_eq!(view.counts.dynamic, 1);
+        assert_eq!(view.counts.static_plugins, 1);
+        assert_eq!(view.counts.installed, 1);
+        assert_eq!(view.counts.updates, 1);
+        assert_eq!(view.pagination.page, 1);
+        assert_eq!(view.pagination.total_items, 1);
+        assert_eq!(view.plugins[0].id, "source-only");
+        let serialized = serde_json::to_value(&view.counts).unwrap();
+        assert_eq!(serialized["static"], 1);
+    }
+
+    #[test]
+    fn marketplace_search_matches_localized_driver_capabilities() {
+        let mut plugin = test_plugin("official-tools", PluginKind::Dynamic);
+        plugin.versions.push(MarketplaceVersionView {
+            version: "1.0.0".into(),
+            released_at: "2026-08-04T00:00:00Z".into(),
+            channel: ReleaseChannel::Stable,
+            qimenbot: ">=0.1.17".into(),
+            dynamic_api: Some("0.5".into()),
+            yanked: false,
+            data_schema_version: 1,
+            rollback_safe: true,
+            changelog: String::new(),
+            drivers: vec![DriverSupport {
+                driver: PluginDriver::QqOfficial,
+                scenes: vec![MessageScene::GroupAt],
+                events: vec![DriverEventKind::Message],
+                outbound: vec![OutboundCapability::RichMessage],
+            }],
+            compatible: true,
+            installable: true,
+            asset_name: None,
+            asset_target: None,
+            asset_size_bytes: None,
+            asset_sha256: None,
+            min_glibc: None,
+            github_attestation: false,
+            issues: Vec::new(),
+        });
+
+        assert!(marketplace_query_matches(&plugin, "官方 qq bot"));
+        assert!(marketplace_query_matches(&plugin, "群内 @"));
+        assert!(marketplace_query_matches(&plugin, "富媒体"));
+        assert!(!marketplace_query_matches(&plugin, "onebot 11"));
+    }
 
     #[test]
     fn requested_version_reports_all_compatibility_reasons() {
