@@ -1027,12 +1027,19 @@ fn plan_upload_parts(
     }
     let mut parts = prepared.parts.clone();
     parts.sort_by_key(|part| part.index);
+    let first_index = parts[0].index;
+    if !matches!(first_index, 0 | 1) {
+        return Err(QimenError::Protocol(format!(
+            "qqbot upload parts must start at index 0 or 1, got {first_index}"
+        )));
+    }
     let mut offset = 0_usize;
     let mut planned = Vec::with_capacity(parts.len());
-    for (expected_index, part) in parts.into_iter().enumerate() {
-        if part.index != expected_index as u64 {
+    for (offset_index, part) in parts.into_iter().enumerate() {
+        let expected_index = first_index + offset_index as u64;
+        if part.index != expected_index {
             return Err(QimenError::Protocol(format!(
-                "qqbot upload parts must use contiguous indexes from 0; expected {expected_index}, got {}",
+                "qqbot upload parts must use contiguous indexes starting at 0 or 1; expected {expected_index}, got {}",
                 part.index
             )));
         }
@@ -1489,6 +1496,54 @@ mod tests {
         assert!(!is_message_api_path("/interactions/event-1"));
     }
 
+    #[test]
+    fn upload_planner_accepts_zero_and_one_based_part_indexes() {
+        for first_index in [0, 1] {
+            let prepared = UploadPrepareResponse {
+                upload_id: "upload-1".to_string(),
+                block_size: 4,
+                parts: [first_index, first_index + 1]
+                    .into_iter()
+                    .map(|index| UploadPart {
+                        index,
+                        presigned_url: format!("https://example.invalid/{index}"),
+                        block_size: 4,
+                    })
+                    .collect(),
+                upload_config: None,
+            };
+
+            let planned = plan_upload_parts(&prepared, Bytes::from_static(b"abcdefgh")).unwrap();
+            assert_eq!(
+                planned.iter().map(|part| part.index).collect::<Vec<_>>(),
+                [first_index, first_index + 1]
+            );
+            assert_eq!(planned[0].data.as_ref(), b"abcd");
+            assert_eq!(planned[1].data.as_ref(), b"efgh");
+        }
+    }
+
+    #[test]
+    fn upload_planner_rejects_invalid_or_non_contiguous_part_indexes() {
+        for indexes in [[2, 3], [0, 2], [1, 3], [1, 1]] {
+            let prepared = UploadPrepareResponse {
+                upload_id: "upload-1".to_string(),
+                block_size: 4,
+                parts: indexes
+                    .into_iter()
+                    .map(|index| UploadPart {
+                        index,
+                        presigned_url: format!("https://example.invalid/{index}"),
+                        block_size: 4,
+                    })
+                    .collect(),
+                upload_config: None,
+            };
+
+            assert!(plan_upload_parts(&prepared, Bytes::from_static(b"abcdefgh")).is_err());
+        }
+    }
+
     #[derive(Debug, Clone)]
     struct RecordedRequest {
         method: String,
@@ -1627,13 +1682,13 @@ mod tests {
                 "block_size": "4",
                 "parts": [
                     {
-                        "index": 0,
-                        "presigned_url": format!("{base_url}/presigned/0"),
+                        "index": 1,
+                        "presigned_url": format!("{base_url}/presigned/1"),
                         "block_size": "4",
                     },
                     {
-                        "index": 1,
-                        "presigned_url": format!("{base_url}/presigned/1"),
+                        "index": 2,
+                        "presigned_url": format!("{base_url}/presigned/2"),
                         "block_size": "4",
                     },
                 ],
@@ -1655,8 +1710,8 @@ mod tests {
             }),
             "/v2/groups/group-1/upload_part_finish"
             | "/v2/users/user-1/upload_part_finish"
-            | "/presigned/0"
-            | "/presigned/1" => json!({}),
+            | "/presigned/1"
+            | "/presigned/2" => json!({}),
             "/channels/channel-1/messages/message-1?hidetip=true"
             | "/v2/groups/group-1/messages/message-1"
             | "/v2/users/user-1/messages/message-1"
@@ -2125,6 +2180,7 @@ mod tests {
             .filter(|request| request.path == "/v2/groups/group-1/upload_part_finish")
             .collect::<Vec<_>>();
         assert_eq!(finish.len(), 2);
+        let mut finished_indexes = Vec::new();
         for request in finish {
             let body = serde_json::from_str::<Value>(&request.body).unwrap();
             assert_eq!(
@@ -2132,9 +2188,11 @@ mod tests {
                 Some("upload-1")
             );
             assert_eq!(body.get("block_size").and_then(Value::as_str), Some("4"));
-            assert!(body.get("part_index").and_then(Value::as_u64).is_some());
+            finished_indexes.push(body.get("part_index").and_then(Value::as_u64).unwrap());
             assert_eq!(body.get("md5").and_then(Value::as_str).unwrap().len(), 32);
         }
+        finished_indexes.sort_unstable();
+        assert_eq!(finished_indexes, [1, 2]);
 
         let merge = recorded
             .iter()
