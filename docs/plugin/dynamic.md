@@ -40,7 +40,7 @@ crates.io 发布版本 `0.1.12` 支持动态插件 API `0.1` 至 `0.5`。API `0.
 :::
 
 ::: warning API 0.6 尚未发布到 crates.io
-仓库源码已经包含 API 0.6 的在线配置能力，但不能用 `0.1.12` 依赖编译 `api = "0.6"` 插件。仓库内可用本地 path 依赖测试；仓库外请等配套 crate 发布后再升级。Schema、UI Schema、密钥和生效方式见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。
+仓库源码已经包含 API 0.6 的在线配置能力，但不能用 `0.1.12` 依赖编译 `api = "0.6"` 插件。独立插件可使用官方模板固定的公开 Git revision，不需要 QimenBot 主框架源码；配套 crate 发布后再切换到同一 crates.io 版本。Schema、UI Schema、密钥和生效方式见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。
 :::
 
 ::: info v0.1.12 稳定账号接口

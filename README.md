@@ -569,7 +569,7 @@ abi_stable = "0.11"
 
 [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) `0.1.12` 支持动态插件 API `0.1` 至 `0.5`，并提供 `BotApi::for_account` 与 `SendBuilder::bot_account`。crate 发布版本与插件描述符中的 ABI API 相互独立。API `0.5` 包含 API `0.4` 的实时主动发送能力和 Webhook Gateway，新建插件应显式声明 `api = "0.5"`。`api = "0.4"` 用于兼容不需要 Webhook 的已有插件；未声明 `api` 时，过程宏生成兼容旧宿主的 API `0.3` 插件。
 
-> API 0.6 在线配置已经进入仓库源码，但 crates.io `0.1.12` 不包含它。仓库内可用 path 依赖验证；仓库外插件应等配套 crate 发布后再把 `api` 改成 `0.6`，不要把旧依赖和新 ABI 混用。
+> API 0.6 在线配置已经进入仓库源码，但 crates.io `0.1.12` 不包含它。独立插件可使用 `templates/dynamic-plugin` 中固定到公开提交的 Git 依赖，不需要主框架源码；不要把 `0.1.12` 与 `api = "0.6"` 混用。
 
 仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
 

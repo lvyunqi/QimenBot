@@ -12,7 +12,7 @@
 | `abi-stable-host-api` | API 0.6 类型已实现 | `0.1.12` 只到 API 0.5 |
 | `qimen-dynamic-plugin-derive` | API 0.6 宏已实现 | `0.1.12` 只到 API 0.5 |
 
-在配套 crate 发布前，仓库内示例使用 path 依赖验证；独立插件仓库不要把 `api = "0.6"` 与 crates.io `0.1.12` 混用。发布后运行：
+在配套 crate 发布前，仓库内示例使用 path 依赖验证；独立插件使用官方模板固定的公开 Git revision，不要把 `api = "0.6"` 与 crates.io `0.1.12` 混用。发布后运行：
 
 ```bash
 cargo search abi-stable-host-api --limit 1
@@ -136,4 +136,4 @@ fn apply(request: &PluginConfigRequest) -> PluginConfigResult {
 - 密钥没有出现在默认值、README、日志和错误中；
 - `live` 回调可逆，`reload` 线程可安全 join；
 - 动态库按完整 target 构建，商城 `dynamic_api` 填 `0.6`，并声明真实驱动能力；
-- 独立插件仓库不包含 QimenBot path 依赖、运行配置或动态库。
+- 独立插件仓库只使用正式 crates.io 版本或官方模板固定的公开 Git revision，不包含本地 QimenBot path、运行配置或动态库。

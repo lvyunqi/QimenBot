@@ -7,11 +7,11 @@
 - `config_apply = "reload"`
 - 可选 `#[validate_config]` 业务校验
 
-> **源码预览**
+> **预发布依赖**
 >
-> crates.io `0.1.12` 只支持 API 0.1 至 0.5。当前模板在 QimenBot 源码树中使用本地 path 依赖，以便在配套 crate 发布前验证 API 0.6。
+> crates.io `0.1.12` 只支持 API 0.1 至 0.5。当前模板把两个 QimenBot 专用依赖固定到公开提交 `f6aa64841a6afca024b8f6e99b2945f05c1f007a`，没有主框架源码也能构建 API 0.6，并且不会随分支移动而改变依赖内容。
 >
-> 复制到独立仓库前，先运行 `cargo search abi-stable-host-api --limit 1` 和 `cargo search qimen-dynamic-plugin-derive --limit 1`。只有两个同版本包明确支持 API 0.6 时，才能把 path 改成 crates.io 版本；否则继续使用 API 0.5 模板。
+> 正式发布后，运行 `cargo search abi-stable-host-api --limit 1` 和 `cargo search qimen-dynamic-plugin-derive --limit 1`。确认两个包的同一版本明确支持 API 0.6，再把两条 Git 依赖一起改成该 crates.io 版本。
 
 ## 创建项目
 
@@ -22,11 +22,11 @@ cp -R templates/dynamic-plugin qimen-dynamic-plugin-myplugin
 cd qimen-dynamic-plugin-myplugin
 ```
 
-也可以在任意目录执行 `cargo new --lib qimen-dynamic-plugin-myplugin`，然后复制本模板的 `src/lib.rs`、`config.schema.json` 和 `config.ui.json`。配套 API 0.6 crate 发布后，仓库外项目不需要 QimenBot 源码，也不能保留指向主框架的 path 依赖。
+也可以在任意目录执行 `cargo new --lib qimen-dynamic-plugin-myplugin`，然后复制本模板的 `src/lib.rs`、`config.schema.json` 和 `config.ui.json`。模板使用公开 Git revision，不需要本机存在 QimenBot 源码，也不能改成指向作者电脑目录的 path 依赖。
 
 模板中的空 `[workspace]` 用来避免它在 QimenBot 源码树内被根工作区接管。复制到独立仓库后可以保留，也可以删除，不影响插件 API。
 
-将所有 `{{name}}` 替换为稳定的插件 ID，例如 `myplugin`。插件 ID 同时决定配置文件名、启停状态和 Webhook URL，发布后不要随意修改。
+复制后把包名 `qimen-dynamic-plugin-template` 和插件 ID `template-plugin` 改成自己的稳定名称，例如包名 `qimen-dynamic-plugin-myplugin`、插件 ID `myplugin`。同时修改日志前缀、Schema 标题和 Webhook 示例中的默认名。插件 ID 会决定配置文件名、启停状态和 Webhook URL，发布后不要随意修改。
 
 ## 当前模板包含
 

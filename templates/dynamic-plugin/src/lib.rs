@@ -67,7 +67,7 @@ fn validate_config(root: &serde_json::Value) -> Result<(), String> {
 }
 
 #[dynamic_plugin(
-    id = "{{name}}",
+    id = "template-plugin",
     version = "0.1.0",
     api = "0.6",
     config_schema = "../config.schema.json",
@@ -145,7 +145,7 @@ mod plugin {
         let handle = thread::spawn(move || {
             while !STOP_WORKER.load(Ordering::Acquire) {
                 let status = selector.send_group_msg(&group_id, &message);
-                eprintln!("[{{name}}] 主动发送入队状态: {status:?}");
+                eprintln!("[template-plugin] 主动发送入队状态: {status:?}");
                 thread::park_timeout(interval);
             }
         });
@@ -202,7 +202,7 @@ mod plugin {
         CommandResponse::text(&format!("你好，{display}"))
     }
 
-    /// 启用宿主 Webhook Gateway 后，对外路径为 /webhooks/{{name}}/events。
+    /// 启用宿主 Webhook Gateway 后，对外路径为 /webhooks/template-plugin/events。
     #[webhook(method = "POST", path = "/events")]
     fn receive_event(req: &WebhookRequest) -> WebhookResponse {
         let response = serde_json::json!({

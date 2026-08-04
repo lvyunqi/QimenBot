@@ -27,7 +27,7 @@ serde_json = "1"
 
 仓库外项目不需要 `[workspace]`。如果把插件目录放在 QimenBot 仓库内、但不加入主 workspace，则像本示例一样增加一个空的 `[workspace]` 表。
 
-crate 发布版本与动态插件 ABI API 相互独立。crates.io `0.1.12` 只支持 API 0.1 至 0.5，不能用于编译本示例。配套 API 0.6 crate 发布后，仓库外插件应让两个 QimenBot 专用依赖保持同一版本；发布前请继续使用 API 0.5。
+crate 发布版本与动态插件 ABI API 相互独立。crates.io `0.1.12` 只支持 API 0.1 至 0.5，不能用于编译本示例。仓库外开发 API 0.6 插件时使用 `templates/dynamic-plugin` 固定的公开 Git revision；配套 crate 发布后，再把两个 QimenBot 专用依赖一起切换到同一正式版本。
 
 ## 快速开始
 

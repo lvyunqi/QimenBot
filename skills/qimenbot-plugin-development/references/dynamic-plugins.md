@@ -32,8 +32,8 @@
 
 本仓库当前的 API 0.6 实现还没有发布到 crates.io。`abi-stable-host-api 0.1.12` 和
 `qimen-dynamic-plugin-derive 0.1.12` 只能用于 API 0.5 及更早版本。创建 API 0.6
-插件前，先检查配套 crate 是否已经发布；在发布前只能在 QimenBot 源码树内使用
-`path` 依赖，不能把不存在的版本号写进独立仓库：
+插件前，先检查配套 crate 是否已经发布；在发布前，独立仓库使用官方模板固定的
+公开 Git revision，不能使用本地 `path`、浮动分支或不存在的版本号：
 
 ```bash
 cargo search abi-stable-host-api --limit 1
@@ -66,11 +66,13 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.12"
-qimen-dynamic-plugin-derive = "0.1.12"
+abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "f6aa64841a6afca024b8f6e99b2945f05c1f007a" }
+qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "f6aa64841a6afca024b8f6e99b2945f05c1f007a" }
 abi_stable = "0.11"
 serde_json = "1"
 ```
+
+上面的 revision 是 API 0.6 正式发布前的固定源码快照。两个配套 crate 发布后，先确认同一版本明确支持 API 0.6，再一起切换到 crates.io。只开发 API 0.5 插件时可以直接使用两个 `0.1.12` 依赖。
 
 空 `[workspace]` 只用于把 QimenBot 源码树内的动态插件与根工作区隔离。仓库外的独立项目不需要它；从本仓库模板复制出去时可以保留，也可以删除。禁止把外部插件依赖写成 QimenBot 本地 path。
 

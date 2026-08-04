@@ -7,7 +7,7 @@ API 0.6 允许动态插件把配置结构交给 QimenBot。插件声明 JSON Sch
 ::: warning 发布状态
 `abi-stable-host-api 0.1.12` 和 `qimen-dynamic-plugin-derive 0.1.12` 只支持到动态 API 0.5，不能把依赖保持在 `0.1.12` 却声明 `api = "0.6"`。
 
-在配套 crate 发布前，仓库内开发请使用本地 path 依赖和 `plugins/qimen-dynamic-plugin-example`；仓库外插件继续使用 API 0.5。发布后先运行 `cargo search abi-stable-host-api --limit 1` 和 `cargo search qimen-dynamic-plugin-derive --limit 1`，确认两个包的同一版本明确支持 API 0.6，再改用 crates.io。
+在配套 crate 发布前，仓库内示例使用本地 path 依赖；仓库外插件可以使用官方模板固定的公开 Git revision。发布后先运行 `cargo search abi-stable-host-api --limit 1` 和 `cargo search qimen-dynamic-plugin-derive --limit 1`，确认两个包的同一版本明确支持 API 0.6，再改用 crates.io。
 :::
 
 ## 宿主实际做了什么
@@ -38,17 +38,17 @@ qimen-dynamic-plugin-myplugin/
 
 `config.ui.json` 是可选文件。JSON Schema 已经足够生成可用表单；只有需要指定徽标、滑杆、单位、字段顺序等展示细节时才增加 UI Schema。
 
-仓库源码树内可以这样引用正在开发的 API：
+独立插件使用官方模板固定的公开提交，不需要下载 QimenBot 主框架源码：
 
 ```toml
 [dependencies]
-abi-stable-host-api = { path = "../../crates/abi-stable-host-api" }
-qimen-dynamic-plugin-derive = { path = "../../crates/qimen-dynamic-plugin-derive" }
+abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "f6aa64841a6afca024b8f6e99b2945f05c1f007a" }
+qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "f6aa64841a6afca024b8f6e99b2945f05c1f007a" }
 abi_stable = "0.11"
 serde_json = "1"
 ```
 
-仓库外项目必须等待支持 API 0.6 的配套 crate 发布，不能保留指向 QimenBot 源码目录的 path。
+固定 revision 是 API 0.6 正式发布前的过渡方案。不要改成浮动的 `main` 或功能分支，也不要保留指向作者电脑目录的 path。两个配套 crate 发布后，应同时切换到明确支持 API 0.6 的同一 crates.io 版本。
 
 ## 声明配置
 

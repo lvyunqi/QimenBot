@@ -16,7 +16,7 @@
 | 独立模板 | `templates/dynamic-plugin/` | <https://github.com/lvyunqi/QimenBot/tree/main/templates/dynamic-plugin> |
 | 发行包 | - | <https://github.com/lvyunqi/QimenBot/releases> |
 
-仓库内源码可能领先 crates.io。外部动态插件只能依赖已经发布的 crate，不要把 `main` 分支尚未发布的 Rust API 写进独立项目。
+仓库内源码可能领先 crates.io。外部动态插件优先依赖已发布 crate；需要尚未发布的 API 0.6 时，只使用官方模板固定的公开 Git revision，不依赖浮动分支或作者电脑上的本地 path。
 
 ## 宿主配置
 
