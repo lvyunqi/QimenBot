@@ -16,7 +16,7 @@
 | 独立模板 | `templates/dynamic-plugin/` | <https://github.com/lvyunqi/QimenBot/tree/main/templates/dynamic-plugin> |
 | 发行包 | - | <https://github.com/lvyunqi/QimenBot/releases> |
 
-仓库内源码可能领先 crates.io。外部动态插件优先依赖已发布 crate；需要尚未发布的 API 0.6 时，只使用官方模板固定的公开 Git revision，不依赖浮动分支或作者电脑上的本地 path。
+仓库内源码可能领先 crates.io。API 0.6 外部动态插件应同时使用已发布的 `abi-stable-host-api 0.1.13` 与 `qimen-dynamic-plugin-derive 0.1.13`，不依赖浮动分支或作者电脑上的本地 path。
 
 ## 宿主配置
 

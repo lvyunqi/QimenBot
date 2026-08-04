@@ -380,7 +380,6 @@ impl CommandHandler for BuiltinCommandHandler {
         parsed: &ParsedCommandInput,
     ) -> Option<CommandDispatchSignal> {
         let signal = match parsed.name.as_str() {
-            "ping" => Some(CommandDispatchSignal::Reply(Message::text("pong"))),
             "echo" => Some(CommandDispatchSignal::Reply(Message::text(
                 parsed.args.first().cloned().unwrap_or_default(),
             ))),
@@ -489,17 +488,6 @@ fn role_allowed(role: &CommandRole, is_admin: bool, is_owner: bool) -> bool {
 
 fn builtin_command_definitions() -> Vec<CommandDefinition> {
     vec![
-        CommandDefinition {
-            name: "ping",
-            description: "Check whether the bot is alive",
-            aliases: &["p"],
-            examples: &["/ping", "ping"],
-            category: "general",
-            hidden: false,
-            required_role: CommandRole::Anyone,
-            scope: CommandScope::All,
-            filter: None,
-        },
         CommandDefinition {
             name: "echo",
             description: "Echo text back to the sender",
@@ -828,8 +816,7 @@ mod tests {
 
         match signal {
             Some(CommandDispatchSignal::Reply(message)) => {
-                let text = message.to_onebot_value();
-                assert!(matches!(text, Value::String(_)));
+                assert_eq!(message.plain_text(), "custom pong");
             }
             _ => panic!("expected command reply signal"),
         }

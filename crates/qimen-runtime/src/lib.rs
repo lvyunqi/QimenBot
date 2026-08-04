@@ -5622,7 +5622,7 @@ path = "/onebot/reverse"
             .into_iter()
             .enumerate()
         {
-            let event = qq_official_message_event(chat_kind, "/ping", &format!("msg-{index}"));
+            let event = qq_official_message_event(chat_kind, "/echo pong", &format!("msg-{index}"));
             let signal = runtime
                 .handle_normalized_event(&bot, event, &dispatcher, &help_text, &executor, &limiter)
                 .await
@@ -5648,7 +5648,7 @@ path = "/onebot/reverse"
                     "t": "GROUP_MESSAGE_CREATE",
                     "d": {
                         "id": "message-id",
-                        "content": "<qqbot-at-user id=\"bot-user-id\" /> /ping",
+                        "content": "<qqbot-at-user id=\"bot-user-id\" /> /echo pong",
                         "group_openid": "group-openid",
                         "author": {"member_openid": "member-openid"},
                         "mentions": [{
@@ -5714,6 +5714,7 @@ path = "/onebot/reverse"
         let replies = executor.replies.lock().unwrap();
         assert_eq!(replies.len(), 1);
         assert!(replies[0].contains("[help]"));
-        assert!(replies[0].contains("/ping"));
+        assert!(replies[0].contains("/echo"));
+        assert!(!replies[0].contains("/ping"));
     }
 }

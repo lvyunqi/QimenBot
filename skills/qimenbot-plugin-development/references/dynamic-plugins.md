@@ -26,23 +26,25 @@
 
 | 版本 | 示例 | 作用 |
 |---|---|---|
-| QimenBot Release | `v0.1.17` | 宿主程序版本 |
-| crates.io 包版本 | `0.1.12` | Rust 依赖发布版本 |
+| QimenBot Release | `v0.1.18`（开发中） | 首个接受 API 0.6 的宿主程序版本；`v0.1.17` 只到 API 0.5 |
+| crates.io 包版本 | `0.1.13` | Rust 依赖发布版本 |
 | 动态 ABI API | `api = "0.6"` | 插件与宿主协商的能力版本；包含在线配置契约 |
 
-本仓库当前的 API 0.6 实现还没有发布到 crates.io。`abi-stable-host-api 0.1.12` 和
-`qimen-dynamic-plugin-derive 0.1.12` 只能用于 API 0.5 及更早版本。创建 API 0.6
-插件前，先检查配套 crate 是否已经发布；在发布前，独立仓库使用官方模板固定的
-公开 Git revision，不能使用本地 `path`、浮动分支或不存在的版本号：
+`abi-stable-host-api 0.1.13` 和 `qimen-dynamic-plugin-derive 0.1.13` 已发布到
+crates.io，并完整支持 API 0.6。两个包必须使用同一版本；`0.1.12` 只支持 API 0.5
+及更早版本，不能保持旧依赖却声明 `api = "0.6"`。需要确认当前线上版本时运行：
 
 ```bash
 cargo search abi-stable-host-api --limit 1
 cargo search qimen-dynamic-plugin-derive --limit 1
 ```
 
-如果两个包的同一版本明确写出 API 0.6 支持，再把依赖改成 crates.io 版本。API 0.6
-包含 API 0.5 的 Webhook 和实时主动发送；省略 `api` 会生成兼容旧宿主的 API 0.3
-插件，不应作为新项目默认值。只需要 Webhook、暂时不需要在线配置时，仍可使用 API 0.5。
+crate `0.1.13` 只解决插件编译依赖，不会升级宿主。API 0.6 插件必须部署到当前仓库
+源码或后续 `v0.1.18` 宿主；放入 `v0.1.17` 会因 API 版本不受支持而拒绝加载。
+
+API 0.6 包含 API 0.5 的 Webhook 和实时主动发送；省略 `api` 会生成兼容旧宿主的
+API 0.3 插件，不应作为新项目默认值。只需要 Webhook、暂时不需要在线配置时，仍可
+声明 API 0.5，但新项目依然应使用两个 `0.1.13` crate。
 
 ## 无主框架源码的完整起步流程
 
@@ -66,13 +68,13 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
-qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
+abi-stable-host-api = "0.1.13"
+qimen-dynamic-plugin-derive = "0.1.13"
 abi_stable = "0.11"
 serde_json = "1"
 ```
 
-上面的 revision 是 API 0.6 正式发布前的固定源码快照。两个配套 crate 发布后，先确认同一版本明确支持 API 0.6，再一起切换到 crates.io。只开发 API 0.5 插件时可以直接使用两个 `0.1.12` 依赖。
+不要把其中一个包改回 `0.1.12`，也不要依赖浮动 Git 分支或作者电脑上的本地 path。仓库内示例可以继续使用 path 验证当前源码，仓库外插件应使用已发布的同版本 crate。
 
 空 `[workspace]` 只用于把 QimenBot 源码树内的动态插件与根工作区隔离。仓库外的独立项目不需要它；从本仓库模板复制出去时可以保留，也可以删除。禁止把外部插件依赖写成 QimenBot 本地 path。
 
@@ -181,7 +183,7 @@ CommandResponse::builder()
 
 可用 `.text()`、`.at()`、`.at_all()`、`.face()`、`.image_url()`、`.image_base64()`、`.record()`、`.reply()`。当前 API 0.6 源码还提供 `.record_url()`、`.record_base64()`、`.video_url()`、`.video_base64()`、`.file_url(url, file_name)` 和 `.file_base64(base64, file_name)`。简单回复使用 `CommandResponse::text()`，不回复使用 `CommandResponse::ignore()`。
 
-`image_base64()` 已存在于 crates.io `0.1.12`，旧插件不改 ABI 即可由新版宿主解释。其余媒体便捷方法需要 API 0.6 Git revision 或后续正式发布的配套 crate；不要告诉使用 `0.1.12` 的插件调用尚未发布的方法。
+`image_base64()` 从 crates.io `0.1.12` 起可用，旧插件不改 ABI 即可由新版宿主解释。`record_base64()`、`video_*()` 和 `file_*()` 等媒体便捷方法从 `0.1.13` 起正式提供。
 
 官方 QQ Bot 本地媒体由宿主上传，动态插件不得自行取得或绕过宿主凭据：
 

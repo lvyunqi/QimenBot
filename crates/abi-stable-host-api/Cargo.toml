@@ -5,7 +5,7 @@ repository = "https://github.com/lvyunqi/QimenBot"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-version.workspace = true
+version = "0.1.13"
 
 [dependencies]
 abi_stable.workspace = true

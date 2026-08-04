@@ -145,7 +145,7 @@ plugin_config_dir = "config/plugins"
 
 | 模块 ID | 说明 |
 |---------|------|
-| `command` | 命令系统 — `/ping`、`/echo`、`/help`、`/status` 等基础命令 |
+| `command` | 命令系统 — `/echo`、`/help`、`/status` 等基础命令 |
 | `admin` | 管理模块 — 权限管理、插件管理（`/plugins`） |
 | `scheduler` | 定时任务 — 基于 Cron 表达式的定时任务调度器 |
 | `bridge` | 消息桥接 — 跨群 / 跨 Bot 消息转发（预留） |

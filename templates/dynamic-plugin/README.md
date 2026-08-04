@@ -7,11 +7,11 @@
 - `config_apply = "reload"`
 - 可选 `#[validate_config]` 业务校验
 
-> **预发布依赖**
+> **依赖版本**
 >
-> crates.io `0.1.12` 只支持 API 0.1 至 0.5。当前模板把两个 QimenBot 专用依赖固定到公开提交 `5a69e242df31813ddafa327ccbc005bb48c8c3d3`，没有主框架源码也能构建 API 0.6，并且不会随分支移动而改变依赖内容。
+> `abi-stable-host-api 0.1.13` 与 `qimen-dynamic-plugin-derive 0.1.13` 已发布到 crates.io，并完整支持动态插件 API 0.6。两个包必须使用同一版本；`0.1.12` 只支持 API 0.1 至 0.5。
 >
-> 正式发布后，运行 `cargo search abi-stable-host-api --limit 1` 和 `cargo search qimen-dynamic-plugin-derive --limit 1`。确认两个包的同一版本明确支持 API 0.6，再把两条 Git 依赖一起改成该 crates.io 版本。
+> QimenBot `v0.1.17` 宿主只接受到动态 API 0.5。使用本模板生成的 API 0.6 插件需要当前仓库源码或后续 `v0.1.18` 宿主。
 
 ## 创建项目
 
@@ -22,7 +22,7 @@ cp -R templates/dynamic-plugin qimen-dynamic-plugin-myplugin
 cd qimen-dynamic-plugin-myplugin
 ```
 
-也可以在任意目录执行 `cargo new --lib qimen-dynamic-plugin-myplugin`，然后复制本模板的 `src/lib.rs`、`config.schema.json` 和 `config.ui.json`。模板使用公开 Git revision，不需要本机存在 QimenBot 源码，也不能改成指向作者电脑目录的 path 依赖。
+也可以在任意目录执行 `cargo new --lib qimen-dynamic-plugin-myplugin`，然后复制本模板的 `src/lib.rs`、`config.schema.json` 和 `config.ui.json`。模板直接使用 crates.io 依赖，不需要本机存在 QimenBot 源码，也不能改成指向作者电脑目录的 path 依赖。
 
 模板中的空 `[workspace]` 用来避免它在 QimenBot 源码树内被根工作区接管。复制到独立仓库后可以保留，也可以删除，不影响插件 API。
 

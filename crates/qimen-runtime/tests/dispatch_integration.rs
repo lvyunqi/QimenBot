@@ -5,7 +5,7 @@ use qimen_protocol_core::{
     ActionStatus, CapabilitySet, EventKind, NormalizedActionRequest, NormalizedActionResponse,
     NormalizedEvent, ProtocolId, TransportMode,
 };
-use qimen_runtime::command_dispatch::{CommandDispatchSignal, CommandDispatcher};
+use qimen_runtime::command_dispatch::CommandDispatcher;
 use qimen_runtime::onebot11_dispatch::{
     NoticeRoute, OneBotSystemDispatchSignal, OneBotSystemDispatcher, SystemEventContext,
     route_onebot_system_event,
@@ -91,7 +91,7 @@ fn sample_private_event(text: &str) -> NormalizedEvent {
 }
 
 #[tokio::test]
-async fn builtin_command_dispatcher_replies_to_ping() {
+async fn builtin_command_dispatcher_does_not_claim_plugin_ping() {
     let dispatcher = CommandDispatcher::with_default_handlers();
     let event = sample_private_event("ping");
 
@@ -99,18 +99,7 @@ async fn builtin_command_dispatcher_replies_to_ping() {
         .dispatch("qq-main", &event, &TEST_RUNTIME)
         .execute()
         .await;
-    match result {
-        Some(CommandDispatchSignal::Reply(message)) => {
-            assert_eq!(message.plain_text(), "pong");
-        }
-        Some(CommandDispatchSignal::Builtin(_)) => {
-            panic!("expected reply signal, got builtin action")
-        }
-        Some(CommandDispatchSignal::DynamicCommand { .. }) => {
-            panic!("expected reply signal, got dynamic command action")
-        }
-        None => panic!("expected reply signal"),
-    }
+    assert!(result.is_none());
 }
 
 #[tokio::test]

@@ -32,15 +32,17 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 
 | crate | 当前发布版本 | 用途 |
 |-------|-------------|------|
-| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.12` | 动态插件与宿主之间的 ABI 稳定类型和 API |
-| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.12` | `#[dynamic_plugin]` 及其内部属性宏 |
+| [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) | `0.1.13` | 动态插件与宿主之间的 ABI 稳定类型和 API |
+| [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) | `0.1.13` | `#[dynamic_plugin]` 及其内部属性宏 |
 
 ::: info 两套版本不要混淆
-crates.io 发布版本 `0.1.12` 支持动态插件 API `0.1` 至 `0.5`。API `0.5` 包含 API `0.4` 的实时主动发送能力和 Webhook Gateway，新建插件应显式声明 `api = "0.5"`。`api = "0.4"` 继续兼容只使用主动发送的已有插件；未声明 `api` 时，过程宏生成 API `0.3` 插件，以兼容旧宿主。
+crates.io 发布版本 `0.1.13` 支持动态插件 API `0.1` 至 `0.6`。API `0.6` 累积包含实时主动发送、Webhook Gateway 和在线配置；新插件应显式声明 `api = "0.6"`。未声明 `api` 时，过程宏仍生成 API `0.3` 插件，只用于兼容旧宿主。
 :::
 
-::: warning API 0.6 尚未发布到 crates.io
-仓库源码已经包含 API 0.6 的在线配置能力，但不能用 `0.1.12` 依赖编译 `api = "0.6"` 插件。独立插件可使用官方模板固定的公开 Git revision，不需要 QimenBot 主框架源码；配套 crate 发布后再切换到同一 crates.io 版本。Schema、UI Schema、密钥和生效方式见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。
+::: tip API 0.6 已发布
+独立插件同时依赖两个 `0.1.13` crate 即可使用在线配置，不需要 QimenBot 主框架源码。Schema、UI Schema、密钥和生效方式见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。`0.1.12` 只支持到 API 0.5，不能与 `api = "0.6"` 混用。
+
+这里的“已发布”指插件编译依赖。QimenBot `v0.1.17` 宿主仍只接受到动态 API 0.5；API 0.6 插件需要当前仓库源码或后续 `v0.1.18` 宿主。
 :::
 
 ::: info v0.1.12 稳定账号接口
@@ -69,8 +71,8 @@ rust-version = "1.89"
 crate-type = ["cdylib"]  # 编译为动态库
 
 [dependencies]
-abi-stable-host-api = "0.1.12"
-qimen-dynamic-plugin-derive = "0.1.12"
+abi-stable-host-api = "0.1.13"
+qimen-dynamic-plugin-derive = "0.1.13"
 abi_stable = "0.11"
 serde_json = "1"  # 可选，用于解析事件 JSON
 ```
@@ -87,7 +89,7 @@ serde_json = "1"  # 可选，用于解析事件 JSON
 use abi_stable_host_api::{CommandRequest, CommandResponse, NoticeRequest, NoticeResponse};
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-#[dynamic_plugin(id = "my-plugin", version = "0.1.0")]
+#[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.6")]
 mod my_plugin {
     use super::*;
 
@@ -434,7 +436,7 @@ let response = CommandResponse::builder()
 | `.build()` | — | 构建为 `CommandResponse` |
 
 ::: info 依赖版本
-`image_base64()` 已存在于 crates.io `0.1.12`，旧插件重新连接新版宿主后即可获得官方 QQ 本地图片上传能力。`record_base64()`、`video_*()`、`file_*()` 等便捷方法属于当前 API 0.6 源码，需要使用官方模板固定的 API 0.6 Git revision，或等待配套 crate 正式发布。
+`image_base64()` 从 crates.io `0.1.12` 起可用，旧插件重新连接新版宿主后即可获得官方 QQ 本地图片上传能力。`0.1.13` 进一步提供 `record_base64()`、`video_*()`、`file_*()` 等 API 0.6 媒体方法。
 :::
 
 `image_base64()`、`record_base64()`、`video_base64()` 和 `file_base64()` 只构造通用消息段，不读取宿主凭据，也不改变 FFI 结构。官方 QQ Bot 宿主会解释这些段：群/C2C 走官方分片预上传，频道和 DMS 的图片走 `file_image` multipart。OneBot 仍按对应实现支持的 `base64://` 规则处理。

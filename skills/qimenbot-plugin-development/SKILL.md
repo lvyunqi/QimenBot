@@ -60,7 +60,7 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - 已说明静态或动态插件的选择理由及所需源码边界。
 - 已给出插件目录、依赖、配置、构建命令、产物路径和加载方式。
 - 已区分框架版本、crates.io 包版本和动态 ABI API 版本。
-- 已确认 API 0.6 配套 crate 是否已经发布；未发布时使用官方模板的固定公开 Git revision，没有把 `0.1.12` 写成可用依赖。
+- API 0.6 插件同时使用已发布的 `abi-stable-host-api 0.1.13` 与 `qimen-dynamic-plugin-derive 0.1.13`，没有混用 `0.1.12`、浮动 Git 分支或本地 path。
 - 在线配置已覆盖 Schema、UI Schema、密钥保留、revision 冲突和 `live/reload/restart` 生效语义。
 - 已覆盖权限、作用域、字符串 ID、错误处理和资源清理。
 - 动态后台线程能在 `#[shutdown]` 中停止并 `join`；Webhook 已考虑鉴权、签名、超时和重放。
