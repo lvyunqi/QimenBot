@@ -60,7 +60,7 @@ pub trait CommandPlugin: Send + Sync + 'static {
 ```
 
 ::: tip 优先级
-`priority()` 值越小，优先级越高。内置命令为 0，静态插件默认 100，动态插件默认 200。
+`CommandPlugin::priority()` 是插件声明的次级顺序，默认值为 `100`，数值越小越先匹配。管理员在 Web 面板设置的命令优先级是第一排序条件，范围为 `0-1000`，数值越大越先匹配；只有管理员数值相同时才会比较这里的 `priority()`。`SystemPlugin::priority()` 仍然独立控制系统事件处理顺序，数值越小越先执行，不受 Web 面板的命令优先级影响。
 :::
 
 ### SystemPlugin — 系统事件插件

@@ -6,7 +6,7 @@ mod marketplace;
 mod plugin_config;
 mod types;
 
-use audit::{AuditEntry, AuditLog};
+use audit::{AuditLog, AuditPage};
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use axum::http::{HeaderValue, StatusCode};
@@ -20,7 +20,9 @@ use config_store::{ConfigStore, StoredConfig};
 use error::AdminError;
 use futures_util::stream;
 use qimen_config::{AdminWebConfig, AppConfig};
-use qimen_host_types::load_plugin_state;
+use qimen_host_types::{
+    MAX_PLUGIN_PRIORITY, PluginState, default_plugin_priority, load_plugin_state,
+};
 use qimen_observability::{LogEntry, LogStore};
 use qimen_runtime::dynamic_runtime::scan_dynamic_plugins;
 use qimen_runtime::{BotConnectionState, BotStatusSnapshot, Runtime};
@@ -110,6 +112,7 @@ impl AdminServer {
                 "/plugins/{id}/config/validate",
                 post(plugin_config::validate),
             )
+            .route("/plugins/{id}/priority", put(update_plugin_priority))
             .route("/plugins/{id}", put(toggle_plugin))
             .route("/marketplace", get(marketplace::catalog))
             .route("/marketplace/refresh", post(marketplace::refresh))
@@ -587,6 +590,85 @@ async fn toggle_plugin(
     })))
 }
 
+async fn update_plugin_priority(
+    State(state): State<AdminState>,
+    Path(plugin_id): Path<String>,
+    Json(request): Json<PluginPriorityRequest>,
+) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    let _operation = state.plugin_operations.lock().await;
+    if request.priority > MAX_PLUGIN_PRIORITY {
+        return Err(AdminError::BadRequest(format!(
+            "优先级必须介于 0 和 {MAX_PLUGIN_PRIORITY} 之间"
+        )));
+    }
+
+    let stored = state.config_store.read().await?;
+    let dynamic = scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)?
+        .into_iter()
+        .any(|plugin| plugin.plugin_id == plugin_id);
+    let available_modules = state
+        .runtime
+        .host_plugin_report()
+        .map(|report| report.available_modules)
+        .unwrap_or_default();
+    let static_plugin = stored
+        .config
+        .official_host
+        .plugin_modules
+        .iter()
+        .any(|id| id == &plugin_id)
+        || available_modules
+            .iter()
+            .any(|module| module.kind == "static" && module.id == plugin_id);
+    let builtin = stored
+        .config
+        .official_host
+        .builtin_modules
+        .iter()
+        .any(|id| id == &plugin_id)
+        || available_modules
+            .iter()
+            .any(|module| module.kind == "builtin" && module.id == plugin_id);
+    if builtin {
+        return Err(AdminError::BadRequest(
+            "内置模块的优先级由宿主保留，不能修改".to_string(),
+        ));
+    }
+    if !dynamic && !static_plugin {
+        return Err(AdminError::NotFound(format!(
+            "plugin '{}' was not found",
+            plugin_id
+        )));
+    }
+
+    let kind = if dynamic { "dynamic" } else { "static" };
+    let path = &stored.config.official_host.plugin_state_path;
+    let mut plugin_state = load_plugin_state(path)?;
+    let previous = plugin_state
+        .priority(&plugin_id)
+        .unwrap_or_else(|| default_plugin_priority(kind));
+    plugin_state.set_priority(plugin_id.clone(), request.priority)?;
+    plugin_state.save_to_path(path)?;
+    state
+        .runtime
+        .set_plugin_priority(&plugin_id, request.priority)?;
+    state.audit.record(
+        "plugin.priority.update",
+        format!("plugin:{}", plugin_id),
+        "success",
+        format!("priority changed from {} to {}", previous, request.priority),
+    )?;
+
+    Ok(Json(ApiEnvelope::new(MutationResult {
+        revision: None,
+        restart_required: false,
+        message: format!(
+            "插件优先级已更新为 {}；已启用 Bot 会重连并刷新命令路由",
+            request.priority
+        ),
+    })))
+}
+
 async fn revisions(
     State(state): State<AdminState>,
 ) -> Result<Json<ApiEnvelope<Vec<RevisionView>>>, AdminError> {
@@ -614,8 +696,14 @@ async fn rollback(
     })))
 }
 
-async fn audit_entries(State(state): State<AdminState>) -> Json<ApiEnvelope<Vec<AuditEntry>>> {
-    Json(ApiEnvelope::new(state.audit.entries(500)))
+async fn audit_entries(
+    State(state): State<AdminState>,
+    Query(query): Query<AuditQuery>,
+) -> Json<ApiEnvelope<AuditPage>> {
+    Json(ApiEnvelope::new(state.audit.page(
+        query.page.unwrap_or(1),
+        query.page_size.unwrap_or(20),
+    )))
 }
 
 async fn updates() -> Result<Json<ApiEnvelope<UpdateView>>, AdminError> {
@@ -715,6 +803,8 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
     let mut represented_builtin = std::collections::HashSet::new();
     let mut represented_static = std::collections::HashSet::new();
     for module in &loaded.available_modules {
+        let (priority, priority_custom) =
+            plugin_priority_view(&persisted, &module.id, &module.kind);
         let configured = match module.kind.as_str() {
             "builtin" => stored
                 .config
@@ -760,6 +850,8 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             config_apply_mode: None,
             config_version: None,
             config_file_exists: false,
+            priority,
+            priority_custom,
         });
     }
 
@@ -767,6 +859,7 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
         if represented_builtin.contains(id) {
             continue;
         }
+        let (priority, priority_custom) = plugin_priority_view(&persisted, id, "builtin");
         views.push(PluginView {
             id: id.clone(),
             kind: "builtin".to_string(),
@@ -791,12 +884,15 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             config_apply_mode: None,
             config_version: None,
             config_file_exists: false,
+            priority,
+            priority_custom,
         });
     }
     for id in &stored.config.official_host.plugin_modules {
         if represented_static.contains(id) {
             continue;
         }
+        let (priority, priority_custom) = plugin_priority_view(&persisted, id, "static");
         views.push(PluginView {
             id: id.clone(),
             kind: "static".to_string(),
@@ -821,9 +917,13 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             config_apply_mode: None,
             config_version: None,
             config_file_exists: false,
+            priority,
+            priority_custom,
         });
     }
     for plugin in scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)? {
+        let (priority, priority_custom) =
+            plugin_priority_view(&persisted, &plugin.plugin_id, "dynamic");
         let health = health_by_path.get(&plugin.path);
         views.push(PluginView {
             id: plugin.plugin_id.clone(),
@@ -876,10 +976,27 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             config_file_exists: FsPath::new(&stored.config.official_host.plugin_config_dir)
                 .join(format!("{}.toml", plugin.plugin_id))
                 .is_file(),
+            priority,
+            priority_custom,
         });
     }
-    views.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.id.cmp(&right.id)));
+    views.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then(left.id.cmp(&right.id))
+    });
     Ok(views)
+}
+
+fn plugin_priority_view(state: &PluginState, plugin_id: &str, kind: &str) -> (u32, bool) {
+    if kind == "builtin" {
+        return (default_plugin_priority(kind), false);
+    }
+    state
+        .priority(plugin_id)
+        .map(|priority| (priority, true))
+        .unwrap_or_else(|| (default_plugin_priority(kind), false))
 }
 
 fn merge_bot_views(stored: &StoredConfig, statuses: &[BotStatusSnapshot]) -> Vec<BotView> {

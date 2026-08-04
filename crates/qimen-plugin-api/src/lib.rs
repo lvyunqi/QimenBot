@@ -1714,8 +1714,8 @@ pub trait CommandPlugin: Send + Sync {
     /// Declare the commands this plugin handles.
     fn commands(&self) -> Vec<CommandDefinition>;
 
-    /// Plugin priority. Lower values execute first. Default is 100.
-    /// Builtin handlers use 10, this allows plugins to run before or after builtins.
+    /// Secondary command-routing priority. Lower values win when plugins have
+    /// the same administrator-configured routing priority. Default is 100.
     fn priority(&self) -> i32 {
         100
     }

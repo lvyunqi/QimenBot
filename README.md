@@ -209,8 +209,8 @@ builtin_modules = ["command", "admin", "scheduler", "bridge"]
 #   "example-events"  — 事件处理（戳一戳、入群欢迎、好友请求）
 plugin_modules = ["example-plugin"]
 
-# 插件启用/禁用状态的持久化文件
-# 用 /plugins 命令修改的状态会保存在这里，重启后恢复
+# 插件启用状态和命令优先级的持久化文件
+# 用 /plugins 命令或 Web 管理面板修改后会保存在这里
 plugin_state_path = "config/plugin-state.toml"
 
 # 动态插件（.so/.dll/.dylib）的扫描目录
@@ -219,6 +219,8 @@ plugin_bin_dir = "plugins/bin"
 # 动态插件独立 TOML 配置目录
 plugin_config_dir = "config/plugins"
 ```
+
+多个插件注册同名命令时，可以在 Web 管理面板的“插件”页面设置 `0-1000` 的命令优先级。数值越大越先匹配，默认顺序是静态插件 `30`、动态插件 `20`；数值相同才使用插件声明顺序和插件 ID 决定结果。修改会写入 `plugin-state.toml`，并让已启用的 Bot 重连以刷新命令路由。
 
 ### `[[bots]]` — Bot 实例配置
 

@@ -1992,6 +1992,36 @@ h3 {
   font-size: 9px;
 }
 
+.plugin-sort-control {
+  display: inline-flex;
+  height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 0 7px 0 9px;
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.plugin-sort-control > svg {
+  width: 13px;
+  height: 13px;
+}
+
+.plugin-sort-control select {
+  height: 26px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
 .plugin-grid {
   display: grid;
   min-width: 0;
@@ -2070,6 +2100,15 @@ h3 {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.plugin-priority-rank {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .plugin-card-head code {
@@ -2244,6 +2283,75 @@ h3 {
   height: 13px;
   flex: 0 0 13px;
   margin-top: 1px;
+}
+
+.plugin-priority-row {
+  display: flex;
+  min-width: 0;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding: 9px 14px;
+}
+
+.plugin-priority-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-priority-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary) 7%, var(--muted));
+  color: var(--primary);
+}
+
+.plugin-priority-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.plugin-priority-summary > span:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.plugin-priority-summary small {
+  color: var(--muted-foreground);
+  font-size: 8.5px;
+  font-weight: 650;
+}
+
+.plugin-priority-summary strong {
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-priority-editor {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.plugin-priority-editor input {
+  width: 78px;
+  height: 30px;
+  padding-inline: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .plugin-card-footer {
@@ -4680,6 +4788,82 @@ h3 {
   height: 16px;
 }
 
+.audit-pagination {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 24%, var(--surface));
+  padding: 7px 10px 7px 14px;
+}
+
+.audit-pagination-range,
+.audit-pagination-page {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.audit-pagination-range strong,
+.audit-pagination-page strong {
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-pagination-range small,
+.audit-pagination-page small {
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 620;
+}
+
+.audit-pagination-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+}
+
+.audit-pagination-controls select {
+  width: 88px;
+  height: 28px;
+  margin-right: 3px;
+  border-radius: 5px;
+  padding: 0 7px;
+  font-size: 9px;
+}
+
+.audit-pagination-page {
+  width: 48px;
+  height: 28px;
+  justify-content: center;
+  padding-top: 7px;
+}
+
+@media (max-width: 640px) {
+  .audit-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 10px;
+  }
+
+  .audit-pagination-range,
+  .audit-pagination-controls {
+    justify-content: center;
+  }
+
+  .audit-pagination-controls select {
+    flex: 1;
+  }
+}
+
 .health-list {
   display: grid;
   min-height: 142px;
@@ -5401,6 +5585,11 @@ h3 {
     flex-direction: column;
   }
 
+  .plugin-sort-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .marketplace-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -5571,6 +5760,20 @@ h3 {
   .plugin-card-footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .plugin-priority-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .plugin-priority-editor,
+  .plugin-priority-editor input {
+    width: 100%;
+  }
+
+  .plugin-priority-editor button {
+    flex: 0 0 30px;
   }
 
   .plugin-card-actions {

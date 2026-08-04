@@ -80,17 +80,23 @@ pub struct CommandDispatcher {
     plugins: Vec<Arc<dyn CommandPlugin>>,
     dynamic_status_entries: Vec<PluginStatusEntry>,
     dynamic_command_descriptors: Vec<DynamicCommandDescriptor>,
+    plugin_priorities: BTreeMap<String, u32>,
     registry: CommandRegistry,
 }
 
 impl CommandDispatcher {
     pub fn with_default_handlers() -> Self {
+        Self::with_plugin_priorities(BTreeMap::new())
+    }
+
+    pub fn with_plugin_priorities(plugin_priorities: BTreeMap<String, u32>) -> Self {
         let mut dispatcher = Self {
             handlers: vec![Arc::new(BuiltinCommandHandler)],
             plugins: Vec::new(),
             dynamic_status_entries: Vec::new(),
             dynamic_command_descriptors: Vec::new(),
-            registry: CommandRegistry::new(),
+            registry: CommandRegistry::with_plugin_priorities(plugin_priorities.clone()),
+            plugin_priorities,
         };
         dispatcher.rebuild_registry();
         dispatcher
@@ -196,7 +202,7 @@ impl CommandDispatcher {
     }
 
     fn rebuild_registry(&mut self) {
-        let mut registry = CommandRegistry::new();
+        let mut registry = CommandRegistry::with_plugin_priorities(self.plugin_priorities.clone());
         for definition in builtin_command_definitions() {
             registry.add_builtin(definition);
         }
@@ -657,6 +663,7 @@ mod tests {
         NormalizedEvent, ProtocolId, TransportMode,
     };
     use serde_json::{Map, Value};
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     struct TestRuntimeBotContext;
@@ -776,6 +783,105 @@ mod tests {
                 Some(CommandPluginSignal::Continue)
             }
         }
+    }
+
+    struct PriorityPlugin {
+        id: &'static str,
+        declared_priority: i32,
+    }
+
+    #[async_trait]
+    impl CommandPlugin for PriorityPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                id: self.id,
+                name: self.id,
+                version: "0.1.0",
+                description: "Priority routing test plugin",
+                api_version: "0.1",
+                compatibility: PluginCompatibility {
+                    host_api: "0.1",
+                    framework_min: "0.1.0",
+                    framework_max: "0.1.x",
+                },
+            }
+        }
+
+        fn commands(&self) -> Vec<CommandDefinition> {
+            vec![CommandDefinition {
+                name: "shared",
+                description: "Shared test command",
+                aliases: &[],
+                examples: &[],
+                category: "tests",
+                hidden: false,
+                required_role: CommandRole::Anyone,
+                scope: CommandScope::All,
+                filter: None,
+            }]
+        }
+
+        fn priority(&self) -> i32 {
+            self.declared_priority
+        }
+
+        async fn on_command(
+            &self,
+            _ctx: &CommandPluginContext<'_>,
+            _invocation: &CommandInvocation,
+        ) -> Option<CommandPluginSignal> {
+            Some(CommandPluginSignal::Continue)
+        }
+    }
+
+    #[test]
+    fn admin_priority_precedes_declared_priority() {
+        let mut priorities = BTreeMap::new();
+        priorities.insert("admin-wins".to_string(), 51);
+        priorities.insert("declared-wins".to_string(), 50);
+        let mut dispatcher = CommandDispatcher::with_plugin_priorities(priorities);
+        dispatcher.register_plugin(Arc::new(PriorityPlugin {
+            id: "declared-wins",
+            declared_priority: 0,
+        }));
+        dispatcher.register_plugin(Arc::new(PriorityPlugin {
+            id: "admin-wins",
+            declared_priority: 1_000,
+        }));
+
+        assert_eq!(
+            dispatcher
+                .registry()
+                .match_command("shared")
+                .unwrap()
+                .source_label,
+            "static-plugin:admin-wins"
+        );
+    }
+
+    #[test]
+    fn declared_priority_breaks_equal_admin_priority_before_plugin_id() {
+        let mut priorities = BTreeMap::new();
+        priorities.insert("a-plugin".to_string(), 50);
+        priorities.insert("z-plugin".to_string(), 50);
+        let mut dispatcher = CommandDispatcher::with_plugin_priorities(priorities);
+        dispatcher.register_plugin(Arc::new(PriorityPlugin {
+            id: "a-plugin",
+            declared_priority: 100,
+        }));
+        dispatcher.register_plugin(Arc::new(PriorityPlugin {
+            id: "z-plugin",
+            declared_priority: 10,
+        }));
+
+        assert_eq!(
+            dispatcher
+                .registry()
+                .match_command("shared")
+                .unwrap()
+                .source_label,
+            "static-plugin:z-plugin"
+        );
     }
 
     fn sample_event(text: &str) -> NormalizedEvent {

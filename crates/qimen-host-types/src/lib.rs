@@ -3,6 +3,19 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+pub const BUILTIN_PLUGIN_PRIORITY: u32 = 10;
+pub const DYNAMIC_PLUGIN_PRIORITY: u32 = 20;
+pub const STATIC_PLUGIN_PRIORITY: u32 = 30;
+pub const MAX_PLUGIN_PRIORITY: u32 = 1_000;
+
+pub fn default_plugin_priority(kind: &str) -> u32 {
+    match kind {
+        "builtin" => BUILTIN_PLUGIN_PRIORITY,
+        "dynamic" => DYNAMIC_PLUGIN_PRIORITY,
+        _ => STATIC_PLUGIN_PRIORITY,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HostPluginReport {
     pub builtin_modules: Vec<String>,
@@ -170,6 +183,7 @@ pub struct DynamicRuntimeHealthEntry {
 #[derive(Debug, Default, Clone)]
 pub struct PluginState {
     modules: BTreeMap<String, bool>,
+    priorities: BTreeMap<String, u32>,
 }
 
 impl PluginState {
@@ -179,6 +193,24 @@ impl PluginState {
 
     pub fn set_enabled(&mut self, module: impl Into<String>, enabled: bool) {
         self.modules.insert(module.into(), enabled);
+    }
+
+    pub fn priority(&self, module: &str) -> Option<u32> {
+        self.priorities.get(module).copied()
+    }
+
+    pub fn set_priority(&mut self, module: impl Into<String>, priority: u32) -> Result<()> {
+        if priority > MAX_PLUGIN_PRIORITY {
+            return Err(QimenError::Config(format!(
+                "plugin priority must be between 0 and {MAX_PLUGIN_PRIORITY}"
+            )));
+        }
+        self.priorities.insert(module.into(), priority);
+        Ok(())
+    }
+
+    pub fn priorities(&self) -> &BTreeMap<String, u32> {
+        &self.priorities
     }
 
     pub fn save_to_path(&self, path: &str) -> Result<()> {
@@ -200,6 +232,13 @@ impl PluginState {
         }
         let mut root = toml::map::Map::new();
         root.insert("modules".to_string(), toml::Value::Table(table));
+        if !self.priorities.is_empty() {
+            let mut priorities = toml::map::Map::new();
+            for (module, priority) in &self.priorities {
+                priorities.insert(module.clone(), toml::Value::Integer(i64::from(*priority)));
+            }
+            root.insert("priorities".to_string(), toml::Value::Table(priorities));
+        }
         let tmp_path = format!("{}.{}.tmp", path, std::process::id());
         fs::write(
             &tmp_path,
@@ -237,5 +276,54 @@ pub fn load_plugin_state(path: &str) -> Result<PluginState> {
         }
     }
 
+    if let Some(table) = value.get("priorities").and_then(toml::Value::as_table) {
+        for (key, value) in table {
+            let priority = value.as_integer().ok_or_else(|| {
+                QimenError::Config(format!("plugin priority for '{key}' must be an integer"))
+            })?;
+            let priority = u32::try_from(priority).map_err(|_| {
+                QimenError::Config(format!("plugin priority for '{key}' is out of range"))
+            })?;
+            state.set_priority(key.clone(), priority)?;
+        }
+    }
+
     Ok(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PluginState, load_plugin_state};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("qimen-host-types-{label}-{nonce}.toml"))
+    }
+
+    #[test]
+    fn plugin_state_round_trips_priorities_and_legacy_modules() {
+        let path = temp_path("priority-roundtrip");
+        let mut state = PluginState::default();
+        state.set_enabled("example-plugin", false);
+        state
+            .set_priority("example-plugin", 420)
+            .expect("priority should be valid");
+        state.save_to_path(path.to_str().unwrap()).unwrap();
+
+        let loaded = load_plugin_state(path.to_str().unwrap()).unwrap();
+        assert!(!loaded.is_enabled("example-plugin"));
+        assert_eq!(loaded.priority("example-plugin"), Some(420));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn plugin_state_rejects_out_of_range_priority() {
+        let mut state = PluginState::default();
+        assert!(state.set_priority("example-plugin", 1_001).is_err());
+    }
 }

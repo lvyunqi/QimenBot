@@ -17,6 +17,20 @@ pub struct AuditEntry {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditPage {
+    pub entries: Vec<AuditEntry>,
+    pub pagination: AuditPagination,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditPagination {
+    pub page: usize,
+    pub page_size: usize,
+    pub total_items: usize,
+    pub total_pages: usize,
+}
+
 #[derive(Clone)]
 pub struct AuditLog {
     inner: Arc<AuditLogInner>,
@@ -41,12 +55,39 @@ impl AuditLog {
         }
     }
 
-    pub fn entries(&self, limit: usize) -> Vec<AuditEntry> {
-        self.inner
+    pub fn page(&self, requested_page: usize, requested_page_size: usize) -> AuditPage {
+        let page_size = requested_page_size.clamp(1, 100);
+        let (total_items, entries) = self
+            .inner
             .entries
             .read()
-            .map(|entries| entries.iter().rev().take(limit).cloned().collect())
-            .unwrap_or_default()
+            .map(|entries| {
+                let total_items = entries.len();
+                let total_pages = total_items.div_ceil(page_size).max(1);
+                let page = requested_page.max(1).min(total_pages);
+                let offset = (page - 1).saturating_mul(page_size).min(total_items);
+                let page_entries = entries
+                    .iter()
+                    .rev()
+                    .skip(offset)
+                    .take(page_size)
+                    .cloned()
+                    .collect();
+                (total_items, page_entries)
+            })
+            .unwrap_or_else(|_| (0, Vec::new()));
+        let total_pages = total_items.div_ceil(page_size).max(1);
+        let page = requested_page.max(1).min(total_pages);
+
+        AuditPage {
+            entries,
+            pagination: AuditPagination {
+                page,
+                page_size,
+                total_items,
+                total_pages,
+            },
+        }
     }
 
     pub fn record(
@@ -111,4 +152,49 @@ fn load_entries(path: &PathBuf) -> VecDeque<AuditEntry> {
         .into_iter()
         .rev()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AuditLog;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("qimen-audit-{label}-{nonce}.jsonl"))
+    }
+
+    #[test]
+    fn page_returns_newest_entries_and_clamps_page() {
+        let path = temp_path("pagination");
+        let log = AuditLog::open(&path);
+        for index in 0..5 {
+            log.record("test", format!("resource-{index}"), "success", "detail")
+                .unwrap();
+        }
+
+        let page = log.page(2, 2);
+        assert_eq!(page.pagination.page, 2);
+        assert_eq!(page.pagination.total_items, 5);
+        assert_eq!(page.pagination.total_pages, 3);
+        assert_eq!(page.entries.len(), 2);
+        assert_eq!(page.entries[0].resource, "resource-2");
+
+        let last = log.page(99, 2);
+        assert_eq!(last.pagination.page, 3);
+        assert_eq!(last.entries.len(), 1);
+
+        let minimum = log.page(1, 0);
+        assert_eq!(minimum.pagination.page_size, 1);
+        assert_eq!(minimum.pagination.total_pages, 5);
+
+        let maximum = log.page(1, usize::MAX);
+        assert_eq!(maximum.pagination.page_size, 100);
+        assert_eq!(maximum.entries.len(), 5);
+        let _ = fs::remove_file(path);
+    }
 }
