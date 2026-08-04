@@ -162,6 +162,30 @@ plugin_modules = ["example-plugin"]
 plugin_modules = ["example-plugin", "my-plugin"]
 ```
 
+### 命令冲突与插件优先级
+
+多个插件可以声明同一个命令名或别名，但每次只会选中一个插件。管理员可以在 Web 管理面板的“插件”页面设置命令优先级，范围是 `0-1000`，数值越大越先匹配。
+
+| 来源 | 默认值 | 能否在面板修改 |
+| --- | ---: | --- |
+| 静态插件 | `30` | 可以 |
+| 动态插件 | `20` | 可以 |
+| 内置命令 | `10` | 不可以 |
+
+优先级相同时，先比较插件声明的次级顺序：静态插件使用 `CommandPlugin::priority()`，该值较小的排在前面；动态插件使用兼容默认值 `200`。仍然相同则按插件 ID 排序，保证每次启动的结果一致。`help`、`plugins`、`registry` 和 `dynamic-errors` 是宿主管理命令，不允许第三方插件覆盖。
+
+设置后会写入 `plugin_state_path` 指向的文件：
+
+```toml
+[modules]
+"example-plugin" = true
+
+[priorities]
+"example-plugin" = 80
+```
+
+面板保存后会让已启用的 Bot 重连一次并重建命令路由，不需要重启宿主。该文件由宿主自动维护，运行期间不要同时手工编辑。完整排序过程见[运行时详解](/advanced/runtime#命令优先级)。
+
 ### 动态插件目录
 
 `plugin_bin_dir` 指定动态库文件的扫描目录。框架启动时会自动扫描该目录下的 `.so` / `.dll` / `.dylib` 文件：

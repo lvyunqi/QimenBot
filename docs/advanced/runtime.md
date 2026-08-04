@@ -169,13 +169,15 @@ CommandPluginSignal::Reply(message)
 
 当多个插件注册了同名命令时，按**优先级**决定哪个生效：
 
-| 来源 | 优先级值 | 说明 |
-|------|---------|------|
-| 内置命令 | 0 | 框架自带的命令（如 /help） |
-| 静态插件 | 100 | 通过 `#[command]` 宏注册的命令 |
-| 动态插件 | 200 | 通过 FFI 注册的命令 |
+| 排序层级 | 规则 |
+| --- | --- |
+| 管理员命令优先级 | `0-1000`，数值越大越先匹配；静态插件默认 `30`，动态插件默认 `20`，内置命令固定为 `10` |
+| 插件声明优先级 | 管理员数值相同时，静态插件的 `CommandPlugin::priority()` 数值越小越先匹配；动态描述符使用兼容值 `200` |
+| 稳定排序 | 前两项仍相同时，按来源和插件 ID 的字典序排序 |
 
-数值越小优先级越高。使用 `/plugins` 可以查看命令冲突诊断。
+管理员优先级保存在 `plugin-state.toml` 的 `[priorities]` 表中。Web 面板保存后更新 Runtime 内存，并让已启用的 Bot 重连以重建 `CommandDispatcher`。`help`、`plugins`、`registry` 和 `dynamic-errors` 在注册表匹配前由宿主处理，属于不可覆盖的管理命令。
+
+使用 `/registry` 可以查看当前生效顺序，使用 `/registry conflicts` 可以只看冲突诊断。Web 面板的插件页会按管理员命令优先级显示排名。
 
 ## 系统事件路由
 
@@ -291,18 +293,22 @@ bot + protocol + chat.kind + chat.id + message_id + msg_idx
 ← Interceptor[0].after_completion()
 ```
 
-### 插件 ACL
+### 插件状态
 
-插件访问控制列表管理插件的启用/禁用状态：
+插件的启用状态和管理员命令优先级保存在同一个文件中：
 
 ```toml
 # config/plugin-state.toml (自动管理)
-[plugins]
+[modules]
 "example-plugin" = true
 "spam-plugin" = false
+
+[priorities]
+"example-plugin" = 80
+"spam-plugin" = 15
 ```
 
-通过 `/plugins enable/disable` 命令管理，状态持久化到文件。
+通过 `/plugins enable/disable` 命令管理启用状态，通过 Web 管理面板调整命令优先级。宿主保存时会先生成 `.bak` 备份，再原子替换当前文件。
 
 ## 动态插件运行时
 

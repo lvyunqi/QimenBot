@@ -37,7 +37,7 @@ use qimen_config::{AppConfig, qq_official_intents_value};
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
     DynamicCommandDescriptor, DynamicInterceptorDescriptor, DynamicPluginReportEntry,
-    HostPluginReport, load_plugin_state,
+    HostPluginReport, MAX_PLUGIN_PRIORITY, default_plugin_priority, load_plugin_state,
 };
 use qimen_message::Message;
 use qimen_plugin_api::{
@@ -58,7 +58,7 @@ use qimen_transport_ws::{
 };
 use serde_json::{Value, json};
 use std::borrow::Cow;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -575,6 +575,7 @@ pub struct Runtime {
     command_plugins: Vec<std::sync::Arc<dyn CommandPlugin>>,
     system_plugins: Vec<std::sync::Arc<dyn SystemPlugin>>,
     host_plugin_report: std::sync::RwLock<Option<HostPluginReport>>,
+    plugin_priorities: std::sync::RwLock<BTreeMap<String, u32>>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
     plugin_config_dir: Option<String>,
@@ -608,6 +609,7 @@ impl Default for Runtime {
             command_plugins: Vec::new(),
             system_plugins: Vec::new(),
             host_plugin_report: std::sync::RwLock::new(None),
+            plugin_priorities: std::sync::RwLock::new(BTreeMap::new()),
             plugin_state_path: None,
             plugin_bin_dir: None,
             plugin_config_dir: None,
@@ -784,12 +786,20 @@ impl Runtime {
                 Arc::clone(&dynamic_runtime),
             )
         });
+        let plugin_priorities = match load_plugin_state(&config.official_host.plugin_state_path) {
+            Ok(state) => state.priorities().clone(),
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to load plugin priorities; using defaults");
+                BTreeMap::new()
+            }
+        };
 
         Self {
             bots,
             command_plugins: plugins.command_plugins,
             system_plugins: plugins.system_plugins,
             host_plugin_report: std::sync::RwLock::new(None),
+            plugin_priorities: std::sync::RwLock::new(plugin_priorities),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
             plugin_config_dir: Some(config.official_host.plugin_config_dir.clone()),
@@ -896,6 +906,35 @@ impl Runtime {
 
     pub fn host_plugin_report(&self) -> Option<HostPluginReport> {
         self.host_plugin_report.read().ok()?.clone()
+    }
+
+    pub fn plugin_priorities(&self) -> BTreeMap<String, u32> {
+        self.plugin_priorities
+            .read()
+            .map(|priorities| priorities.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn plugin_priority(&self, plugin_id: &str, kind: &str) -> u32 {
+        self.plugin_priorities
+            .read()
+            .ok()
+            .and_then(|priorities| priorities.get(plugin_id).copied())
+            .unwrap_or_else(|| default_plugin_priority(kind))
+    }
+
+    pub fn set_plugin_priority(&self, plugin_id: &str, priority: u32) -> Result<()> {
+        if priority > MAX_PLUGIN_PRIORITY {
+            return Err(QimenError::Config(format!(
+                "plugin priority must be between 0 and {MAX_PLUGIN_PRIORITY}"
+            )));
+        }
+        self.plugin_priorities
+            .write()
+            .map_err(|_| QimenError::Runtime("plugin priority lock poisoned".to_string()))?
+            .insert(plugin_id.to_string(), priority);
+        self.reconnect_all_bots();
+        Ok(())
     }
 
     pub fn dynamic_plugin_health(&self) -> Vec<qimen_host_types::DynamicRuntimeHealthEntry> {
@@ -1438,7 +1477,8 @@ impl Runtime {
     }
 
     fn build_command_dispatcher(&self) -> Result<CommandDispatcher> {
-        let mut command_dispatcher = CommandDispatcher::with_default_handlers();
+        let mut command_dispatcher =
+            CommandDispatcher::with_plugin_priorities(self.plugin_priorities());
         for plugin in &self.command_plugins {
             command_dispatcher.register_plugin(plugin.clone());
         }

@@ -1,7 +1,13 @@
-use qimen_host_types::DynamicCommandDescriptor;
+use qimen_host_types::{
+    BUILTIN_PLUGIN_PRIORITY, DYNAMIC_PLUGIN_PRIORITY, DynamicCommandDescriptor,
+    STATIC_PLUGIN_PRIORITY,
+};
 use qimen_plugin_api::{CommandDefinition, CommandPlugin, CommandRole, CommandScope};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+
+const BUILTIN_DECLARED_PRIORITY: i32 = 10;
+const DYNAMIC_DESCRIPTOR_DECLARED_PRIORITY: i32 = 200;
 
 #[derive(Debug, Clone)]
 pub struct CommandRegistryDiagnostic {
@@ -24,11 +30,19 @@ pub struct CommandRegistry {
     entries: Vec<CommandRegistryEntry>,
     index: HashMap<String, Vec<usize>>,
     diagnostics: Vec<CommandRegistryDiagnostic>,
+    plugin_priorities: BTreeMap<String, u32>,
 }
 
 impl CommandRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_plugin_priorities(plugin_priorities: BTreeMap<String, u32>) -> Self {
+        Self {
+            plugin_priorities,
+            ..Self::default()
+        }
     }
 
     pub fn add_builtin(&mut self, definition: CommandDefinition) {
@@ -37,22 +51,32 @@ impl CommandRegistry {
             plugin: None,
             dynamic_descriptor: None,
             source_label: "builtin".to_string(),
-            priority: 10,
+            priority: BUILTIN_PLUGIN_PRIORITY,
         });
     }
 
     pub fn add_plugin(&mut self, plugin: Arc<dyn CommandPlugin>, definition: CommandDefinition) {
+        let metadata = plugin.metadata();
         let source_label = if plugin.is_dynamic() {
-            format!("dynamic-plugin:{}", plugin.metadata().id)
+            format!("dynamic-plugin:{}", metadata.id)
         } else {
-            format!("static-plugin:{}", plugin.metadata().id)
+            format!("static-plugin:{}", metadata.id)
+        };
+        let default_priority = if plugin.is_dynamic() {
+            DYNAMIC_PLUGIN_PRIORITY
+        } else {
+            STATIC_PLUGIN_PRIORITY
         };
         self.insert_entry(CommandRegistryEntry {
             definition,
             plugin: Some(plugin),
             dynamic_descriptor: None,
             source_label,
-            priority: 30,
+            priority: self
+                .plugin_priorities
+                .get(metadata.id)
+                .copied()
+                .unwrap_or(default_priority),
         });
     }
 
@@ -97,7 +121,11 @@ impl CommandRegistry {
             plugin: None,
             dynamic_descriptor: Some(descriptor.clone()),
             source_label: format!("dynamic-descriptor:{}", descriptor.plugin_id),
-            priority: 20,
+            priority: self
+                .plugin_priorities
+                .get(&descriptor.plugin_id)
+                .copied()
+                .unwrap_or(DYNAMIC_PLUGIN_PRIORITY),
         });
     }
 
@@ -216,10 +244,31 @@ impl CommandRegistry {
         for key in keys {
             let bucket = self.index.entry(key).or_default();
             bucket.push(position);
-            bucket
-                .sort_by_key(|entry_index| std::cmp::Reverse(self.entries[*entry_index].priority));
+            bucket.sort_by(|left_index, right_index| {
+                let left = &self.entries[*left_index];
+                let right = &self.entries[*right_index];
+                right
+                    .priority
+                    .cmp(&left.priority)
+                    .then_with(|| declared_priority(left).cmp(&declared_priority(right)))
+                    .then_with(|| left.source_label.cmp(&right.source_label))
+            });
         }
     }
+}
+
+fn declared_priority(entry: &CommandRegistryEntry) -> i32 {
+    entry
+        .plugin
+        .as_ref()
+        .map(|plugin| plugin.priority())
+        .unwrap_or_else(|| {
+            if entry.dynamic_descriptor.is_some() {
+                DYNAMIC_DESCRIPTOR_DECLARED_PRIORITY
+            } else {
+                BUILTIN_DECLARED_PRIORITY
+            }
+        })
 }
 
 #[cfg(test)]
@@ -364,6 +413,55 @@ mod tests {
 
         let entry = registry.match_command("cmd").unwrap();
         assert_eq!(entry.source_label, "high");
+    }
+
+    #[test]
+    fn configured_plugin_priority_overrides_source_defaults() {
+        let mut priorities = BTreeMap::new();
+        priorities.insert("example-plugin".to_string(), 99);
+        let mut registry = CommandRegistry::with_plugin_priorities(priorities);
+        registry.add_dynamic_descriptor(DynamicCommandDescriptor {
+            plugin_id: "example-plugin".to_string(),
+            command_name: "status".to_string(),
+            command_description: "configured priority".to_string(),
+            callback_symbol: "handle_status".to_string(),
+            library_path: "example.so".to_string(),
+            aliases: Vec::new(),
+            category: "general".to_string(),
+            required_role: String::new(),
+            scope: String::new(),
+        });
+        registry.add_builtin(make_definition("status", &[], "general"));
+
+        let entry = registry.match_command("status").unwrap();
+        assert_eq!(entry.source_label, "dynamic-descriptor:example-plugin");
+        assert_eq!(entry.priority, 99);
+    }
+
+    #[test]
+    fn equal_priorities_are_deterministic_by_source_label() {
+        let mut priorities = BTreeMap::new();
+        priorities.insert("z-plugin".to_string(), 50);
+        priorities.insert("a-plugin".to_string(), 50);
+        let mut registry = CommandRegistry::with_plugin_priorities(priorities);
+        for plugin_id in ["z-plugin", "a-plugin"] {
+            registry.add_dynamic_descriptor(DynamicCommandDescriptor {
+                plugin_id: plugin_id.to_string(),
+                command_name: "same".to_string(),
+                command_description: plugin_id.to_string(),
+                callback_symbol: "handle".to_string(),
+                library_path: format!("{plugin_id}.so"),
+                aliases: Vec::new(),
+                category: "general".to_string(),
+                required_role: String::new(),
+                scope: String::new(),
+            });
+        }
+
+        assert_eq!(
+            registry.match_command("same").unwrap().source_label,
+            "dynamic-descriptor:a-plugin"
+        );
     }
 
     #[test]

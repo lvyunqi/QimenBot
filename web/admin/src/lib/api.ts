@@ -154,6 +154,8 @@ export interface PluginView {
   config_apply_mode?: "live" | "reload" | "restart" | null
   config_version?: number | null
   config_file_exists: boolean
+  priority: number
+  priority_custom: boolean
 }
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
@@ -328,6 +330,16 @@ export interface AuditEntry {
   detail: string
 }
 
+export interface AuditView {
+  entries: AuditEntry[]
+  pagination: {
+    page: number
+    page_size: number
+    total_items: number
+    total_pages: number
+  }
+}
+
 export interface MutationResult {
   revision?: string | null
   restart_required: boolean
@@ -420,6 +432,14 @@ function marketplacePath(path: string, params: MarketplaceListParams) {
   return `${path}?${query}`
 }
 
+function auditPath(page: number, pageSize: number) {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  })
+  return `/audit?${query}`
+}
+
 export const api = {
   snapshot: () => request<AdminSnapshot>("/snapshot"),
   bots: () => request<BotView[]>("/bots"),
@@ -432,7 +452,7 @@ export const api = {
   marketplacePlugin: (id: string) =>
     request<MarketplacePluginView>("/marketplace/plugins/" + encodeURIComponent(id)),
   logs: (params?: URLSearchParams) => request<LogsView>("/logs" + (params ? "?" + params : "")),
-  audit: () => request<AuditEntry[]>("/audit"),
+  audit: (page: number, pageSize: number) => request<AuditView>(auditPath(page, pageSize)),
   updates: () => request<UpdateView>("/updates"),
   revisions: () => request<RevisionView[]>("/config/revisions"),
   botAction: (id: string, action: "start" | "stop" | "reconnect") =>
@@ -454,6 +474,11 @@ export const api = {
     request<MutationResult>("/plugins/" + encodeURIComponent(id), {
       method: "PUT",
       body: JSON.stringify({ enabled }),
+    }),
+  updatePluginPriority: (id: string, priority: number) =>
+    request<MutationResult>("/plugins/" + encodeURIComponent(id) + "/priority", {
+      method: "PUT",
+      body: JSON.stringify({ priority }),
     }),
   reloadPlugins: () =>
     request<MutationResult>("/plugins/reload", {

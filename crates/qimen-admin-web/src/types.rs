@@ -264,11 +264,18 @@ pub struct PluginView {
     pub config_apply_mode: Option<String>,
     pub config_version: Option<u32>,
     pub config_file_exists: bool,
+    pub priority: u32,
+    pub priority_custom: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PluginToggleRequest {
     pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PluginPriorityRequest {
+    pub priority: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -282,6 +289,12 @@ pub struct RevisionView {
 #[derive(Debug, Deserialize)]
 pub struct RollbackRequest {
     pub revision: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AuditQuery {
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

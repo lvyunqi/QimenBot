@@ -847,6 +847,8 @@ function ModulePicker({
         live_toggle: false,
         configurable: false,
         config_file_exists: false,
+        priority: kind === "builtin" ? 10 : 30,
+        priority_custom: false,
       })),
   ].sort((left, right) => Number(values.includes(right.id)) - Number(values.includes(left.id)) || left.id.localeCompare(right.id))
 

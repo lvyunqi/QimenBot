@@ -1,11 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
+  ArrowDownWideNarrow,
   Boxes,
   Braces,
+  Check,
   CheckCircle2,
   Code2,
   FileCode2,
+  Gauge,
   PlugZap,
   RefreshCw,
   Search,
@@ -29,6 +32,7 @@ const PluginConfigDrawer = lazy(() =>
 )
 
 type PluginFilter = "all" | "builtin" | "static" | "dynamic" | "issues"
+type PluginSort = "priority" | "name" | "kind"
 
 const builtinCopy: Record<string, { name: string; description: string }> = {
   command: { name: "命令系统", description: "解析命令、匹配权限与作用域，并分发到已注册处理器。" },
@@ -49,6 +53,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
   const [plugins, setPlugins] = useState<PluginView[]>([])
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState<PluginFilter>("all")
+  const [sort, setSort] = useState<PluginSort>("priority")
   const [query, setQuery] = useState("")
   const [configPlugin, setConfigPlugin] = useState<PluginView | null>(null)
 
@@ -79,7 +84,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return plugins.filter((plugin) => {
+    const filtered = plugins.filter((plugin) => {
       if (filter === "issues" ? !hasIssue(plugin) : filter !== "all" && plugin.kind !== filter) return false
       if (!needle) return true
       return [
@@ -100,7 +105,16 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
         .toLowerCase()
         .includes(needle)
     })
-  }, [filter, plugins, query])
+    return filtered.sort((left, right) => comparePlugins(left, right, sort))
+  }, [filter, plugins, query, sort])
+
+  const rankById = useMemo(() => {
+    const ranked = plugins
+      .filter((plugin) => plugin.kind !== "builtin")
+      .slice()
+      .sort((left, right) => comparePlugins(left, right, "priority"))
+    return new Map(ranked.map((plugin, index) => [plugin.id, index + 1]))
+  }, [plugins])
 
   const toggle = async (plugin: PluginView, enabled: boolean) => {
     setBusy(true)
@@ -128,6 +142,19 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
     }
   }
 
+  const updatePriority = async (plugin: PluginView, priority: number) => {
+    setBusy(true)
+    try {
+      const result = await api.updatePluginPriority(plugin.id, priority)
+      toast.success(result.message)
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "插件优先级更新失败")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <>
     <main className="page-shell">
@@ -137,7 +164,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
             <h1>插件</h1>
             <span className="environment-tag">{plugins.length} DISCOVERED</span>
           </div>
-          <p>查看当前二进制发现的模块、运行状态和实际注册能力。</p>
+          <p>查看实际注册能力并调整命令优先级；数值越大，命令冲突时越先匹配。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {onOpenConfig && (
@@ -184,6 +211,15 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
             </button>
           ))}
         </div>
+        <label className="plugin-sort-control">
+          <ArrowDownWideNarrow />
+          <span>排序</span>
+          <select value={sort} onChange={(event) => setSort(event.target.value as PluginSort)}>
+            <option value="priority">优先级</option>
+            <option value="name">插件名称</option>
+            <option value="kind">插件类型</option>
+          </select>
+        </label>
       </section>
 
       <section className="plugin-grid" aria-live="polite">
@@ -194,6 +230,8 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
             onToggle={toggle}
             onOpenConfig={onOpenConfig}
             onConfigure={setConfigPlugin}
+            onPriorityChange={updatePriority}
+            rank={rankById.get(plugin.id)}
             key={plugin.kind + plugin.id}
             delay={Math.min(index, 8) * 35}
           />
@@ -229,6 +267,8 @@ function PluginCard({
   onToggle,
   onOpenConfig,
   onConfigure,
+  onPriorityChange,
+  rank,
   delay,
 }: {
   plugin: PluginView
@@ -236,6 +276,8 @@ function PluginCard({
   onToggle: (plugin: PluginView, enabled: boolean) => Promise<void>
   onOpenConfig?: () => void
   onConfigure: (plugin: PluginView) => void
+  onPriorityChange: (plugin: PluginView, priority: number) => Promise<void>
+  rank?: number
   delay: number
 }) {
   const status = pluginStatus(plugin)
@@ -258,6 +300,7 @@ function PluginCard({
           <div className="plugin-title-row">
             <h2 title={name}>{name}</h2>
             <Badge variant="neutral">{kindLabel(plugin.kind)}</Badge>
+            {rank && <span className="plugin-priority-rank">#{String(rank).padStart(2, "0")}</span>}
           </div>
           <code title={plugin.id}>{plugin.id}</code>
         </div>
@@ -296,6 +339,22 @@ function PluginCard({
         </div>
       )}
 
+      <div className="plugin-priority-row">
+        <div className="plugin-priority-summary">
+          <span className="plugin-priority-icon"><Gauge /></span>
+          <span>
+            <small>命令优先级</small>
+            <strong>{plugin.priority}</strong>
+          </span>
+          <Badge variant={plugin.priority_custom ? "default" : "neutral"}>
+            {plugin.kind === "builtin" ? "系统保留" : plugin.priority_custom ? "管理员设置" : "默认规则"}
+          </Badge>
+        </div>
+        {plugin.kind !== "builtin" && (
+          <PriorityEditor plugin={plugin} busy={busy} onSave={onPriorityChange} />
+        )}
+      </div>
+
       <div className="plugin-card-footer">
         <div className="plugin-activation-copy">
           <strong>{activationTitle(plugin)}</strong>
@@ -329,6 +388,54 @@ function PluginCard({
         )}
       </div>
     </article>
+  )
+}
+
+function PriorityEditor({
+  plugin,
+  busy,
+  onSave,
+}: {
+  plugin: PluginView
+  busy: boolean
+  onSave: (plugin: PluginView, priority: number) => Promise<void>
+}) {
+  const [value, setValue] = useState(String(plugin.priority))
+
+  useEffect(() => setValue(String(plugin.priority)), [plugin.priority])
+
+  const priority = Number(value)
+  const valid = value.trim() !== "" && Number.isInteger(priority) && priority >= 0 && priority <= 1_000
+  const dirty = valid && priority !== plugin.priority
+  return (
+    <div className="plugin-priority-editor">
+      <Input
+        type="number"
+        min={0}
+        max={1_000}
+        step={1}
+        value={value}
+        disabled={busy}
+        aria-invalid={!valid}
+        aria-label={`${plugin.id} 命令优先级`}
+        title="请输入 0 到 1000 之间的整数"
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && dirty) void onSave(plugin, priority)
+        }}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-sm"
+        disabled={busy || !dirty}
+        title="应用优先级"
+        aria-label={`应用 ${plugin.id} 优先级`}
+        onClick={() => void onSave(plugin, priority)}
+      >
+        <Check />
+      </Button>
+    </div>
   )
 }
 
@@ -427,4 +534,14 @@ function configCapabilityLabel(plugin: PluginView) {
   if (plugin.config_apply_mode === "live") return plugin.config_file_exists ? "即时 · 已配置" : "即时 · 待设置"
   if (plugin.config_apply_mode === "reload") return plugin.config_file_exists ? "重载 · 已配置" : "重载 · 待设置"
   return plugin.config_file_exists ? "重启 · 已配置" : "重启 · 待设置"
+}
+
+function comparePlugins(left: PluginView, right: PluginView, sort: PluginSort) {
+  if (sort === "priority") {
+    return right.priority - left.priority || left.id.localeCompare(right.id)
+  }
+  if (sort === "name") {
+    return (left.name ?? left.id).localeCompare(right.name ?? right.id, "zh-CN")
+  }
+  return left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id)
 }
