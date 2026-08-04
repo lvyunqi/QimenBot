@@ -8,6 +8,7 @@
 - [固定插件身份和版本](#固定插件身份和版本)
 - [按版本声明驱动](#按版本声明驱动)
 - [构建动态资产](#构建动态资产)
+- [声明在线配置能力](#声明在线配置能力)
 - [发布 Release](#发布-release)
 - [填写商城文件](#填写商城文件)
 - [验证并提交 PR](#验证并提交-pr)
@@ -20,6 +21,7 @@
 权威入口：
 
 - 作者规范：<https://lvyunqi.github.io/QimenBot/marketplace/>
+- 在线配置开发：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-config-v06.html>
 - 用户安装教程：<https://lvyunqi.github.io/QimenBot/plugin/marketplace.html>
 - 投稿教程：<https://github.com/lvyunqi/QimenBot/blob/main/marketplace/CONTRIBUTING.md>
 - 驱动声明：<https://github.com/lvyunqi/QimenBot/blob/main/marketplace/DRIVER_COMPATIBILITY.md>
@@ -122,6 +124,8 @@ outbound = ["reply", "proactive", "rich-message"]
 
 不要根据共用处理函数推断跨驱动兼容。逐驱动验证事件解析、字符串 ID、回复窗口、主动发送权限和实际使用的富媒体消息段。
 
+声明 `rich-message` 且使用 Base64 时，README 要列出验证过的媒体类型和会话场景。官方 QQ 群/C2C 的分片预上传与频道/DMS 图片 multipart 是两条不同路径，不能只测其中一条就承诺全部富媒体兼容。
+
 驱动矩阵用于商城展示、搜索和审核，不是运行时沙箱或权限开关。
 
 ## 构建动态资产
@@ -158,6 +162,33 @@ Cargo 原始产物不带 target 后缀。只在上传 GitHub Release 前复制�
 不要登记压缩包或 musl 动态库。musl QimenBot 包不支持动态加载。
 
 GNU/Linux 优先在 Debian 11 / glibc 2.31 或更旧的可信环境构建。不能在 glibc 2.39 上构建后把 `min_glibc` 手工写成 2.31。用 `readelf --version-info`、`ldd` 和实际旧系统验证。
+
+## 声明在线配置能力
+
+在线配置不是商城文件里的一段自定义 HTML。它由动态库的 API 0.6 配置描述符提供，
+因此商城只登记版本能力，宿主在安装或加载二进制时读取真实 Schema：
+
+```toml
+# versions/1.1.0.toml
+dynamic_api = "0.6"
+```
+
+插件本身还必须在 `#[dynamic_plugin]` 中声明 `config_schema`，可选声明 `config_ui`、
+`config_version` 和 `config_apply`。Schema 会编入动态库，Release 不需要额外上传
+`config.schema.json` 才能显示表单。商城审核时应核对：
+
+- `dynamic_api` 与二进制描述符的 API 版本完全一致；
+- Schema 根节点明确为 `type: "object"`，没有远程 `$ref`，不包含 HTML/JavaScript；
+- `config_apply = "live"` 时确实导出了可逆的 `#[config_change]`；
+- 密钥字段使用 `writeOnly`、`x-qimen-secret` 或 `format = "password"`，README 不
+  暴露真实凭据；
+- README 写明配置文件名、`official_host.plugin_config_dir` 默认路径、是否需要重载或
+  重启，以及配置迁移和回滚限制；
+- 配置需要的外部服务、权限和网络访问已经在 README 和 PR 说明中列出。
+
+`dynamic_api = "0.5"` 的插件仍可正常收录，但管理面板不会显示 API 0.6 的在线表单。
+不要仅为了出现“可配置”徽标而把版本号改成 0.6；必须先使用对应 API 和宿主完成
+真实加载、保存、密钥保留及生效测试。
 
 ## 发布 Release
 
@@ -209,6 +240,7 @@ cargo run --locked -p qimen-plugin-marketplace --bin qimen-marketplace-index -- 
 - 插件功能、命令和事件；
 - 仓库、数字 ID、许可证和 Release；
 - QimenBot、动态 API 和驱动场景；
+- 是否声明 API 0.6 在线配置、Schema/密钥处理方式和生效模式；
 - target、glibc、大小和 SHA256；
 - 文件、数据库、网络、后台线程、Webhook；
 - 数据迁移和回滚限制；
@@ -223,6 +255,8 @@ cargo run --locked -p qimen-plugin-marketplace --bin qimen-marketplace-index -- 
 - 仓库公开、许可证明确、README 披露权限和数据行为。
 - 插件 ID、版本、tag、描述符和目录一致。
 - OneBot 11 与官方 QQ Bot 能力按版本、按真实场景分别声明。
+- API 0.6 版本的在线配置描述符与 `dynamic_api` 一致，且没有把 Schema 或凭据作为
+  商城可下载的明文配置提交。
 - 每个资产名包含完整 target，并匹配 OS、CPU、GNU/MSVC 和扩展名。
 - GNU/Linux 使用真实 glibc 基线，不登记 musl。
 - 版本文件固定资产大小和 SHA256，证明状态真实。

@@ -76,6 +76,7 @@ export interface GeneralConfigView {
   plugin_modules: string[]
   plugin_state_path: string
   plugin_bin_dir: string
+  plugin_config_dir: string
   dynamic_plugin_timeout_secs: number
   proactive_queue_capacity: number
   proactive_offline_ttl_secs: number
@@ -149,6 +150,46 @@ export interface PluginView {
   failures: number
   last_error?: string | null
   live_toggle: boolean
+  configurable: boolean
+  config_apply_mode?: "live" | "reload" | "restart" | null
+  config_version?: number | null
+  config_file_exists: boolean
+}
+
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+
+export interface PluginSecretState {
+  pointer: string
+  configured: boolean
+}
+
+export interface PluginConfigView {
+  plugin_id: string
+  plugin_version: string
+  config_version: number
+  apply_mode: "live" | "reload" | "restart"
+  loaded: boolean
+  validates_config: boolean
+  applies_live: boolean
+  exists: boolean
+  revision: string
+  config_file: string
+  schema: Record<string, JsonValue>
+  ui_schema: Record<string, JsonValue>
+  values: Record<string, JsonValue>
+  secrets: PluginSecretState[]
+}
+
+export interface PluginConfigMutation {
+  revision: string
+  values: Record<string, JsonValue>
+  secret_updates: Record<string, string | null>
+  secret_references?: Record<string, string>
+}
+
+export interface PluginConfigValidationView {
+  valid: boolean
+  message: string
 }
 
 export type MarketplacePluginKind = "dynamic" | "static"
@@ -418,6 +459,18 @@ export const api = {
     request<MutationResult>("/plugins/reload", {
       method: "POST",
     }),
+  pluginConfig: (id: string) =>
+    request<PluginConfigView>("/plugins/" + encodeURIComponent(id) + "/config"),
+  validatePluginConfig: (id: string, config: PluginConfigMutation) =>
+    request<PluginConfigValidationView>("/plugins/" + encodeURIComponent(id) + "/config/validate", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+  savePluginConfig: (id: string, config: PluginConfigMutation) =>
+    request<MutationResult>("/plugins/" + encodeURIComponent(id) + "/config", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
   installMarketplacePlugin: (id: string, version?: string) =>
     request<MutationResult>("/marketplace/plugins/" + encodeURIComponent(id) + "/install", {
       method: "POST",
@@ -506,6 +559,7 @@ export interface GeneralMutation {
   plugin_modules: string[]
   plugin_state_path: string
   plugin_bin_dir: string
+  plugin_config_dir: string
   dynamic_plugin_timeout_secs: number
   proactive_queue_capacity: number
   proactive_offline_ttl_secs: number

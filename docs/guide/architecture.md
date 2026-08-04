@@ -68,8 +68,9 @@ qimenbotd (应用入口)
 2. **命令路由** — 将命令匹配到对应的 `CommandPlugin`
 3. **系统事件路由** — 将通知/请求/元事件分发到 `SystemPlugin`
 4. **插件编排** — 管理插件的加载、卸载、优先级排序
-5. **Webhook Gateway** — 把 HTTP 请求安全地路由到 API 0.5 动态插件
-6. **运行时保护** — 限流、去重、ACL、FFI 生命周期屏障等安全机制
+5. **Webhook Gateway** — 把 HTTP 请求安全地路由到 API 0.5+ 动态插件
+6. **在线配置事务** — 校验、备份和应用 API 0.6 动态插件配置
+7. **运行时保护** — 限流、去重、ACL、FFI 生命周期屏障等安全机制
 
 ### Webhook Gateway
 
@@ -85,6 +86,22 @@ HTTP request
 ```
 
 插件只声明局部路径；宿主自动挂载为 `{base_path}/{plugin_id}{path}`。同步回调执行期间会持有动态库生命周期读锁，热重载和关闭取得写锁前必须等待所有回调真正返回，因此 HTTP 超时不会造成动态库被提前卸载。Webhook 中的 Bot 发送仍进入每 Bot 独立的主动发送队列，协议由 `bot_id` 对应配置决定。
+
+### 在线配置事务
+
+API 0.6 配置不进入消息事件流水线。管理 API 读取动态库的独立配置描述符，使用 JSON Schema 校验完整配置，再按插件声明选择生效方式：
+
+```text
+Web 表单 / 管理 API
+    → revision 冲突检查
+    → 密钥保留、替换或清除
+    → JSON Schema + 插件语义校验
+    → TOML 备份和原子替换
+    → live 回调 / 动态重载 / 重启标记
+    → 失败时恢复旧文件和旧运行状态
+```
+
+配置描述符不修改旧 `PluginDescriptor`，因此 API 0.1 至 0.5 动态库继续按原方式加载。`live` 回调使用动态库生命周期写锁，避免命令或 Webhook 在插件替换共享状态时并发进入。详见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。
 
 ### ProtocolAdapter（协议适配器）
 

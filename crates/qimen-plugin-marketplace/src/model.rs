@@ -377,7 +377,7 @@ impl VersionManifest {
                         plugin.id, self.version
                     ))
                 })?;
-                if !matches!(api, "0.1" | "0.2" | "0.3" | "0.4" | "0.5") {
+                if !matches!(api, "0.1" | "0.2" | "0.3" | "0.4" | "0.5" | "0.6") {
                     return Err(MarketplaceError::InvalidMetadata(format!(
                         "dynamic plugin '{}' version '{}' declares unsupported dynamic_api '{}'",
                         plugin.id, self.version, api
@@ -838,6 +838,13 @@ mod tests {
         assert!(version.validate(&plugin(PluginKind::Static)).is_err());
         version.assets.clear();
         version.validate(&plugin(PluginKind::Static)).unwrap();
+    }
+
+    #[test]
+    fn dynamic_release_accepts_online_config_api() {
+        let mut version = dynamic_version();
+        version.dynamic_api = Some("0.6".into());
+        version.validate(&plugin(PluginKind::Dynamic)).unwrap();
     }
 
     #[test]

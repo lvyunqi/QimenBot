@@ -1,5 +1,5 @@
 [package]
-name = "qimen-dynamic-plugin-{{name}}"
+name = "qimen-dynamic-plugin-template"
 edition = "2024"
 version = "0.1.0"
 rust-version = "1.89"
@@ -11,10 +11,12 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.12"
+# API 0.6 配套 crate 尚未发布，暂时固定到公开的 QimenBot 源码提交。
+# 正式版本发布后请按 README 将两个依赖一起切换到同一 crates.io 版本。
+abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
 abi_stable = "0.11"
 serde_json = "1"
-qimen-dynamic-plugin-derive = "0.1.12"
+qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
 
 # 按需添加其他依赖：
 # serde = { version = "1", features = ["derive"] }

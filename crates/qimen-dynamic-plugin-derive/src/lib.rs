@@ -2,18 +2,22 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    Ident, ItemMod, LitStr, Token,
+    Ident, ItemMod, LitInt, LitStr, Token,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
 
 // ─── Plugin-level args ──────────────────────────────────────────────────
 
-// Parse: id = "...", version = "...", api = "0.5"
+// Parse: id/version/api plus optional API 0.6 configuration contract.
 struct PluginArgs {
     id: String,
     version: String,
     api: String,
+    config_schema: Option<String>,
+    config_ui: Option<String>,
+    config_version: u32,
+    config_apply: String,
 }
 
 impl Parse for PluginArgs {
@@ -21,17 +25,32 @@ impl Parse for PluginArgs {
         let mut id = None;
         let mut version = None;
         let mut api = None;
+        let mut config_schema = None;
+        let mut config_ui = None;
+        let mut config_version = None;
+        let mut config_apply = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
-            let value: LitStr = input.parse()?;
+            let key_name = key.to_string();
 
-            match key.to_string().as_str() {
-                "id" => id = Some(value.value()),
-                "version" => version = Some(value.value()),
-                "api" => api = Some(value.value()),
-                other => return Err(syn::Error::new(key.span(), format!("unknown key: {other}"))),
+            if key_name == "config_version" {
+                let value: LitInt = input.parse()?;
+                config_version = Some(value.base10_parse::<u32>()?);
+            } else {
+                let value: LitStr = input.parse()?;
+                match key_name.as_str() {
+                    "id" => id = Some(value.value()),
+                    "version" => version = Some(value.value()),
+                    "api" => api = Some(value.value()),
+                    "config_schema" => config_schema = Some(value.value()),
+                    "config_ui" => config_ui = Some(value.value()),
+                    "config_apply" => config_apply = Some(value.value()),
+                    other => {
+                        return Err(syn::Error::new(key.span(), format!("unknown key: {other}")));
+                    }
+                }
             }
 
             if !input.is_empty() {
@@ -40,14 +59,38 @@ impl Parse for PluginArgs {
         }
 
         let api = api.unwrap_or_else(|| "0.3".to_string());
-        if !matches!(api.as_str(), "0.1" | "0.2" | "0.3" | "0.4" | "0.5") {
-            return Err(input.error("api must be one of 0.1, 0.2, 0.3, 0.4, or 0.5"));
+        if !matches!(api.as_str(), "0.1" | "0.2" | "0.3" | "0.4" | "0.5" | "0.6") {
+            return Err(input.error("api must be one of 0.1 through 0.6"));
+        }
+        let config_requested = config_schema.is_some()
+            || config_ui.is_some()
+            || config_version.is_some()
+            || config_apply.is_some();
+        if config_requested && api != "0.6" {
+            return Err(input.error("plugin configuration requires dynamic plugin API 0.6"));
+        }
+        if config_schema.is_none()
+            && (config_ui.is_some() || config_version.is_some() || config_apply.is_some())
+        {
+            return Err(input.error("config_schema is required when config options are declared"));
+        }
+        let config_version = config_version.unwrap_or(1);
+        if config_version == 0 {
+            return Err(input.error("config_version must be greater than zero"));
+        }
+        let config_apply = config_apply.unwrap_or_else(|| "reload".to_string());
+        if !matches!(config_apply.as_str(), "live" | "reload" | "restart") {
+            return Err(input.error("config_apply must be live, reload, or restart"));
         }
 
         Ok(PluginArgs {
             id: id.ok_or_else(|| input.error("missing `id`"))?,
             version: version.ok_or_else(|| input.error("missing `version`"))?,
             api,
+            config_schema,
+            config_ui,
+            config_version,
+            config_apply,
         })
     }
 }
@@ -198,7 +241,15 @@ impl Parse for WebhookArgs {
 ///
 /// Usage:
 /// ```ignore
-/// #[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.5")]
+/// #[dynamic_plugin(
+///     id = "my-plugin",
+///     version = "0.1.0",
+///     api = "0.6",
+///     config_schema = "config.schema.json",
+///     config_ui = "config.ui.json",
+///     config_apply = "reload",
+///     config_version = 1,
+/// )]
 /// mod my_plugin {
 ///     #[command(name = "greet", description = "Say hello", aliases = "hi,hello")]
 ///     fn greet(req: &CommandRequest) -> CommandResponse {
@@ -248,6 +299,8 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
     let mut shutdown_fn: Option<String> = None;
     let mut pre_handle_fn: Option<String> = None;
     let mut after_completion_fn: Option<String> = None;
+    let mut validate_config_fn: Option<String> = None;
+    let mut config_change_fn: Option<String> = None;
     let mut transformed_items = Vec::new();
 
     for item in items.drain(..) {
@@ -279,10 +332,10 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
                 else if let Some((webhook_tokens, remaining_attrs)) =
                     extract_attr(&func.attrs, "webhook")?
                 {
-                    if args.api != "0.5" {
+                    if !matches!(args.api.as_str(), "0.5" | "0.6") {
                         return Err(syn::Error::new_spanned(
                             &func.sig.ident,
-                            "#[webhook] requires dynamic plugin API 0.5",
+                            "#[webhook] requires dynamic plugin API 0.5 or 0.6",
                         ));
                     }
                     let webhook_args: WebhookArgs = syn::parse2(webhook_tokens)?;
@@ -316,6 +369,86 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
                         }
                     };
                     transformed_items.push(webhook_wrapper);
+                }
+                // API 0.6 配置校验回调不能修改插件状态。
+                else if has_bare_attr(&func.attrs, "validate_config") {
+                    func.attrs
+                        .retain(|attribute| !attribute.path().is_ident("validate_config"));
+                    if args.api != "0.6" || args.config_schema.is_none() {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "#[validate_config] requires API 0.6 and config_schema",
+                        ));
+                    }
+                    if validate_config_fn.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "only one #[validate_config] function is allowed",
+                        ));
+                    }
+                    let fn_name = func.sig.ident.to_string();
+                    validate_config_fn = Some(fn_name.clone());
+                    let inner_ident =
+                        syn::Ident::new(&format!("__{fn_name}_inner"), func.sig.ident.span());
+                    func.sig.ident = inner_ident.clone();
+                    transformed_items.push(syn::Item::Fn(func));
+                    let wrapper: syn::Item = syn::parse_quote! {
+                        #[unsafe(no_mangle)]
+                        pub unsafe extern "C" fn qimen_plugin_validate_config_v1(
+                            request: &::abi_stable_host_api::PluginConfigRequest,
+                        ) -> ::abi_stable_host_api::PluginConfigResult {
+                            match ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                                #inner_ident(request)
+                            })) {
+                                Ok(result) => result,
+                                Err(_) => ::abi_stable_host_api::PluginConfigResult::err(
+                                    "plugin config validation panicked",
+                                ),
+                            }
+                        }
+                    };
+                    transformed_items.push(wrapper);
+                    continue;
+                }
+                // 只有声明 live 的插件会在保存后收到即时应用回调。
+                else if has_bare_attr(&func.attrs, "config_change") {
+                    func.attrs
+                        .retain(|attribute| !attribute.path().is_ident("config_change"));
+                    if args.api != "0.6" || args.config_schema.is_none() {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "#[config_change] requires API 0.6 and config_schema",
+                        ));
+                    }
+                    if config_change_fn.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &func.sig.ident,
+                            "only one #[config_change] function is allowed",
+                        ));
+                    }
+                    let fn_name = func.sig.ident.to_string();
+                    config_change_fn = Some(fn_name.clone());
+                    let inner_ident =
+                        syn::Ident::new(&format!("__{fn_name}_inner"), func.sig.ident.span());
+                    func.sig.ident = inner_ident.clone();
+                    transformed_items.push(syn::Item::Fn(func));
+                    let wrapper: syn::Item = syn::parse_quote! {
+                        #[unsafe(no_mangle)]
+                        pub unsafe extern "C" fn qimen_plugin_apply_config_v1(
+                            request: &::abi_stable_host_api::PluginConfigRequest,
+                        ) -> ::abi_stable_host_api::PluginConfigResult {
+                            match ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                                #inner_ident(request)
+                            })) {
+                                Ok(result) => result,
+                                Err(_) => ::abi_stable_host_api::PluginConfigResult::err(
+                                    "plugin config apply panicked",
+                                ),
+                            }
+                        }
+                    };
+                    transformed_items.push(wrapper);
+                    continue;
                 }
                 // Check for #[init]
                 else if has_bare_attr(&func.attrs, "init") {
@@ -442,6 +575,19 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         }
     }
 
+    if args.config_apply == "live" && config_change_fn.is_none() {
+        return Err(syn::Error::new_spanned(
+            &module.ident,
+            "config_apply = \"live\" requires one #[config_change] function",
+        ));
+    }
+    if args.config_apply != "live" && config_change_fn.is_some() {
+        return Err(syn::Error::new_spanned(
+            &module.ident,
+            "#[config_change] is only used with config_apply = \"live\"",
+        ));
+    }
+
     // Generate the descriptor function
     let plugin_id = &args.id;
     let plugin_version = &args.version;
@@ -520,7 +666,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         quote! {}
     };
 
-    let host_api_exports = if matches!(args.api.as_str(), "0.4" | "0.5") {
+    let host_api_exports = if matches!(args.api.as_str(), "0.4" | "0.5" | "0.6") {
         quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn qimen_plugin_bind_host_api_v1(
@@ -538,12 +684,36 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
         quote! {}
     };
 
-    let webhook_descriptor_export = if args.api == "0.5" {
+    let webhook_descriptor_export = if matches!(args.api.as_str(), "0.5" | "0.6") {
         quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn qimen_plugin_webhook_descriptors_v1(
             ) -> ::abi_stable::std_types::RVec<::abi_stable_host_api::WebhookDescriptorEntry> {
                 vec![#(#webhook_registrations),*].into_iter().collect()
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let config_descriptor_export = if let Some(schema_path) = &args.config_schema {
+        let config_version = args.config_version;
+        let config_apply = &args.config_apply;
+        let ui_schema = args
+            .config_ui
+            .as_ref()
+            .map(|path| quote! { include_str!(#path) })
+            .unwrap_or_else(|| quote! { "" });
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn qimen_plugin_config_descriptor_v1(
+            ) -> ::abi_stable_host_api::PluginConfigDescriptorV1 {
+                ::abi_stable_host_api::PluginConfigDescriptorV1::new(
+                    #config_version,
+                    #config_apply,
+                    include_str!(#schema_path),
+                    #ui_schema,
+                )
             }
         }
     } else {
@@ -567,6 +737,7 @@ fn expand_dynamic_plugin(args: PluginArgs, mut module: ItemMod) -> syn::Result<T
 
         #host_api_exports
         #webhook_descriptor_export
+        #config_descriptor_export
 
         /// Drain all queued `SendAction`s produced by `BotApi` / `SendBuilder`
         /// during the most recent FFI callback.
@@ -686,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn webhook_requires_api_05() {
+    fn webhook_requires_api_05_or_newer() {
         let args =
             syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.4""#)
                 .expect("plugin args");
@@ -708,7 +879,59 @@ mod tests {
     #[test]
     fn unsupported_api_is_rejected() {
         let result =
-            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.6""#);
+            syn::parse_str::<PluginArgs>(r#"id = "fixture", version = "0.1.0", api = "0.7""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn api_06_generates_config_descriptor_validation_and_live_apply() {
+        let args = syn::parse_str::<PluginArgs>(
+            r#"id = "fixture", version = "0.1.0", api = "0.6", config_schema = "config.schema.json", config_ui = "config.ui.json", config_apply = "live", config_version = 2"#,
+        )
+        .expect("plugin args");
+        let module = syn::parse_str::<ItemMod>(
+            r#"
+            mod fixture {
+                #[validate_config]
+                fn validate(_req: &PluginConfigRequest) -> PluginConfigResult {
+                    PluginConfigResult::ok()
+                }
+
+                #[config_change]
+                fn apply(_req: &PluginConfigRequest) -> PluginConfigResult {
+                    PluginConfigResult::ok()
+                }
+            }
+            "#,
+        )
+        .expect("module");
+        let output = expand_dynamic_plugin(args, module)
+            .expect("expand")
+            .to_string();
+
+        assert!(output.contains("qimen_plugin_config_descriptor_v1"));
+        assert!(output.contains("qimen_plugin_validate_config_v1"));
+        assert!(output.contains("qimen_plugin_apply_config_v1"));
+        assert!(output.contains("config.schema.json"));
+        assert!(output.contains("config.ui.json"));
+        assert!(output.contains("PluginConfigDescriptorV1"));
+    }
+
+    #[test]
+    fn live_config_requires_apply_callback() {
+        let args = syn::parse_str::<PluginArgs>(
+            r#"id = "fixture", version = "0.1.0", api = "0.6", config_schema = "config.schema.json", config_apply = "live""#,
+        )
+        .expect("plugin args");
+        let module = syn::parse_str::<ItemMod>("mod fixture {}").expect("module");
+        assert!(expand_dynamic_plugin(args, module).is_err());
+    }
+
+    #[test]
+    fn config_contract_requires_api_06() {
+        let result = syn::parse_str::<PluginArgs>(
+            r#"id = "fixture", version = "0.1.0", api = "0.5", config_schema = "config.schema.json""#,
+        );
         assert!(result.is_err());
     }
 }

@@ -10,7 +10,8 @@
 | API 访问 | 完整（async、OneBotActionClient 等） | FFI 接口（同步、C ABI） |
 | 消息构建 | `Message` + `MessageBuilder` | `ReplyBuilder` / `SendBuilder` / JSON 段 |
 | 主动发送 | `OneBotActionClient::send_*` | `BotApi::send_*` / `SendBuilder`（队列模式） |
-| HTTP Webhook | 由静态模块自行启动服务 | API 0.5 `#[webhook]`，由框架 Gateway 统一托管 |
+| HTTP Webhook | 由静态模块自行启动服务 | API 0.5+ `#[webhook]`，由框架 Gateway 统一托管 |
+| 在线配置 | 自行实现配置入口 | API 0.6 JSON Schema，由管理面板生成表单 |
 | 拦截器 | `MessageEventInterceptor` trait（async） | `#[pre_handle]` / `#[after_completion]`（同步 FFI） |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 生命周期 | `on_load` / `on_unload` | `#[init]` / `#[shutdown]` |
@@ -36,6 +37,10 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 
 ::: info 两套版本不要混淆
 crates.io 发布版本 `0.1.12` 支持动态插件 API `0.1` 至 `0.5`。API `0.5` 包含 API `0.4` 的实时主动发送能力和 Webhook Gateway，新建插件应显式声明 `api = "0.5"`。`api = "0.4"` 继续兼容只使用主动发送的已有插件；未声明 `api` 时，过程宏生成 API `0.3` 插件，以兼容旧宿主。
+:::
+
+::: warning API 0.6 尚未发布到 crates.io
+仓库源码已经包含 API 0.6 的在线配置能力，但不能用 `0.1.12` 依赖编译 `api = "0.6"` 插件。独立插件可使用官方模板固定的公开 Git revision，不需要 QimenBot 主框架源码；配套 crate 发布后再切换到同一 crates.io 版本。Schema、UI Schema、密钥和生效方式见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。
 :::
 
 ::: info v0.1.12 稳定账号接口
@@ -404,7 +409,9 @@ let response = CommandResponse::builder()
     .face(1)                     // QQ 表情
     .image_url("https://...")    // 图片（URL）
     .image_base64("iVBOR...")    // 图片（Base64）
-    .record("https://...")       // 语音
+    .record_url("https://...")   // 语音（URL）
+    .video_base64(&mp4_base64)   // 视频（Base64）
+    .file_url("https://...", "report.zip")
     .at_all()                    // @全体成员
     .build();
 ```
@@ -417,9 +424,22 @@ let response = CommandResponse::builder()
 | `.face(id)` | `i32` | QQ 表情 |
 | `.image_url(url)` | `&str` | 图片（URL） |
 | `.image_base64(base64)` | `&str` | 图片（Base64 编码） |
-| `.record(file)` | `&str` | 语音（URL 或路径） |
+| `.record(file)` / `.record_url(url)` | `&str` | 语音 URL；`record` 是兼容别名 |
+| `.record_base64(base64)` | `&str` | SILK 语音（Base64） |
+| `.video_url(url)` | `&str` | MP4 视频（URL） |
+| `.video_base64(base64)` | `&str` | MP4 视频（Base64） |
+| `.file_url(url, file_name)` | `&str, &str` | 文件 URL 和下载文件名 |
+| `.file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 和下载文件名 |
 | `.reply(message_id)` | `&str` | 引用回复 |
 | `.build()` | — | 构建为 `CommandResponse` |
+
+::: info 依赖版本
+`image_base64()` 已存在于 crates.io `0.1.12`，旧插件重新连接新版宿主后即可获得官方 QQ 本地图片上传能力。`record_base64()`、`video_*()`、`file_*()` 等便捷方法属于当前 API 0.6 源码，需要使用官方模板固定的 API 0.6 Git revision，或等待配套 crate 正式发布。
+:::
+
+`image_base64()`、`record_base64()`、`video_base64()` 和 `file_base64()` 只构造通用消息段，不读取宿主凭据，也不改变 FFI 结构。官方 QQ Bot 宿主会解释这些段：群/C2C 走官方分片预上传，频道和 DMS 的图片走 `file_image` multipart。OneBot 仍按对应实现支持的 `base64://` 规则处理。
+
+不要在动态插件里自行请求 QQ 上传接口。插件拿不到 AppSecret 和 access token 是有意的安全边界；生成媒体后返回 Base64 段即可。Base64 适合几十 MB 以内的结果，较大文件应上传到可公开访问的 HTTPS URL。具体格式和上限见[官方 QQ Bot 插件适配](/plugin/qq-official#本地媒体格式和大小)。
 
 ::: tip 引用回复
 结合 `req.message_id` 可以实现引用回复：
@@ -487,7 +507,7 @@ fn on_poke(req: &NoticeRequest) -> NoticeResponse {
 
 ## 插件配置 {#config}
 
-动态插件可以拥有独立的配置文件。在 `config/plugins/` 目录下创建以插件 ID 命名的 TOML 文件：
+动态插件可以拥有独立配置。默认目录是 `config/plugins/`，文件名必须与插件 ID 完全一致：
 
 ```toml
 # config/plugins/my-plugin.toml
@@ -514,6 +534,27 @@ fn on_init(config: PluginInitConfig) -> PluginInitResult {
     PluginInitResult::ok()
 }
 ```
+
+没有配置文件时 `config_json` 是空字符串，不能直接 `unwrap()` 当作 JSON。插件应把空字符串当作空对象，并为缺失字段提供默认值。手工编辑 TOML 后，执行 `/plugins reload` 才会重新调用动态插件的 `init`。
+
+API 0.6 插件可以把 JSON Schema 编进动态库，让 Web 管理面板生成在线表单：
+
+```rust
+#[dynamic_plugin(
+    id = "my-plugin",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "reload"
+)]
+mod plugin {
+    // ...
+}
+```
+
+在线保存仍然写入同一个 TOML 文件。宿主会检查 revision、合并只写密钥、执行 Draft 2020-12 校验，并按插件声明即时应用、重载插件或等待宿主重启。完整教程见 [动态插件 API 0.6 在线配置](/advanced/dynamic-config-v06)。
 
 ## 完整示例 {#full-example}
 
@@ -837,6 +878,10 @@ SendBuilder::private("987654321")
 | `.face(id)` | `i32` | QQ 表情 |
 | `.image_url(url)` | `&str` | 图片（URL） |
 | `.image_base64(base64)` | `&str` | 图片（Base64） |
+| `.record_url(url)` / `.record_base64(base64)` | `&str` | 语音 URL / SILK Base64 |
+| `.video_url(url)` / `.video_base64(base64)` | `&str` | 视频 URL / MP4 Base64 |
+| `.file_url(url, file_name)` | `&str, &str` | 文件 URL |
+| `.file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 |
 | `.send()` | — | 入队发送 |
 
 ### 完整示例

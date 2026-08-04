@@ -4,11 +4,11 @@
 
 ## API 版本
 
-API **0.5** 兼容 0.1 至 0.4，并包含 API 0.4 的实时主动发送能力和 Webhook Gateway。新建插件应显式声明 `api = "0.5"`；`api = "0.4"` 作为不使用 Webhook 的兼容版本保留。`#[dynamic_plugin]` 未声明 `api` 时默认生成 API 0.3 插件，以兼容旧宿主。
+当前源码 API **0.6** 兼容 0.1 至 0.5，累积包含实时主动发送、Webhook Gateway 和 Schema 驱动的在线配置。没有在线配置需求的现有 API 0.5 插件无需重新编译。`#[dynamic_plugin]` 未声明 `api` 时仍默认生成 API 0.3 插件，以兼容旧宿主。
 
 ```rust
 /// 获取当前 API 版本
-pub fn expected_api_version() -> RString  // "0.5"
+pub fn expected_api_version() -> RString  // "0.6"
 
 /// 检查版本兼容性
 pub fn is_compatible_api_version(version: &str) -> bool
@@ -17,6 +17,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 // "0.3" → true
 // "0.4" → true
 // "0.5" → true
+// "0.6" → true
 ```
 
 ### 版本历史
@@ -28,6 +29,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 | **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段；`InterceptorRequest` / `InterceptorResponse` / `InterceptorDescriptorEntry` 拦截器支持 |
 | **0.4** | `ProactiveSendRequest`、`HostApiV1`、`SendEnqueueStatus`；按 Bot 实时主动发送；安全 bind/unbind 生命周期；私聊、群聊、频道和频道私信目标 |
 | **0.5** | 累积包含 API 0.4，并新增框架托管的 HTTP Webhook 描述符、回调和 Gateway |
+| **0.6** | 独立配置描述符、JSON Schema / UI Schema、插件语义校验、即时配置应用、管理面板在线配置，以及不改变 FFI 布局的语音/视频/文件媒体 builder |
 
 ## PluginDescriptor
 
@@ -188,7 +190,9 @@ let response = CommandResponse::builder()
     .face(1)                     // QQ 表情
     .image_url("https://...")    // 图片（URL）
     .image_base64("iVBOR...")    // 图片（Base64）
-    .record("https://...")       // 语音
+    .record_base64(&silk_base64) // 语音（Base64）
+    .video_url("https://...mp4") // 视频（URL）
+    .file_base64(&data, "report.zip")
     .build();                    // → CommandResponse
 ```
 
@@ -200,9 +204,16 @@ let response = CommandResponse::builder()
 | `face(id)` | `i32` | QQ 表情 |
 | `image_url(url)` | `&str` | 图片（URL） |
 | `image_base64(base64)` | `&str` | 图片（Base64） |
-| `record(file)` | `&str` | 语音（URL 或路径） |
+| `record(file)` / `record_url(url)` | `&str` | 语音 URL；`record` 是兼容别名 |
+| `record_base64(base64)` | `&str` | SILK 语音（Base64） |
+| `video_url(url)` | `&str` | MP4 视频（URL） |
+| `video_base64(base64)` | `&str` | MP4 视频（Base64） |
+| `file_url(url, file_name)` | `&str, &str` | 文件 URL 和文件名 |
+| `file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 和文件名 |
 | `reply(message_id)` | `&str` | 引用回复 |
 | `build()` | — | 构建为 `CommandResponse` |
+
+这些方法只写入 `segments_json`，没有向任何 `#[repr(C)]` 结构增加字段。已编译的 API 0.1-0.5 插件保持可加载；旧版 `image_base64()` 插件连接新版宿主后，也能直接使用官方 QQ 本地图片上传。
 
 ## InterceptorDescriptorEntry
 
@@ -487,6 +498,10 @@ SendBuilder::private(user_id: &str) -> SendBuilder
 | `.face(id)` | `i32` | QQ 表情 |
 | `.image_url(url)` | `&str` | 图片（URL） |
 | `.image_base64(base64)` | `&str` | 图片（Base64） |
+| `.record_url(url)` / `.record_base64(base64)` | `&str` | 语音 URL / SILK Base64 |
+| `.video_url(url)` / `.video_base64(base64)` | `&str` | 视频 URL / MP4 Base64 |
+| `.file_url(url, file_name)` | `&str, &str` | 文件 URL |
+| `.file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 |
 | `.send()` | — | 入队发送（消耗 builder） |
 
 ### 使用示例
@@ -523,7 +538,7 @@ pub unsafe extern "C" fn qimen_plugin_flush_sends() -> RVec<SendAction>
 
 ## 向后兼容
 
-v0.5 FFI 接口向后兼容 v0.1、v0.2、v0.3 和 v0.4：
+v0.6 FFI 接口向后兼容 v0.1 至 v0.5：
 
 - v0.1 的 `qimen_demo_plugin_descriptor` 符号名仍然支持
 - v0.1 的单命令/单路由字段仍然可用
@@ -531,14 +546,15 @@ v0.5 FFI 接口向后兼容 v0.1、v0.2、v0.3 和 v0.4：
 - v0.2 的 `CommandDescriptorEntry`（无 `scope` 字段）会自动使用 `scope = "all"` 默认值
 - 旧插件无 `qimen_plugin_flush_sends` 符号时宿主返回空 Vec，无副作用
 - API 0.5 没有向旧 `PluginDescriptor` 追加字段，而是使用单独的 Webhook 描述符导出，保持旧结构布局不变
+- API 0.6 同样没有修改 `PluginDescriptor`，配置描述符和两个配置回调使用独立符号
 
 ::: info Host API v1 / 动态插件 API 0.4
-API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，API 0.5 累积保留这些接口，并由过程宏生成 bind/unbind 导出。v0.1.12 的 `BotApi::for_account` / `SendBuilder::bot_account` 会把稳定账号选择器编码在既有 `bot_id` 字符串中，没有增加或重排 `ProactiveSendRequest` 字段，因此 API 0.4/0.5 ABI 布局保持不变。完整生命周期、选择方式和目标字段说明见 [API 0.4+ 实时主动推送](/advanced/dynamic-proactive-send-v04)。
+API 0.4 新增 ProactiveSendRequest、HostApiV1 和 SendEnqueueStatus，API 0.5/0.6 累积保留这些接口，并由过程宏生成 bind/unbind 导出。v0.1.12 的 `BotApi::for_account` / `SendBuilder::bot_account` 会把稳定账号选择器编码在既有 `bot_id` 字符串中，没有增加或重排 `ProactiveSendRequest` 字段，因此 API 0.4 至 0.6 的 Host API v1 布局保持不变。完整生命周期、选择方式和目标字段说明见 [API 0.4+ 实时主动推送](/advanced/dynamic-proactive-send-v04)。
 :::
 
-## API 0.5 Webhook 导出
+## API 0.5+ Webhook 导出
 
-API 0.5 插件通过独立符号导出 Webhook 路由：
+API 0.5 和 0.6 插件通过独立符号导出 Webhook 路由：
 
 ```rust
 #[unsafe(no_mangle)]
@@ -557,3 +573,65 @@ pub unsafe extern "C" fn callback(request: &WebhookRequest) -> WebhookResponse;
 `WebhookRequest` 包含 method、完整 path、原始 query、请求头 JSON、原始 body 和 peer address。`WebhookResponse` 包含 `u16` 状态码、响应头 JSON 和原始 body。宿主在回调返回、离开插件 FFI 之前复制所有字符串和字节，因此后续 HTTP 响应和动态库卸载不依赖插件侧内存。
 
 Webhook 回调使用同步 FFI，并在 blocking 线程执行。HTTP 超时不会强制终止正在执行的插件代码；宿主会继续持有动态库生命周期锁，直到回调真正返回。完整 Gateway 配置、安全模型和主动发送限制见 [API 0.5 Webhook Gateway](/advanced/dynamic-webhook-v05)。
+
+## API 0.6 配置导出
+
+配置描述符使用独立符号，不追加到旧 `PluginDescriptor`：
+
+```rust
+pub const PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION: u32 = 1;
+
+#[repr(C)]
+pub struct PluginConfigDescriptorV1 {
+    pub abi_version: u32,
+    pub config_version: u32,
+    pub apply_mode: RString,
+    pub schema_json: RString,
+    pub ui_schema_json: RString,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_config_descriptor_v1()
+    -> PluginConfigDescriptorV1;
+```
+
+`apply_mode` 只能是 `live`、`reload` 或 `restart`。Schema 和 UI Schema 由插件拥有，宿主在描述符返回后立即复制为自己的 `String`。Schema 根节点必须明确声明 `type: "object"`，两个 JSON 文本各自不能超过 256 KiB。
+
+配置校验和即时应用共用请求、响应类型：
+
+```rust
+#[repr(C)]
+pub struct PluginConfigRequest {
+    pub plugin_id: RString,
+    pub config_json: RString,
+    pub previous_config_json: RString,
+}
+
+#[repr(C)]
+pub struct PluginConfigResult {
+    pub code: i32,
+    pub error_message: RString,
+}
+```
+
+可选校验导出：
+
+```rust
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_validate_config_v1(
+    request: &PluginConfigRequest,
+) -> PluginConfigResult;
+```
+
+`config_apply = "live"` 时必须导出即时应用函数：
+
+```rust
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qimen_plugin_apply_config_v1(
+    request: &PluginConfigRequest,
+) -> PluginConfigResult;
+```
+
+过程宏分别通过 `#[validate_config]` 和 `#[config_change]` 生成这两个符号，并用 `catch_unwind` 把 panic 转为失败结果。宿主在 blocking 线程调用，同步回调不能长期阻塞。`config_change` 使用独占生命周期锁，执行期间不会并发进入该插件的命令、事件、拦截器或 Webhook。
+
+完整 Schema、密钥、生效和回滚规则见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。

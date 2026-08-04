@@ -1,7 +1,13 @@
+use bytes::Bytes;
+use futures_util::stream::{self, StreamExt, TryStreamExt};
+use md5::Md5;
 use qimen_error::{QimenError, Result};
 use qimen_transport_ws::OneBot11ForwardWsClient;
+use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha1::Sha1;
+use std::fmt;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -17,6 +23,10 @@ pub const OP_HEARTBEAT_ACK: i64 = 11;
 const TOKEN_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
 const PROD_BASE_URL: &str = "https://api.sgroup.qq.com";
 const SANDBOX_BASE_URL: &str = "https://sandbox.api.sgroup.qq.com";
+const MAX_UPLOAD_BYTES: u64 = 200_000_000;
+const MD5_10M_BYTES: usize = 10_002_432;
+const MAX_UPLOAD_CONCURRENCY: u64 = 8;
+const MAX_PART_RETRY_SECONDS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct QqBotOpenApiConfig {
@@ -153,6 +163,146 @@ pub struct UploadFilePayload {
     pub upload_id: Option<String>,
 }
 
+/// Request body for QQ's local-file pre-upload endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct UploadPreparePayload {
+    pub file_type: i64,
+    pub file_size: String,
+    pub file_name: String,
+    pub md5: String,
+    pub sha1: String,
+    pub md5_10m: String,
+}
+
+/// A pre-signed object-storage upload slot returned by QQ.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UploadPart {
+    pub index: u64,
+    pub presigned_url: String,
+    #[serde(deserialize_with = "deserialize_u64")]
+    pub block_size: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UploadConfig {
+    #[serde(
+        default = "default_upload_concurrency",
+        deserialize_with = "deserialize_u64"
+    )]
+    pub concurrency: u64,
+    #[serde(
+        default = "default_retry_timeout",
+        deserialize_with = "deserialize_u64"
+    )]
+    pub retry_timeout: u64,
+    #[serde(default = "default_retry_delay", deserialize_with = "deserialize_u64")]
+    pub retry_delay: u64,
+}
+
+impl Default for UploadConfig {
+    fn default() -> Self {
+        Self {
+            concurrency: default_upload_concurrency(),
+            retry_timeout: default_retry_timeout(),
+            retry_delay: default_retry_delay(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UploadPrepareResponse {
+    pub upload_id: String,
+    #[serde(deserialize_with = "deserialize_u64")]
+    pub block_size: u64,
+    #[serde(default)]
+    pub parts: Vec<UploadPart>,
+    #[serde(default)]
+    pub upload_config: Option<UploadConfig>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UploadPartFinishPayload {
+    pub upload_id: String,
+    pub part_index: u64,
+    pub block_size: String,
+    pub md5: String,
+}
+
+/// Bytes used by the channel/DMS multipart message APIs.
+#[derive(Debug, Clone)]
+pub struct LocalImagePayload {
+    pub data: Bytes,
+    pub file_name: String,
+    pub content_type: String,
+}
+
+#[derive(Debug, Clone)]
+struct PlannedUploadPart {
+    index: u64,
+    presigned_url: String,
+    data: Bytes,
+    md5: String,
+}
+
+fn default_upload_concurrency() -> u64 {
+    1
+}
+
+fn default_retry_timeout() -> u64 {
+    300
+}
+
+fn default_retry_delay() -> u64 {
+    1
+}
+
+fn deserialize_u64<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct U64Visitor;
+
+    impl<'de> Visitor<'de> for U64Visitor {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("an unsigned integer or a decimal string")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u64::try_from(value).map_err(|_| E::custom("expected a non-negative integer"))
+        }
+
+        fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value
+                .parse::<u64>()
+                .map_err(|_| E::custom("expected a decimal integer string"))
+        }
+
+        fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
+
+    deserializer.deserialize_any(U64Visitor)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QqBotApiError {
     pub path: String,
@@ -284,6 +434,126 @@ impl QqBotOpenApiClient {
             .await
     }
 
+    pub async fn post_channel_message_multipart(
+        &self,
+        channel_id: &str,
+        payload: &SendMessagePayload,
+        image: LocalImagePayload,
+    ) -> Result<Value> {
+        self.post_multipart_message(&format!("/channels/{channel_id}/messages"), payload, image)
+            .await
+    }
+
+    pub async fn post_dms_message_multipart(
+        &self,
+        guild_id: &str,
+        payload: &SendMessagePayload,
+        image: LocalImagePayload,
+    ) -> Result<Value> {
+        self.post_multipart_message(&format!("/dms/{guild_id}/messages"), payload, image)
+            .await
+    }
+
+    pub async fn prepare_group_file_upload(
+        &self,
+        group_openid: &str,
+        payload: &UploadPreparePayload,
+    ) -> Result<UploadPrepareResponse> {
+        let value: Value = self
+            .post_json(
+                &format!("/v2/groups/{group_openid}/upload_prepare"),
+                payload,
+            )
+            .await?;
+        serde_json::from_value(value).map_err(QimenError::Json)
+    }
+
+    pub async fn prepare_c2c_file_upload(
+        &self,
+        openid: &str,
+        payload: &UploadPreparePayload,
+    ) -> Result<UploadPrepareResponse> {
+        let value: Value = self
+            .post_json(&format!("/v2/users/{openid}/upload_prepare"), payload)
+            .await?;
+        serde_json::from_value(value).map_err(QimenError::Json)
+    }
+
+    pub async fn finish_group_file_part(
+        &self,
+        group_openid: &str,
+        payload: &UploadPartFinishPayload,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v2/groups/{group_openid}/upload_part_finish"),
+            payload,
+        )
+        .await
+    }
+
+    pub async fn finish_c2c_file_part(
+        &self,
+        openid: &str,
+        payload: &UploadPartFinishPayload,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v2/users/{openid}/upload_part_finish"), payload)
+            .await
+    }
+
+    /// Upload local bytes through QQ's pre-signed multipart flow, then merge them into a group file.
+    pub async fn post_group_file_bytes(
+        &self,
+        group_openid: &str,
+        file_type: i64,
+        file_name: &str,
+        data: Bytes,
+        srv_send_msg: bool,
+    ) -> Result<Value> {
+        self.post_file_bytes(
+            "group_file",
+            group_openid,
+            file_type,
+            file_name,
+            data,
+            srv_send_msg,
+        )
+        .await
+    }
+
+    /// Upload local bytes through QQ's pre-signed multipart flow, then merge them into a C2C file.
+    pub async fn post_c2c_file_bytes(
+        &self,
+        openid: &str,
+        file_type: i64,
+        file_name: &str,
+        data: Bytes,
+        srv_send_msg: bool,
+    ) -> Result<Value> {
+        self.post_file_bytes("c2c_file", openid, file_type, file_name, data, srv_send_msg)
+            .await
+    }
+
+    /// Upload a single part to the pre-signed URL. QQ credentials are intentionally omitted.
+    pub async fn put_presigned_upload_part(&self, url: &str, data: Bytes) -> Result<()> {
+        let response = self.http.put(url).body(data).send().await.map_err(|err| {
+            QimenError::Transport(format!(
+                "qqbot pre-signed upload PUT failed: {}",
+                reqwest_error_kind(&err)
+            ))
+        })?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = response.text().await.unwrap_or_default();
+        let body = body.trim().chars().take(512).collect::<String>();
+        Err(QimenError::Transport(format!(
+            "qqbot pre-signed upload PUT failed with HTTP {}: {}",
+            status.as_u16(),
+            body
+        )))
+    }
+
     pub async fn recall_channel_message(
         &self,
         channel_id: &str,
@@ -333,6 +603,274 @@ impl QqBotOpenApiClient {
             &json!({ "code": code }),
         )
         .await
+    }
+
+    async fn post_file_bytes(
+        &self,
+        route: &str,
+        target_id: &str,
+        file_type: i64,
+        file_name: &str,
+        data: Bytes,
+        srv_send_msg: bool,
+    ) -> Result<Value> {
+        if !(1..=4).contains(&file_type) {
+            return Err(QimenError::Protocol(format!(
+                "qqbot file_type must be between 1 and 4, got {file_type}"
+            )));
+        }
+        if data.is_empty() {
+            return Err(QimenError::Protocol(
+                "qqbot local media cannot be empty".to_string(),
+            ));
+        }
+        let file_size = u64::try_from(data.len()).map_err(|_| {
+            QimenError::Protocol("qqbot local media size does not fit into u64".to_string())
+        })?;
+        if file_size > MAX_UPLOAD_BYTES {
+            return Err(QimenError::Protocol(format!(
+                "qqbot local media exceeds the 200 MB hard limit ({file_size} bytes)"
+            )));
+        }
+        let file_name = sanitize_file_name(file_name);
+        let digest_data = data.clone();
+        let (md5, sha1, md5_10m) = tokio::task::spawn_blocking(move || {
+            (
+                digest_hex::<Md5>(&digest_data),
+                digest_hex::<Sha1>(&digest_data),
+                digest_hex::<Md5>(&digest_data[..digest_data.len().min(MD5_10M_BYTES)]),
+            )
+        })
+        .await
+        .map_err(|_| QimenError::Transport("qqbot local media hashing task failed".to_string()))?;
+        let prepare_payload = UploadPreparePayload {
+            file_type,
+            file_size: file_size.to_string(),
+            file_name: file_name.clone(),
+            md5,
+            sha1,
+            md5_10m,
+        };
+
+        let prepared = match route {
+            "group_file" => {
+                self.prepare_group_file_upload(target_id, &prepare_payload)
+                    .await?
+            }
+            "c2c_file" => {
+                self.prepare_c2c_file_upload(target_id, &prepare_payload)
+                    .await?
+            }
+            _ => {
+                return Err(QimenError::Protocol(format!(
+                    "unsupported qqbot local upload route '{route}'"
+                )));
+            }
+        };
+        if prepared.upload_id.trim().is_empty() {
+            return Err(QimenError::Protocol(
+                "qqbot upload_prepare returned an empty upload_id".to_string(),
+            ));
+        }
+        let prepared_for_plan = prepared.clone();
+        let data_for_plan = data.clone();
+        let parts = tokio::task::spawn_blocking(move || {
+            plan_upload_parts(&prepared_for_plan, data_for_plan)
+        })
+        .await
+        .map_err(|_| {
+            QimenError::Transport("qqbot upload part hashing task failed".to_string())
+        })??;
+        let config = prepared.upload_config.clone().unwrap_or_default();
+        let concurrency = config.concurrency.clamp(1, MAX_UPLOAD_CONCURRENCY) as usize;
+        let retry_timeout = config.retry_timeout.clamp(1, MAX_PART_RETRY_SECONDS);
+        let total_upload_timeout = config.retry_timeout.clamp(1, 300);
+        let retry_delay = config.retry_delay.min(5);
+        let upload_id = prepared.upload_id.clone();
+
+        let upload_parts = stream::iter(parts.into_iter().map(|part| {
+            let upload_id = upload_id.clone();
+            async move {
+                self.upload_and_finish_part(
+                    route,
+                    target_id,
+                    &upload_id,
+                    part,
+                    retry_timeout,
+                    retry_delay,
+                )
+                .await
+            }
+        }))
+        .buffer_unordered(concurrency)
+        .try_collect::<Vec<_>>();
+        tokio::time::timeout(Duration::from_secs(total_upload_timeout), upload_parts)
+            .await
+            .map_err(|_| {
+                QimenError::Transport(format!(
+                    "qqbot upload timed out after {total_upload_timeout} seconds"
+                ))
+            })??;
+
+        let payload = UploadFilePayload {
+            file_type,
+            url: None,
+            srv_send_msg,
+            file_name: Some(file_name),
+            upload_id: Some(upload_id),
+        };
+        match route {
+            "group_file" => self.post_group_file(target_id, &payload).await,
+            "c2c_file" => self.post_c2c_file(target_id, &payload).await,
+            _ => unreachable!(),
+        }
+    }
+
+    async fn upload_and_finish_part(
+        &self,
+        route: &str,
+        target_id: &str,
+        upload_id: &str,
+        part: PlannedUploadPart,
+        retry_timeout_secs: u64,
+        retry_delay_secs: u64,
+    ) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(retry_timeout_secs);
+        let mut attempt = 0_u32;
+        let mut last_error = None;
+        loop {
+            attempt += 1;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() && attempt > 1 {
+                break;
+            }
+            let timeout = remaining
+                .min(self.config.timeout)
+                .max(Duration::from_millis(1));
+            let put_result = tokio::time::timeout(
+                timeout,
+                self.put_presigned_upload_part(&part.presigned_url, part.data.clone()),
+            )
+            .await
+            .map_err(|_| {
+                QimenError::Transport(format!(
+                    "qqbot pre-signed upload part {} timed out",
+                    part.index
+                ))
+            })
+            .and_then(|result| result);
+
+            match put_result {
+                Ok(()) => {
+                    let finish_payload = UploadPartFinishPayload {
+                        upload_id: upload_id.to_string(),
+                        part_index: part.index,
+                        block_size: part.data.len().to_string(),
+                        md5: part.md5.clone(),
+                    };
+                    let finish_result = match route {
+                        "group_file" => {
+                            self.finish_group_file_part(target_id, &finish_payload)
+                                .await
+                        }
+                        "c2c_file" => self.finish_c2c_file_part(target_id, &finish_payload).await,
+                        _ => unreachable!(),
+                    };
+                    match finish_result {
+                        Ok(_) => return Ok(()),
+                        Err(err) => last_error = Some(err),
+                    }
+                }
+                Err(err) => last_error = Some(err),
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if attempt >= 3 || remaining.is_zero() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(retry_delay_secs).min(remaining)).await;
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            QimenError::Transport(format!(
+                "qqbot upload part {} failed after retries",
+                part.index
+            ))
+        }))
+    }
+
+    async fn post_multipart_message(
+        &self,
+        path: &str,
+        payload: &SendMessagePayload,
+        image: LocalImagePayload,
+    ) -> Result<Value> {
+        let token = self.bot_authorization().await?;
+        let mut fields = serde_json::to_value(payload)?;
+        if let Some(fields) = fields.as_object_mut() {
+            fields.remove("message_reference");
+        }
+        let file_name = sanitize_file_name(&image.file_name);
+        let image_len = u64::try_from(image.data.len()).map_err(|_| {
+            QimenError::Protocol("QQ multipart image size does not fit into u64".to_string())
+        })?;
+        if tracing::enabled!(target: "qimen_raw_message", tracing::Level::DEBUG) {
+            let mut logged = fields.clone();
+            if let Some(logged) = logged.as_object_mut() {
+                logged.insert(
+                    "file_image".to_string(),
+                    json!({
+                        "file_name": file_name.clone(),
+                        "content_type": image.content_type.clone(),
+                        "size": image_len,
+                        "data": "<redacted>",
+                    }),
+                );
+            }
+            tracing::debug!(
+                target: "qimen_raw_message",
+                direction = "outbound",
+                protocol = "qq-official",
+                transport = "http-api-multipart",
+                appid = %self.config.appid,
+                path,
+                message = %logged,
+            );
+        }
+        let mut form = reqwest::multipart::Form::new();
+        if let Some(fields) = fields.as_object() {
+            for (key, value) in fields {
+                if value.is_null() {
+                    continue;
+                }
+                let text = match value {
+                    Value::String(value) => value.clone(),
+                    _ => serde_json::to_string(value)?,
+                };
+                form = form.text(key.clone(), text);
+            }
+        }
+        let part = reqwest::multipart::Part::stream_with_length(image.data.clone(), image_len)
+            .file_name(file_name)
+            .mime_str(&image.content_type)
+            .map_err(|err| {
+                QimenError::Protocol(format!("invalid QQ multipart media content type: {err}"))
+            })?;
+        form = form.part("file_image", part);
+
+        let response = self
+            .http
+            .post(format!("{}{}", self.config.base_url(), path))
+            .header("Authorization", token)
+            .header("X-Union-Appid", self.config.appid.as_str())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|err| {
+                QimenError::Transport(format!("qqbot POST multipart {path} failed: {err}"))
+            })?;
+
+        decode_response(response, path).await
     }
 
     async fn fetch_access_token(&self) -> Result<CachedAccessToken> {
@@ -464,6 +1002,123 @@ impl QqBotOpenApiClient {
 
 fn is_message_api_path(path: &str) -> bool {
     path.contains("/messages") || path.ends_with("/files")
+}
+
+fn digest_hex<D>(data: &[u8]) -> String
+where
+    D: md5::Digest + Default,
+{
+    let mut digest = D::default();
+    digest.update(data);
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn plan_upload_parts(
+    prepared: &UploadPrepareResponse,
+    data: Bytes,
+) -> Result<Vec<PlannedUploadPart>> {
+    if prepared.parts.is_empty() {
+        // A hash hit can complete as an instant upload with no bytes to PUT.
+        return Ok(Vec::new());
+    }
+    let mut parts = prepared.parts.clone();
+    parts.sort_by_key(|part| part.index);
+    let mut offset = 0_usize;
+    let mut planned = Vec::with_capacity(parts.len());
+    for (expected_index, part) in parts.into_iter().enumerate() {
+        if part.index != expected_index as u64 {
+            return Err(QimenError::Protocol(format!(
+                "qqbot upload parts must use contiguous indexes from 0; expected {expected_index}, got {}",
+                part.index
+            )));
+        }
+        if part.presigned_url.trim().is_empty() {
+            return Err(QimenError::Protocol(format!(
+                "qqbot upload part {} has an empty presigned_url",
+                part.index
+            )));
+        }
+        let remaining = data.len().saturating_sub(offset);
+        if remaining == 0 {
+            return Err(QimenError::Protocol(
+                "qqbot upload_prepare returned more parts than the file requires".to_string(),
+            ));
+        }
+        let requested = if part.block_size == 0 {
+            prepared.block_size
+        } else {
+            part.block_size
+        };
+        if requested == 0 {
+            return Err(QimenError::Protocol(format!(
+                "qqbot upload part {} has an invalid block_size",
+                part.index
+            )));
+        }
+        let length = remaining.min(usize::try_from(requested).map_err(|_| {
+            QimenError::Protocol("qqbot upload block_size does not fit into usize".to_string())
+        })?);
+        planned.push(PlannedUploadPart {
+            index: part.index,
+            presigned_url: part.presigned_url,
+            data: data.slice(offset..offset + length),
+            md5: digest_hex::<Md5>(&data[offset..offset + length]),
+        });
+        offset += length;
+    }
+    if offset != data.len() {
+        return Err(QimenError::Protocol(format!(
+            "qqbot upload parts cover {offset} bytes, but the file has {} bytes",
+            data.len()
+        )));
+    }
+    Ok(planned)
+}
+
+fn sanitize_file_name(file_name: &str) -> String {
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        return "qimenbot-media.bin".to_string();
+    }
+    let base_name = file_name
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("qimenbot-media.bin");
+    let sanitized = base_name
+        .chars()
+        .map(|character| {
+            if character.is_control() || matches!(character, '"' | '\'' | ';') {
+                '_'
+            } else {
+                character
+            }
+        })
+        .take(255)
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "qimenbot-media.bin".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn reqwest_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "request timed out"
+    } else if error.is_connect() {
+        "connection failed"
+    } else if error.is_request() {
+        "request could not be built or sent"
+    } else if error.is_body() {
+        "request body failed"
+    } else {
+        "network error"
+    }
 }
 
 async fn decode_response<T>(response: reqwest::Response, path: &str) -> Result<T>
@@ -846,6 +1501,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let base_url = format!("http://{addr}");
+        let response_base_url = base_url.clone();
 
         tokio::spawn(async move {
             loop {
@@ -853,6 +1510,7 @@ mod tests {
                     break;
                 };
                 let tx = tx.clone();
+                let response_base_url = response_base_url.clone();
                 tokio::spawn(async move {
                     let mut buffer = Vec::new();
                     let mut chunk = [0_u8; 1024];
@@ -885,14 +1543,14 @@ mod tests {
                         String::from_utf8_lossy(&buffer[body_start..body_start + content_length])
                             .to_string(),
                     );
-                    let response = mock_response(&request.path);
+                    let response = mock_response(&request.path, &response_base_url);
                     let _ = tx.send(request).await;
                     stream.write_all(response.as_bytes()).await.unwrap();
                 });
             }
         });
 
-        (format!("http://{addr}"), rx)
+        (base_url, rx)
     }
 
     fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -932,7 +1590,7 @@ mod tests {
         }
     }
 
-    fn mock_response(path: &str) -> String {
+    fn mock_response(path: &str, base_url: &str) -> String {
         let body = match path {
             "/app/getAppAccessToken" => json!({
                 "access_token": "mock-token",
@@ -959,6 +1617,46 @@ mod tests {
                 "file_info": "file-info",
                 "ttl": 3600,
             }),
+            "/v2/groups/group-instant/files" => json!({
+                "file_uuid": "instant-file-uuid",
+                "file_info": "instant-file-info",
+                "ttl": 3600,
+            }),
+            "/v2/groups/group-1/upload_prepare" | "/v2/users/user-1/upload_prepare" => json!({
+                "upload_id": "upload-1",
+                "block_size": "4",
+                "parts": [
+                    {
+                        "index": 0,
+                        "presigned_url": format!("{base_url}/presigned/0"),
+                        "block_size": "4",
+                    },
+                    {
+                        "index": 1,
+                        "presigned_url": format!("{base_url}/presigned/1"),
+                        "block_size": "4",
+                    },
+                ],
+                "upload_config": {
+                    "concurrency": 2,
+                    "retry_timeout": 5,
+                    "retry_delay": 0,
+                },
+            }),
+            "/v2/groups/group-instant/upload_prepare" => json!({
+                "upload_id": "instant-upload",
+                "block_size": "4",
+                "parts": [],
+                "upload_config": {
+                    "concurrency": 1,
+                    "retry_timeout": 5,
+                    "retry_delay": 0,
+                },
+            }),
+            "/v2/groups/group-1/upload_part_finish"
+            | "/v2/users/user-1/upload_part_finish"
+            | "/presigned/0"
+            | "/presigned/1" => json!({}),
             "/channels/channel-1/messages/message-1?hidetip=true"
             | "/v2/groups/group-1/messages/message-1"
             | "/v2/users/user-1/messages/message-1"
@@ -1351,6 +2049,209 @@ mod tests {
                     "srv_send_msg": false,
                 })
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn openapi_uploads_local_bytes_through_prepare_parts_and_merge() {
+        let (base_url, mut requests) = spawn_mock_server().await;
+        let client = QqBotOpenApiClient::new(mock_config(base_url)).unwrap();
+
+        let response = client
+            .post_group_file_bytes(
+                "group-1",
+                4,
+                "example.bin",
+                Bytes::from_static(b"abcdefgh"),
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.get("file_info").and_then(Value::as_str),
+            Some("file-info")
+        );
+        let token_request = requests.recv().await.unwrap();
+        assert_eq!(token_request.path, "/app/getAppAccessToken");
+
+        let mut recorded = Vec::new();
+        for _ in 0..6 {
+            recorded.push(requests.recv().await.unwrap());
+        }
+        let prepare = recorded
+            .iter()
+            .find(|request| request.path == "/v2/groups/group-1/upload_prepare")
+            .unwrap();
+        let prepare_body = serde_json::from_str::<Value>(&prepare.body).unwrap();
+        assert_eq!(
+            prepare_body.get("file_type").and_then(Value::as_i64),
+            Some(4)
+        );
+        assert_eq!(
+            prepare_body.get("file_size").and_then(Value::as_str),
+            Some("8")
+        );
+        assert_eq!(
+            prepare_body.get("file_name").and_then(Value::as_str),
+            Some("example.bin")
+        );
+        assert_eq!(
+            prepare_body.get("md5").and_then(Value::as_str),
+            Some("e8dc4081b13434b45189a720b77b6818")
+        );
+        assert_eq!(
+            prepare_body.get("sha1").and_then(Value::as_str),
+            Some("425af12a0743502b322e93a015bcf868e324d56a")
+        );
+        assert_eq!(prepare_body.get("md5"), prepare_body.get("md5_10m"));
+
+        let mut uploaded_chunks = recorded
+            .iter()
+            .filter(|request| request.path.starts_with("/presigned/"))
+            .collect::<Vec<_>>();
+        uploaded_chunks.sort_by(|left, right| left.path.cmp(&right.path));
+        assert_eq!(uploaded_chunks.len(), 2);
+        assert_eq!(uploaded_chunks[0].method, "PUT");
+        assert_eq!(uploaded_chunks[0].body, "abcd");
+        assert_eq!(uploaded_chunks[1].body, "efgh");
+        for request in uploaded_chunks {
+            assert!(header_value(request, "authorization").is_none());
+            assert!(header_value(request, "x-union-appid").is_none());
+        }
+
+        let finish = recorded
+            .iter()
+            .filter(|request| request.path == "/v2/groups/group-1/upload_part_finish")
+            .collect::<Vec<_>>();
+        assert_eq!(finish.len(), 2);
+        for request in finish {
+            let body = serde_json::from_str::<Value>(&request.body).unwrap();
+            assert_eq!(
+                body.get("upload_id").and_then(Value::as_str),
+                Some("upload-1")
+            );
+            assert_eq!(body.get("block_size").and_then(Value::as_str), Some("4"));
+            assert!(body.get("part_index").and_then(Value::as_u64).is_some());
+            assert_eq!(body.get("md5").and_then(Value::as_str).unwrap().len(), 32);
+        }
+
+        let merge = recorded
+            .iter()
+            .find(|request| request.path == "/v2/groups/group-1/files")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&merge.body).unwrap(),
+            json!({
+                "file_type": 4,
+                "srv_send_msg": false,
+                "file_name": "example.bin",
+                "upload_id": "upload-1",
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn openapi_merges_instant_upload_without_putting_parts() {
+        let (base_url, mut requests) = spawn_mock_server().await;
+        let client = QqBotOpenApiClient::new(mock_config(base_url)).unwrap();
+
+        let response = client
+            .post_group_file_bytes(
+                "group-instant",
+                1,
+                "cached.png",
+                Bytes::from_static(b"cached-image"),
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.get("file_info").and_then(Value::as_str),
+            Some("instant-file-info")
+        );
+        assert_eq!(
+            requests.recv().await.unwrap().path,
+            "/app/getAppAccessToken"
+        );
+        assert_eq!(
+            requests.recv().await.unwrap().path,
+            "/v2/groups/group-instant/upload_prepare"
+        );
+        let merge = requests.recv().await.unwrap();
+        assert_eq!(merge.path, "/v2/groups/group-instant/files");
+        assert_eq!(
+            serde_json::from_str::<Value>(&merge.body).unwrap(),
+            json!({
+                "file_type": 1,
+                "srv_send_msg": false,
+                "file_name": "cached.png",
+                "upload_id": "instant-upload",
+            })
+        );
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn openapi_posts_channel_and_dms_images_as_multipart() {
+        let (base_url, mut requests) = spawn_mock_server().await;
+        let client = QqBotOpenApiClient::new(mock_config(base_url)).unwrap();
+        let payload = SendMessagePayload {
+            msg_type: None,
+            content: Some("hello".to_string()),
+            msg_id: Some("message-1".to_string()),
+            msg_seq: None,
+            event_id: None,
+            is_wakeup: None,
+            markdown: None,
+            keyboard: None,
+            ark: None,
+            embed: None,
+            card: None,
+            input_notify: None,
+            message_reference: Some(json!({ "message_id": "ignored" })),
+            media: None,
+            image: None,
+        };
+        let image = LocalImagePayload {
+            data: Bytes::from_static(b"image-bytes"),
+            file_name: "image.png".to_string(),
+            content_type: "image/png".to_string(),
+        };
+
+        client
+            .post_channel_message_multipart("channel-1", &payload, image.clone())
+            .await
+            .unwrap();
+        client
+            .post_dms_message_multipart("guild-1", &payload, image)
+            .await
+            .unwrap();
+
+        let token_request = requests.recv().await.unwrap();
+        assert_eq!(token_request.path, "/app/getAppAccessToken");
+        for expected_path in ["/channels/channel-1/messages", "/dms/guild-1/messages"] {
+            let request = requests.recv().await.unwrap();
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.path, expected_path);
+            assert_eq!(
+                header_value(&request, "authorization"),
+                Some("QQBot mock-token")
+            );
+            assert!(
+                header_value(&request, "content-type")
+                    .is_some_and(|value| value.starts_with("multipart/form-data; boundary="))
+            );
+            assert!(request.body.contains("name=\"content\""));
+            assert!(request.body.contains("hello"));
+            assert!(request.body.contains("name=\"msg_id\""));
+            assert!(request.body.contains("message-1"));
+            assert!(request.body.contains("name=\"file_image\""));
+            assert!(request.body.contains("filename=\"image.png\""));
+            assert!(request.body.contains("Content-Type: image/png"));
+            assert!(request.body.contains("image-bytes"));
+            assert!(!request.body.contains("message_reference"));
         }
     }
 

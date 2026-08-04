@@ -140,7 +140,14 @@ chat.kind=channel_private -> send_dms
 
 有 `message_id` 时使用 `msg_id`；只有没有消息 ID 的事件才使用 `event_id`。群和 C2C 在实际发送前按 `bot + route + msg_id` 分配递增 `msg_seq`，同一状态一小时未更新后清理。这样一个命令产生多条回复时，不会重复使用 `msg_seq = 1`。
 
-`msg_id`、`event_id` 和 `is_wakeup=true` 在编码层再次检查互斥关系。媒体回复会先完成 `/files` 上传，再把 `file_info` 放入消息请求。
+`msg_id`、`event_id` 和 `is_wakeup=true` 在编码层再次检查互斥关系。媒体回复和动态插件主动发送调用同一个执行函数，避免两种入口出现不同的平台行为：
+
+- 群/C2C 公网 URL：调用 `/files`，再把响应中的 `file_info` 放入 `msg_type=7` 消息。
+- 群/C2C Base64：解码和限长后完成 `upload_prepare`、预签名分片 PUT、`upload_part_finish` 与 `/files` 合并。
+- 频道/DMS 公网图片：使用消息体的 `image` URL。
+- 频道/DMS Base64 图片：发送 `multipart/form-data` 的 `file_image`。
+
+Base64 解码前先按编码长度估算内存，解码后再次校验实际大小和文件头。图片、视频、语音和普通文件分别使用独立上限；错误消息只记录类型、大小和阶段，不记录 Base64 正文。分片 PUT 不经过 QQ 鉴权中间件，防止把机器人 token 发送到预签名对象存储地址。
 
 ## 命令路由
 

@@ -232,6 +232,16 @@ QimenBot 同时识别官方当前使用的 `<qqbot-at-user id="..." />` 提及�
 
 群和 C2C 媒体不能把普通 URL 直接放进消息体。QimenBot 会先调用对应 `/files` 接口，取回 `file_info`，再以 `msg_type = 7` 发送。测试 URL 必须能被 QQ 服务器访问；`localhost`、内网地址和需要登录的下载地址通常不可用。
 
+自研插件生成图片时，不需要先搭建图床。动态插件可以直接返回：
+
+```rust
+CommandResponse::builder()
+    .image_base64(&png_base64)
+    .build()
+```
+
+QQ 群和 C2C 会自动完成官方分片预上传，频道和 DMS 会自动改用 `file_image` multipart。图片 Base64 上限为 20 MB，支持的文件头包括 PNG、JPEG、GIF、WebP 和 BMP，初次验证建议使用 PNG。不要把本地路径或 `file://` 地址当作图片参数；插件应读取文件后编码为 Base64。
+
 ## 被动回复限制
 
 回复用户刚发来的消息属于被动回复。QQ 开放平台对回复窗口和次数有限制：
@@ -315,6 +325,17 @@ intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
 - Markdown 或 Keyboard 模板 ID 是否有效。
 - 机器人是否已经开通按钮、模板或对应富消息能力。
 - 群/C2C 是否使用了允许的 `msg_type`。
+
+### Base64 图片回复失败
+
+按日志中的失败阶段判断：
+
+- `invalid base64`：插件返回的不是完整 Base64，或把数据截断了。
+- `must be PNG...`：消息段标记为图片，但解码后的文件头不是受支持的图片格式。
+- `exceeds the 20 MB memory limit`：改用 QQ 可直接访问的 HTTPS URL。
+- `/upload_prepare` 或 `/upload_part_finish` 失败：检查官方媒体权限、文件类型、错误码和 `trace_id`。
+- 预签名 `PUT` 失败：通常是网络、超时或对象存储 URL 失效；不要手工给该 URL 添加 QQ 鉴权头。
+- 频道/DMS 返回 400 或 403：确认当前机器人和会话已开通图片发送能力，并在真实 DMS 会话中复测。
 
 ## 继续阅读
 

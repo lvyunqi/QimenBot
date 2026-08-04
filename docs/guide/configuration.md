@@ -136,6 +136,9 @@ plugin_state_path = "config/plugin-state.toml"
 
 # 动态插件扫描目录
 plugin_bin_dir = "plugins/bin"
+
+# 动态插件独立配置目录
+plugin_config_dir = "config/plugins"
 ```
 
 ### 内置模块列表
@@ -166,6 +169,14 @@ plugin_modules = ["example-plugin", "my-plugin"]
 ```toml
 plugin_bin_dir = "plugins/bin"
 ```
+
+`plugin_config_dir` 保存动态插件自己的 TOML 配置，默认是 `config/plugins`：
+
+```toml
+plugin_config_dir = "config/plugins"
+```
+
+文件名固定为 `<plugin_id>.toml`。API 0.6 插件可以在 Web 管理面板中生成表单并在线保存；手工编辑仍然支持。Docker 部署应把该目录放在持久化卷中，二进制部署应和 `plugin-state.toml` 一起备份。完整在线配置规则见 [动态插件 API 0.6 在线配置](/advanced/dynamic-config-v06)。
 
 ## `[[bots]]` — Bot 实例配置
 
@@ -383,6 +394,7 @@ builtin_modules = ["command", "admin", "scheduler"]
 plugin_modules  = ["example-plugin"]
 plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
+plugin_config_dir = "config/plugins"
 
 [official_host.proactive_send]
 queue_capacity = 256

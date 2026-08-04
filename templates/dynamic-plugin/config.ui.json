@@ -1,0 +1,14 @@
+{
+  "": {
+    "ui:order": ["background_push", "webhook_secret"]
+  },
+  "/background_push/message": {
+    "ui:widget": "textarea",
+    "rows": 4
+  },
+  "/background_push/interval_secs": {
+    "ui:widget": "slider",
+    "unit": "秒",
+    "step": 5
+  }
+}

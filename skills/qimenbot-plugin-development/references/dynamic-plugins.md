@@ -16,6 +16,7 @@
 - 完整教程：<https://lvyunqi.github.io/QimenBot/plugin/dynamic.html>
 - API 0.4+ 主动发送：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-proactive-send-v04.html>
 - API 0.5 Webhook：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-webhook-v05.html>
+- API 0.6 在线配置：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-config-v06.html>
 - crates.io Host API：<https://crates.io/crates/abi-stable-host-api>
 - crates.io 过程宏：<https://crates.io/crates/qimen-dynamic-plugin-derive>
 - 独立完整示例：<https://github.com/lvyunqi/QimenBot/tree/main/plugins/qimen-dynamic-plugin-example>
@@ -27,16 +28,21 @@
 |---|---|---|
 | QimenBot Release | `v0.1.17` | 宿主程序版本 |
 | crates.io 包版本 | `0.1.12` | Rust 依赖发布版本 |
-| 动态 ABI API | `api = "0.5"` | 插件与宿主协商的能力版本 |
+| 动态 ABI API | `api = "0.6"` | 插件与宿主协商的能力版本；包含在线配置契约 |
 
-本参考已用 crates.io `0.1.12` 验证。创建项目时先查询当前非 yanked 最新版，并让两个 QimenBot 专用 crate 使用同一版本：
+本仓库当前的 API 0.6 实现还没有发布到 crates.io。`abi-stable-host-api 0.1.12` 和
+`qimen-dynamic-plugin-derive 0.1.12` 只能用于 API 0.5 及更早版本。创建 API 0.6
+插件前，先检查配套 crate 是否已经发布；在发布前，独立仓库使用官方模板固定的
+公开 Git revision，不能使用本地 `path`、浮动分支或不存在的版本号：
 
 ```bash
 cargo search abi-stable-host-api --limit 1
 cargo search qimen-dynamic-plugin-derive --limit 1
 ```
 
-新插件显式使用 `api = "0.5"`。API 0.5 包含 API 0.4 的实时主动发送并增加 Webhook；省略 `api` 会生成兼容旧宿主的 API 0.3 插件，不应作为新项目默认值。
+如果两个包的同一版本明确写出 API 0.6 支持，再把依赖改成 crates.io 版本。API 0.6
+包含 API 0.5 的 Webhook 和实时主动发送；省略 `api` 会生成兼容旧宿主的 API 0.3
+插件，不应作为新项目默认值。只需要 Webhook、暂时不需要在线配置时，仍可使用 API 0.5。
 
 ## 无主框架源码的完整起步流程
 
@@ -60,11 +66,13 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.12"
-qimen-dynamic-plugin-derive = "0.1.12"
+abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
+qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
 abi_stable = "0.11"
 serde_json = "1"
 ```
+
+上面的 revision 是 API 0.6 正式发布前的固定源码快照。两个配套 crate 发布后，先确认同一版本明确支持 API 0.6，再一起切换到 crates.io。只开发 API 0.5 插件时可以直接使用两个 `0.1.12` 依赖。
 
 空 `[workspace]` 只用于把 QimenBot 源码树内的动态插件与根工作区隔离。仓库外的独立项目不需要它；从本仓库模板复制出去时可以保留，也可以删除。禁止把外部插件依赖写成 QimenBot 本地 path。
 
@@ -76,7 +84,7 @@ use abi_stable_host_api::{
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-#[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.5")]
+#[dynamic_plugin(id = "my-plugin", version = "0.1.0", api = "0.6")]
 mod plugin {
     use super::*;
 
@@ -171,9 +179,18 @@ CommandResponse::builder()
     .build_auto()
 ```
 
-可用 `.text()`、`.at()`、`.at_all()`、`.face()`、`.image_url()`、`.image_base64()`、`.record()`、`.reply()`。简单回复使用 `CommandResponse::text()`，不回复使用 `CommandResponse::ignore()`。
+可用 `.text()`、`.at()`、`.at_all()`、`.face()`、`.image_url()`、`.image_base64()`、`.record()`、`.reply()`。当前 API 0.6 源码还提供 `.record_url()`、`.record_base64()`、`.video_url()`、`.video_base64()`、`.file_url(url, file_name)` 和 `.file_base64(base64, file_name)`。简单回复使用 `CommandResponse::text()`，不回复使用 `CommandResponse::ignore()`。
 
-富消息在不同协议上的支持不同。官方 QQ Bot 的 ID、媒体上传和回复额度由宿主约束；插件应优先返回通用段并检查真实平台测试结果。
+`image_base64()` 已存在于 crates.io `0.1.12`，旧插件不改 ABI 即可由新版宿主解释。其余媒体便捷方法需要 API 0.6 Git revision 或后续正式发布的配套 crate；不要告诉使用 `0.1.12` 的插件调用尚未发布的方法。
+
+官方 QQ Bot 本地媒体由宿主上传，动态插件不得自行取得或绕过宿主凭据：
+
+- 群/C2C 的 Base64 图片、MP4、SILK 和文件：宿主执行 `upload_prepare`、预签名分片 PUT、`upload_part_finish`、`/files(upload_id)`，再发送 `media.file_info`。
+- 频道/DMS 的 Base64 图片：宿主使用 `multipart/form-data` 的 `file_image`；不支持本地视频、语音或普通文件。
+- 图片、视频、语音、文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB；更大媒体使用 QQ 可访问的 HTTPS URL。
+- 消息段中的 Windows/Linux 本地路径和 `file://` 不会由宿主读取。插件应读取文件并编码为 Base64，且不能把 Base64 正文写入日志。
+
+富消息在不同协议上的支持不同。官方 QQ Bot 的 ID、媒体上传、消息格式和回复额度由宿主约束；插件应优先返回通用段并检查真实平台测试结果。
 
 ## 配置与生命周期
 
@@ -190,15 +207,63 @@ message = "hello"
 
 `#[shutdown]` 必须释放文件、数据库、socket、线程和全局状态。热重载顺序是：停止路由、调用 shutdown、等待回调安全结束、解绑 Host API、卸载动态库、重新扫描并 init 新库。
 
+## API 0.6 在线配置
+
+API 0.6 插件可以在 `#[dynamic_plugin]` 上声明 `config_schema`，宿主会把 Schema
+编入动态库并在管理面板中显示“配置”入口。完整的 Schema、UI Schema、密钥保留、
+revision 冲突和回滚说明见 [API 0.6 在线配置](online-configuration.md)。这里保留
+开发时最容易遗漏的约束：
+
+```rust
+#[dynamic_plugin(
+    id = "my-plugin",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "reload"
+)]
+mod plugin {
+    #[validate_config]
+    fn validate(request: &PluginConfigRequest) -> PluginConfigResult {
+        // 这里只做依赖运行时状态的业务校验；类型、范围和必填项由宿主 Schema 校验。
+        let _ = request;
+        PluginConfigResult::ok()
+    }
+}
+```
+
+- `config_schema` 必须指向根节点 `type: "object"` 的 JSON Schema；`config_ui` 可选，
+  只能描述控件，不允许注入 HTML 或 JavaScript。
+- Schema 和 UI Schema 只允许本地 `$ref`，单个文件最大 256 KiB。远程引用会在加载时
+  拒绝，避免管理面板依赖外部网络。
+- `config_apply` 只能是 `live`、`reload` 或 `restart`。`live` 必须同时导出
+  `#[config_change]`，并在回调失败时恢复旧状态；`reload` 要保证 `init` 可重复调用；
+  `restart` 保存后只标记宿主需要重启。
+- `#[validate_config]` 和 `#[config_change]` 都是同步 FFI 回调，不能执行长时间网络请求。
+  回调收到的是完整 JSON 和配置版本，不要把密钥写入日志。
+- 宿主默认从 `official_host.plugin_config_dir`（默认 `config/plugins`）读取和写入
+  `<plugin_id>.toml`。管理 API 会原子写入、保留最多 20 份备份，并用 revision 防止
+  两个浏览器窗口互相覆盖。
+- `writeOnly: true`、`x-qimen-secret: true` 或 `format: "password"` 的字段不会回传
+  明文。更新密钥必须通过面板的密钥专用通道；插件仍应把缺少密钥视为“未配置”，不要
+  用默认值伪造凭据。
+
+API 0.6 的最小验证方式：先在宿主中加载示例插件，确认 `/plugins` 显示配置能力，
+再分别测试默认值、条件字段、对象数组增删移动、密钥保留、保存冲突和每种生效模式。
+没有真实宿主时，至少运行插件自身的 `cargo check --locked`、`cargo test --locked` 和
+宿主管理 API 的配置测试。
+
 ## 主动发送：区分旧队列和实时 Host API
 
 | 写法 | 可用位置 | 行为 |
 |---|---|---|
 | `BotApi::send_group_msg(...)` | 所有 API 的同步回调内 | 写入插件本地兼容队列，当前 FFI 回调返回后 flush |
 | `SendBuilder::group(...).send()` | 所有 API 的同步回调内 | 同上；不能用于脱离回调长期运行的线程 |
-| `BotApi::for_bot(...).send_*()` | API 0.4/0.5 | 立即提交宿主实时队列，可用于后台线程 |
-| `BotApi::for_account(...).send_*()` | crates 0.1.12 + API 0.4/0.5 | 按稳定账号选择 Bot |
-| `SendBuilder...bot(...).try_send()` | API 0.4/0.5 | 富媒体实时提交并返回状态 |
+| `BotApi::for_bot(...).send_*()` | API 0.4/0.5/0.6 | 立即提交宿主实时队列，可用于后台线程 |
+| `BotApi::for_account(...).send_*()` | 已发布的 API 0.4+ crate | 按稳定账号选择 Bot |
+| `SendBuilder...bot(...).try_send()` | API 0.4/0.5/0.6 | 富媒体实时提交并返回状态 |
 
 优先使用稳定 `account_id`，避免部署实例 `bot_id` 改名后修改插件：
 
@@ -215,7 +280,7 @@ let status = SendBuilder::channel("channel-id")
 
 检查 `SendEnqueueStatus`：`Accepted` 表示宿主已接收入队；其余状态包括 `HostUnavailable`、`InvalidRequest`、`BotNotFound`、`BotDisabled`、`QueueFull` 和 `HostShuttingDown`。失败重试必须限次并退避，不能压满队列。
 
-后台线程可以在 API 0.5 插件的 `#[init]` 中启动，但必须持有停止信号与 `JoinHandle`：
+后台线程可以在 API 0.5 或 0.6 插件的 `#[init]` 中启动，但必须持有停止信号与 `JoinHandle`：
 
 ```rust
 #[shutdown]
@@ -230,7 +295,7 @@ fn shutdown() {
 
 动态库卸载后仍运行的线程会调用失效代码并导致进程崩溃，这是必须阻止的边界。
 
-## API 0.5 Webhook
+## API 0.5/0.6 Webhook
 
 ```rust
 #[webhook(method = "POST", path = "/events")]

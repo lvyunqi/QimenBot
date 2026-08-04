@@ -356,15 +356,16 @@ fn encode_upload_media_action(req: &NormalizedActionRequest) -> Result<Value> {
                 .and_then(qqbot_file_type)
         })
         .unwrap_or(1);
-    let url = req
+    let source = req
         .params
         .get("url")
         .or_else(|| req.params.get("file"))
+        .or_else(|| req.params.get("base64"))
         .cloned();
     let upload_id = req.params.get("upload_id").cloned();
-    if url.is_none() && upload_id.is_none() {
+    if source.is_none() && upload_id.is_none() {
         return Err(QimenError::Protocol(
-            "qqbot upload_media action requires url or upload_id".to_string(),
+            "qqbot upload_media action requires url, base64, or upload_id".to_string(),
         ));
     }
     let srv_send_msg = req
@@ -378,14 +379,30 @@ fn encode_upload_media_action(req: &NormalizedActionRequest) -> Result<Value> {
     payload.insert(target.1.to_string(), target.2);
     payload.insert("file_type".to_string(), json!(file_type));
     payload.insert("srv_send_msg".to_string(), Value::Bool(srv_send_msg));
-    if let Some(url) = url {
-        payload.insert("url".to_string(), url);
+    if let Some(source) = source {
+        let source = value_to_action_string(&source).ok_or_else(|| {
+            QimenError::Protocol("qqbot upload_media source must be a string".to_string())
+        })?;
+        let (url, base64) = split_media_source(&source).ok_or_else(|| {
+            QimenError::Protocol(
+                "qqbot upload_media source must be an http(s) URL or base64 data".to_string(),
+            )
+        })?;
+        if let Some(url) = url {
+            payload.insert("url".to_string(), Value::String(url));
+        }
+        if let Some(base64) = base64 {
+            payload.insert("base64".to_string(), Value::String(base64));
+        }
     }
     if let Some(upload_id) = upload_id {
         payload.insert("upload_id".to_string(), upload_id);
     }
     if let Some(file_name) = req.params.get("file_name").cloned() {
         payload.insert("file_name".to_string(), file_name);
+    }
+    if let Some(content_type) = req.params.get("content_type").cloned() {
+        payload.insert("content_type".to_string(), content_type);
     }
     Ok(Value::Object(payload))
 }
@@ -1412,20 +1429,20 @@ fn build_qqbot_send_payload(
         })?;
     let mut message = encode_action_message(req);
     let group_or_c2c = matches!(route, "group_message" | "c2c_message");
-    if group_or_c2c && message.media.is_none() {
-        if message.upload.is_none()
-            && let Some(image) = message.image.as_deref()
-            && is_remote_media_url(image)
-        {
-            message.upload = Some(EncodedMediaUpload {
-                file_type: 1,
-                url: image.to_string(),
-                srv_send_msg: false,
-            });
-        }
-        if message.upload.is_some() && message.markdown.is_none() && message.msg_type.is_none() {
-            message.msg_type = Some(7);
-        }
+    if message.media.is_none()
+        && message.upload.is_none()
+        && let Some(image) = message.image.as_deref()
+        && let Some(upload) = encoded_media_upload(1, image, None, None)
+    {
+        message.upload = Some(upload);
+    }
+    if group_or_c2c
+        && message.media.is_none()
+        && message.upload.is_some()
+        && message.markdown.is_none()
+        && message.msg_type.is_none()
+    {
+        message.msg_type = Some(7);
     }
 
     if group_or_c2c && message.upload.is_some() {
@@ -1433,10 +1450,14 @@ fn build_qqbot_send_payload(
     } else if !group_or_c2c && let Some(upload) = message.upload.take() {
         if upload.file_type != 1 {
             return Err(QimenError::Protocol(format!(
-                "qqbot {route} only supports image URL media"
+                "qqbot {route} only supports image media"
             )));
         }
-        message.image = Some(upload.url);
+        if let Some(url) = upload.url {
+            message.image = Some(url);
+        } else {
+            message.upload = Some(upload);
+        }
     }
 
     if message.ark.is_some() && message.embed.is_some() {
@@ -1465,7 +1486,7 @@ fn build_qqbot_send_payload(
             }
             if message.image.is_some() {
                 return Err(QimenError::Protocol(
-                    "qqbot group image messages require an http(s) media URL".to_string(),
+                    "qqbot group image messages require a supported media source".to_string(),
                 ));
             }
             if !matches!(msg_type, Some(0 | 2 | 7 | 8)) {
@@ -1484,7 +1505,7 @@ fn build_qqbot_send_payload(
             }
             if message.image.is_some() {
                 return Err(QimenError::Protocol(
-                    "qqbot c2c image messages require an http(s) media URL".to_string(),
+                    "qqbot c2c image messages require a supported media source".to_string(),
                 ));
             }
             if !matches!(msg_type, Some(0 | 2 | 6 | 7)) {
@@ -1635,11 +1656,7 @@ fn build_qqbot_send_payload(
     if let Some(upload) = message.upload {
         payload.insert(
             "media_upload".to_string(),
-            json!({
-                "file_type": upload.file_type,
-                "url": upload.url,
-                "srv_send_msg": upload.srv_send_msg,
-            }),
+            encoded_media_upload_value(&upload),
         );
     }
     if !message.unsupported_segments.is_empty() {
@@ -1673,7 +1690,10 @@ struct EncodedActionMessage {
 #[derive(Debug, Clone)]
 struct EncodedMediaUpload {
     file_type: i64,
-    url: String,
+    url: Option<String>,
+    base64: Option<String>,
+    file_name: Option<String>,
+    content_type: Option<String>,
     srv_send_msg: bool,
 }
 
@@ -1867,8 +1887,10 @@ fn encode_message_segments(message: &Message) -> EncodedActionMessage {
                 if encoded.upload.is_none()
                     && let Some(upload) = media_upload_from_segment(segment)
                 {
-                    if segment.kind == "image" {
-                        encoded.image = Some(upload.url.clone());
+                    if segment.kind == "image"
+                        && let Some(url) = upload.url.as_ref()
+                    {
+                        encoded.image = Some(url.clone());
                     }
                     encoded.upload = Some(upload);
                 } else {
@@ -2075,23 +2097,84 @@ fn normalize_keyboard_button_payload(
 
 fn media_upload_from_segment(segment: &Segment) -> Option<EncodedMediaUpload> {
     let file_type = qqbot_file_type(segment.kind.as_str())?;
-    let url = segment
+    let source = segment
         .data
         .get("url")
         .or_else(|| segment.data.get("file"))
+        .or_else(|| segment.data.get("base64"))
         .and_then(value_to_action_string)?;
-    if !is_remote_media_url(&url) {
-        return None;
-    }
-    Some(EncodedMediaUpload {
+    encoded_media_upload(
         file_type,
-        url,
-        srv_send_msg: false,
-    })
+        &source,
+        segment
+            .data
+            .get("file_name")
+            .or_else(|| segment.data.get("name"))
+            .and_then(value_to_action_string),
+        segment
+            .data
+            .get("content_type")
+            .or_else(|| segment.data.get("mime_type"))
+            .and_then(value_to_action_string),
+    )
 }
 
 fn is_remote_media_url(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn split_media_source(value: &str) -> Option<(Option<String>, Option<String>)> {
+    if is_remote_media_url(value) {
+        return Some((Some(value.to_string()), None));
+    }
+    if let Some(value) = value.strip_prefix("base64://") {
+        return (!value.is_empty()).then(|| (None, Some(value.to_string())));
+    }
+    if value.starts_with("data:") && value.contains(";base64,") {
+        return Some((None, Some(value.to_string())));
+    }
+    // A value supplied through the explicit `base64` field may omit the
+    // `base64://` prefix. Runtime validation still rejects malformed data.
+    (!value.is_empty() && !value.contains("://")).then(|| (None, Some(value.to_string())))
+}
+
+fn encoded_media_upload(
+    file_type: i64,
+    source: &str,
+    file_name: Option<String>,
+    content_type: Option<String>,
+) -> Option<EncodedMediaUpload> {
+    let (url, base64) = split_media_source(source)?;
+    Some(EncodedMediaUpload {
+        file_type,
+        url,
+        base64,
+        file_name,
+        content_type,
+        srv_send_msg: false,
+    })
+}
+
+fn encoded_media_upload_value(upload: &EncodedMediaUpload) -> Value {
+    let mut value = Map::new();
+    value.insert("file_type".to_string(), json!(upload.file_type));
+    if let Some(url) = upload.url.as_ref() {
+        value.insert("url".to_string(), Value::String(url.clone()));
+    }
+    if let Some(base64) = upload.base64.as_ref() {
+        value.insert("base64".to_string(), Value::String(base64.clone()));
+    }
+    if let Some(file_name) = upload.file_name.as_ref() {
+        value.insert("file_name".to_string(), Value::String(file_name.clone()));
+    }
+    if let Some(content_type) = upload.content_type.as_ref() {
+        value.insert(
+            "content_type".to_string(),
+            Value::String(content_type.clone()),
+        );
+    }
+    value.insert("srv_send_msg".to_string(), Value::Bool(upload.srv_send_msg));
+    Value::Object(value)
 }
 
 fn value_to_action_string(value: &Value) -> Option<String> {
@@ -3039,6 +3122,51 @@ mod tests {
             video_packet.payload.get("msg_type").and_then(Value::as_i64),
             Some(7)
         );
+    }
+
+    #[tokio::test]
+    async fn encode_inline_base64_media_for_group_and_channel() {
+        let image = format!(
+            "base64://{}",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        );
+        let message =
+            Message::from_segments(vec![Segment::new("image").with("file", json!(image))]);
+
+        let group_packet = QqBotAdapter
+            .encode_action(&action(
+                "send_group_msg",
+                json!({
+                    "group_openid": "group-openid",
+                    "message": message.to_onebot_value(),
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            group_packet
+                .payload
+                .get("media_upload")
+                .and_then(|value| value.get("base64"))
+                .and_then(Value::as_str),
+            Some(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            )
+        );
+        assert!(group_packet.payload.get("image").is_none());
+
+        let channel_packet = QqBotAdapter
+            .encode_action(&action(
+                "send_channel_msg",
+                json!({
+                    "channel_id": "channel-1",
+                    "message": message.to_onebot_value(),
+                }),
+            ))
+            .await
+            .unwrap();
+        assert!(channel_packet.payload.get("image").is_none());
+        assert!(channel_packet.payload.get("media_upload").is_some());
     }
 
     #[tokio::test]

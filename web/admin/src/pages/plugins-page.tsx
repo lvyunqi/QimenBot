@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   Boxes,
@@ -12,6 +12,7 @@ import {
   Settings2,
   ShieldCheck,
   Webhook,
+  LoaderCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -20,6 +21,12 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+
+const PluginConfigDrawer = lazy(() =>
+  import("@/components/plugin-config/plugin-config-drawer").then((module) => ({
+    default: module.PluginConfigDrawer,
+  })),
+)
 
 type PluginFilter = "all" | "builtin" | "static" | "dynamic" | "issues"
 
@@ -43,6 +50,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState<PluginFilter>("all")
   const [query, setQuery] = useState("")
+  const [configPlugin, setConfigPlugin] = useState<PluginView | null>(null)
 
   const load = async () => {
     setPlugins(await api.plugins())
@@ -81,6 +89,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
         plugin.file_name,
         plugin.version,
         plugin.api_version,
+        plugin.config_apply_mode,
         ...plugin.commands,
         ...plugin.routes,
         ...(plugin.system_plugins ?? []),
@@ -120,6 +129,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
   }
 
   return (
+    <>
     <main className="page-shell">
       <div className="page-heading enter-item">
         <div>
@@ -183,6 +193,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
             busy={busy}
             onToggle={toggle}
             onOpenConfig={onOpenConfig}
+            onConfigure={setConfigPlugin}
             key={plugin.kind + plugin.id}
             delay={Math.min(index, 8) * 35}
           />
@@ -194,6 +205,21 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
         )}
       </section>
     </main>
+    {configPlugin && (
+      <Suspense fallback={
+        <div className="plugin-config-lazy" role="status">
+          <LoaderCircle className="animate-spin-slow" />
+          <span>正在打开插件配置</span>
+        </div>
+      }>
+        <PluginConfigDrawer
+          plugin={configPlugin}
+          onOpenChange={(open) => { if (!open) setConfigPlugin(null) }}
+          onSaved={load}
+        />
+      </Suspense>
+    )}
+    </>
   )
 }
 
@@ -202,12 +228,14 @@ function PluginCard({
   busy,
   onToggle,
   onOpenConfig,
+  onConfigure,
   delay,
 }: {
   plugin: PluginView
   busy: boolean
   onToggle: (plugin: PluginView, enabled: boolean) => Promise<void>
   onOpenConfig?: () => void
+  onConfigure: (plugin: PluginView) => void
   delay: number
 }) {
   const status = pluginStatus(plugin)
@@ -244,7 +272,7 @@ function PluginCard({
         <Metadata label="版本" value={plugin.version || "未声明"} />
         <Metadata label="API" value={plugin.api_version || (plugin.kind === "builtin" ? "内部" : "未声明")} />
         <Metadata label="来源" value={plugin.file_name || kindLabel(plugin.kind)} title={plugin.file_name ?? undefined} />
-        <Metadata label="生效" value={plugin.live_toggle ? "即时" : plugin.kind === "builtin" ? "随宿主" : "重启后"} />
+        <Metadata label="配置" value={configCapabilityLabel(plugin)} />
       </div>
 
       <div className="plugin-capability-counts" aria-label="能力统计">
@@ -281,14 +309,22 @@ function PluginCard({
         ) : plugin.kind === "builtin" ? (
           <Badge variant="neutral">由配置管理</Badge>
         ) : (
-          <div className="plugin-switch">
-            <span>{plugin.enabled ? "已启用" : "已停用"}</span>
-            <Switch
-              checked={plugin.enabled}
-              disabled={busy || !canToggle}
-              aria-label={(plugin.enabled ? "停用 " : "启用 ") + plugin.id}
-              onCheckedChange={(enabled) => void onToggle(plugin, enabled)}
-            />
+          <div className="plugin-card-actions">
+            {plugin.configurable && (
+              <Button variant="outline" size="sm" onClick={() => onConfigure(plugin)} disabled={busy}>
+                <Settings2 />
+                {plugin.config_file_exists ? "配置" : "设置"}
+              </Button>
+            )}
+            <div className="plugin-switch">
+              <span>{plugin.enabled ? "已启用" : "已停用"}</span>
+              <Switch
+                checked={plugin.enabled}
+                disabled={busy || !canToggle}
+                aria-label={(plugin.enabled ? "停用 " : "启用 ") + plugin.id}
+                onCheckedChange={(enabled) => void onToggle(plugin, enabled)}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -383,4 +419,12 @@ function activationDescription(plugin: PluginView) {
   if (plugin.kind === "builtin") return "内置模块通过全局模块配置加载。"
   if (plugin.live_toggle) return "启停与重新扫描会直接应用到运行时。"
   return "开关写入插件状态文件，不会中断当前进程。"
+}
+
+function configCapabilityLabel(plugin: PluginView) {
+  if (plugin.kind !== "dynamic") return "宿主配置"
+  if (!plugin.configurable) return "未声明"
+  if (plugin.config_apply_mode === "live") return plugin.config_file_exists ? "即时 · 已配置" : "即时 · 待设置"
+  if (plugin.config_apply_mode === "reload") return plugin.config_file_exists ? "重载 · 已配置" : "重载 · 待设置"
+  return plugin.config_file_exists ? "重启 · 已配置" : "重启 · 待设置"
 }

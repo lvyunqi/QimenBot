@@ -129,6 +129,7 @@ pub struct GeneralConfigView {
     pub plugin_modules: Vec<String>,
     pub plugin_state_path: String,
     pub plugin_bin_dir: String,
+    pub plugin_config_dir: String,
     pub dynamic_plugin_timeout_secs: u64,
     pub proactive_queue_capacity: usize,
     pub proactive_offline_ttl_secs: u64,
@@ -169,6 +170,7 @@ pub struct GeneralMutation {
     pub plugin_modules: Vec<String>,
     pub plugin_state_path: String,
     pub plugin_bin_dir: String,
+    pub plugin_config_dir: String,
     pub dynamic_plugin_timeout_secs: u64,
     pub proactive_queue_capacity: usize,
     pub proactive_offline_ttl_secs: u64,
@@ -258,6 +260,10 @@ pub struct PluginView {
     pub failures: u32,
     pub last_error: Option<String>,
     pub live_toggle: bool,
+    pub configurable: bool,
+    pub config_apply_mode: Option<String>,
+    pub config_version: Option<u32>,
+    pub config_file_exists: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -314,6 +320,7 @@ pub fn general_view(config: &AppConfig) -> GeneralConfigView {
         plugin_modules: config.official_host.plugin_modules.clone(),
         plugin_state_path: config.official_host.plugin_state_path.clone(),
         plugin_bin_dir: config.official_host.plugin_bin_dir.clone(),
+        plugin_config_dir: config.official_host.plugin_config_dir.clone(),
         dynamic_plugin_timeout_secs: config.official_host.dynamic_plugin_timeout_secs,
         proactive_queue_capacity: config.official_host.proactive_send.queue_capacity,
         proactive_offline_ttl_secs: config.official_host.proactive_send.offline_ttl_secs,

@@ -12,7 +12,7 @@
     "release_tag": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
     "channel": { "enum": ["stable", "prerelease"] },
     "qimenbot": { "type": "string", "minLength": 1 },
-    "dynamic_api": { "enum": ["0.1", "0.2", "0.3", "0.4", "0.5"] },
+    "dynamic_api": { "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"] },
     "yanked": { "type": "boolean" },
     "data_schema_version": { "type": "integer", "minimum": 0 },
     "rollback_safe": { "type": "boolean" },

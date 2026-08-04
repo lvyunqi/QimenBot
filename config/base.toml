@@ -80,6 +80,8 @@ plugin_state_path = "config/plugin-state.toml"
 
 # 动态插件（.so/.dll/.dylib）的扫描目录
 plugin_bin_dir = "plugins/bin"
+# 动态插件独立配置目录，文件名必须与插件 ID 一致。
+plugin_config_dir = "config/plugins"
 
 # 单次动态插件 FFI 回调的执行超时时间（秒）
 # 超时后宿主会记录错误并停止等待该次调用，避免插件长期阻塞事件分发

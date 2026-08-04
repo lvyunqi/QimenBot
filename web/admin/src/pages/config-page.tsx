@@ -445,6 +445,9 @@ function PluginsSection({
         <Field label="动态插件目录" hint="扫描 DLL、SO 和 dylib 的目录。">
           <Input value={general.plugin_bin_dir} onChange={(event) => patch({ plugin_bin_dir: event.target.value })} />
         </Field>
+        <Field label="插件配置目录" hint="保存可在线编辑的插件 TOML 配置。">
+          <Input value={general.plugin_config_dir} onChange={(event) => patch({ plugin_config_dir: event.target.value })} />
+        </Field>
         <NumberField
           label="动态插件超时"
           hint="单次 FFI 回调的执行上限。"
@@ -842,6 +845,8 @@ function ModulePicker({
         webhooks: [],
         failures: 0,
         live_toggle: false,
+        configurable: false,
+        config_file_exists: false,
       })),
   ].sort((left, right) => Number(values.includes(right.id)) - Number(values.includes(left.id)) || left.id.localeCompare(right.id))
 

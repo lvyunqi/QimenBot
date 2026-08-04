@@ -280,6 +280,7 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
     document["official_host"]["plugin_modules"] = string_array(&update.plugin_modules);
     document["official_host"]["plugin_state_path"] = value(update.plugin_state_path.trim());
     document["official_host"]["plugin_bin_dir"] = value(update.plugin_bin_dir.trim());
+    document["official_host"]["plugin_config_dir"] = value(update.plugin_config_dir.trim());
     document["official_host"]["dynamic_plugin_timeout_secs"] =
         value(update.dynamic_plugin_timeout_secs as i64);
     document["official_host"]["proactive_send"]["queue_capacity"] =

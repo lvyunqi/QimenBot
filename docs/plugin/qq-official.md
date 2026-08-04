@@ -247,8 +247,9 @@ async fn buttons(&self) -> Message {
 | 文本 | 支持，`msg_type=0` | 支持，`msg_type=0` | 支持 | 最先用于连通测试 |
 | Markdown | 支持，`msg_type=2` | 支持，`msg_type=2` | 支持 | 模板能力取决于平台权限 |
 | Keyboard | 支持 | 支持 | 支持 | 通常与 Markdown 一起发送 |
-| 图片 URL | 先上传媒体 | 先上传媒体 | 使用频道图片字段 | URL 必须能由公网访问 |
-| 语音、视频、文件 | 先上传媒体 | 先上传媒体 | 当前通用适配不发送群/C2C media 字段 | 群/C2C 使用 `msg_type=7` |
+| 图片 URL | 先上传媒体 | 先上传媒体 | 使用频道 `image` 字段 | URL 必须能由 QQ 服务器访问 |
+| 本地图片 / Base64 | 分片上传 | 分片上传 | `multipart/form-data` 的 `file_image` | 频道和 DMS 只接受图片 |
+| 本地语音、视频、文件 | 分片上传 | 分片上传 | 不支持 | 群/C2C 使用 `msg_type=7` |
 | Card | 支持，`msg_type=8` | 不支持 | 当前不发送群专用 Card | 以官方能力开放为准 |
 | Input notify | 不支持 | 支持，`msg_type=6` | 不支持 | C2C 输入状态通知 |
 | Ark | 不支持 | 不支持 | 支持 | 不能与 Embed 同时发送 |
@@ -269,7 +270,7 @@ async fn photo(&self) -> Message {
 }
 ```
 
-群和 C2C 下的执行顺序为：
+公网 URL 的执行顺序为：
 
 ```text
 图片/语音/视频/文件 URL
@@ -279,7 +280,60 @@ async fn photo(&self) -> Message {
   -> POST /messages，msg_type=7，media.file_info=...
 ```
 
-当前高层消息适配使用可公开访问的 `http://` 或 `https://` URL。传本地路径、`file://`、内网 URL 或带临时登录 Cookie 的地址不会变成可用的官方媒体。
+URL 必须使用 `http://` 或 `https://`，并且能由 QQ 服务器直接访问。`localhost`、内网地址、`file://` 和需要登录 Cookie 的下载地址不能用于这条路径。
+
+插件在内存中生成的媒体不需要先上传到自己的服务器。静态插件可以返回 `base64://...` 消息段；动态插件直接使用 builder：
+
+```rust
+CommandResponse::builder()
+    .image_base64(&png_base64)
+    .build()
+```
+
+群和 C2C 收到 Base64 段后，宿主执行完整的官方本地文件流程：
+
+```text
+Base64 解码和格式校验
+  -> POST /upload_prepare（文件大小、文件名、MD5、SHA1、前 10002432 字节 MD5）
+  <- upload_id、分片大小、预签名 URL、并发和重试参数
+  -> PUT 每个预签名 URL（不携带 QQ Authorization）
+  -> POST /upload_part_finish（逐片确认）
+  -> POST /files { upload_id, file_type, file_name, srv_send_msg }
+  <- file_info
+  -> POST /messages { msg_type: 7, media: { file_info } }
+```
+
+被动回复和 API 0.4+ 主动发送共用这条执行路径。插件不需要、也无法读取宿主持有的 AppSecret 或 access token。
+
+### 本地媒体格式和大小
+
+Base64 会同时占用编码字符串和解码后的内存，因此宿主对内联数据采用比官方 200 MB 硬限制更保守的上限：
+
+| 类型 | 内联上限 | 宿主校验 |
+|------|----------|----------|
+| 图片 | 20 MB | PNG、JPEG、GIF、WebP、BMP；实际平台兼容性以当前官方接口为准，PNG/JPEG 最稳妥 |
+| 视频 | 30 MB | MP4 |
+| 语音 | 20 MB | SILK |
+| 文件 | 32 MB | 不限制文件格式 |
+
+超过内联上限时应改用公网 URL。官方接口对单个文件还有 200 MB 硬限制；URL 方式也不能绕过平台限制。
+
+`image_base64()` 等方法接受纯 Base64，也接受已经带有 `base64://` 或 `data:<mime>;base64,` 前缀的内容。Base64 无效、媒体格式不匹配或解码后为空时，请求会在访问 OpenAPI 前失败。宿主不会读取消息段中的本地文件路径，动态插件应先自行读取文件并编码，不能传 `C:\...`、`/tmp/...` 或 `file://...`。
+
+官方单条媒体消息只有一个 `media` / `file_image` 位置。一个 `Message` 中应只放一个图片、视频、语音或文件段；需要发送多项时拆成多条消息，并遵守被动回复次数或主动消息额度。
+
+## 频道和 DMS 本地图片
+
+频道与频道私信不使用群/C2C 的 `/files` 接口。本地图片会直接随消息发送为 `multipart/form-data`：普通字段仍使用 `content`、`msg_id` 或 `event_id`，文件字段名固定为 `file_image`。
+
+```rust
+let response = CommandResponse::builder()
+    .text("生成结果")
+    .image_base64(&png_base64)
+    .build();
+```
+
+同一段代码可以用于群、C2C、频道和 DMS，宿主按当前会话选择分片上传或 multipart。频道接口不接受本地视频、语音和普通文件。DMS 的本地图片上传方式与官方 botpy 保持一致，但开放平台能力可能因机器人类型和审核状态不同，发布插件前应在真实 DMS 会话中验证。
 
 ## 被动回复与主动发送
 

@@ -5,8 +5,9 @@ use qimen_config::AppConfig;
 use qimen_error::{QimenError, Result};
 use qimen_framework::{Runtime, dynamic_runtime::dynamic_library_load_error_message};
 use qimen_host_types::{
-    DynamicCommandEntry, DynamicInterceptorEntry, DynamicPluginReportEntry, DynamicRouteEntry,
-    DynamicWebhookEntry, HostModuleReportEntry, HostPluginReport, PluginState, load_plugin_state,
+    DynamicCommandEntry, DynamicInterceptorEntry, DynamicPluginConfigEntry,
+    DynamicPluginReportEntry, DynamicRouteEntry, DynamicWebhookEntry, HostModuleReportEntry,
+    HostPluginReport, PluginState, load_plugin_state,
 };
 use qimen_mod_admin::AdminModule;
 use qimen_mod_bridge::BridgeModule;
@@ -231,6 +232,7 @@ fn build_host_plugin_report(
                 routes: descriptor.routes.clone(),
                 interceptors: descriptor.interceptors.clone(),
                 webhooks: descriptor.webhooks.clone(),
+                config: descriptor.config.clone(),
                 // Legacy fields
                 command_name: descriptor.command_name.clone(),
                 command_description: descriptor.command_description.clone(),
@@ -372,8 +374,10 @@ struct DynamicPluginDescriptor {
     routes: Vec<DynamicRouteEntry>,
     /// Interceptor entries.
     interceptors: Vec<DynamicInterceptorEntry>,
-    /// API 0.5 HTTP webhook entries.
+    /// API 0.5+ HTTP webhook entries.
     webhooks: Vec<DynamicWebhookEntry>,
+    /// API 0.6 在线配置契约。
+    config: Option<DynamicPluginConfigEntry>,
     // Legacy v0.1 fields
     command_name: String,
     command_description: String,
@@ -418,7 +422,7 @@ fn is_dynamic_library_path(path: &Path) -> bool {
 }
 
 fn uses_descriptor_collections(api_version: &str) -> bool {
-    matches!(api_version, "0.2" | "0.3" | "0.4" | "0.5")
+    matches!(api_version, "0.2" | "0.3" | "0.4" | "0.5" | "0.6")
 }
 
 fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
@@ -445,7 +449,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 through 0.5)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 through 0.6)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
@@ -547,7 +551,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             })
             .collect();
 
-        let webhooks = if descriptor.api_version.as_str() == "0.5" {
+        let webhooks = if matches!(descriptor.api_version.as_str(), "0.5" | "0.6") {
             let symbol: libloading::Symbol<unsafe extern "C" fn() -> RVec<WebhookDescriptorEntry>> =
                 library
                     .get(b"qimen_plugin_webhook_descriptors_v1")
@@ -575,6 +579,12 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
         } else {
             Vec::new()
         };
+        let config = qimen_framework::dynamic_runtime::load_plugin_config_descriptor(
+            &library,
+            path,
+            descriptor.plugin_id.as_str(),
+            descriptor.api_version.as_str(),
+        )?;
 
         Ok(DynamicPluginDescriptor {
             path: path.display().to_string(),
@@ -585,6 +595,7 @@ fn load_dynamic_descriptor(path: &Path) -> Result<DynamicPluginDescriptor> {
             routes,
             interceptors,
             webhooks,
+            config,
             // Legacy fields
             command_name: descriptor.command_name.to_string(),
             command_description: descriptor.command_description.to_string(),
@@ -605,8 +616,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn api_v05_uses_multi_entry_descriptor_collections() {
-        for version in ["0.2", "0.3", "0.4", "0.5"] {
+    fn api_v06_uses_multi_entry_descriptor_collections() {
+        for version in ["0.2", "0.3", "0.4", "0.5", "0.6"] {
             assert!(uses_descriptor_collections(version));
         }
         assert!(!uses_descriptor_collections("0.1"));

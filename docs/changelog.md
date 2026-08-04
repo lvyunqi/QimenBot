@@ -1,5 +1,31 @@
 # 更新日志
 
+## v0.1.18（开发中）
+
+### 动态插件在线配置
+
+- 新增动态插件 API 0.6。插件通过独立配置描述符声明 JSON Schema Draft 2020-12、可选 UI Schema、配置结构版本和 `live` / `reload` / `restart` 生效方式，不修改旧 `PluginDescriptor` 布局，API 0.1 至 0.5 动态库继续兼容。
+- Web 管理面板的插件卡片显示配置能力和生效方式；可配置插件使用桌面右侧抽屉和手机全屏表单，支持对象、嵌套对象、数组、对象数组、枚举、多选、数值范围、条件 Schema、组合 Schema、本地 `$ref`、动态键、只读字段和默认值。
+- 增加 `#[validate_config]` 业务校验和 `#[config_change]` 即时应用回调。`reload` 模式在新配置初始化失败时恢复旧文件并重新加载，`live` 模式在回调失败时恢复文件和插件内存状态，`restart` 模式统一标记宿主待重启。
+- 插件密钥使用独立提交通道，GET 接口只返回是否已配置；对象数组删除或排序时通过同 Schema 字段的一对一引用保留密钥归属，密钥原文不会进入浏览器普通配置值。
+- 插件配置保存增加 SHA-256 revision 冲突检查、每插件最多 20 份备份和管理审计；新增 `official_host.plugin_config_dir`，默认继续使用 `config/plugins`。
+- 插件商城元数据允许声明 `dynamic_api = "0.6"`，宿主兼容矩阵同步识别 API 0.6，同时继续拒绝把新插件安装到只支持旧 ABI 的宿主。
+
+### 官方 QQ Bot 本地富媒体
+
+- 宿主开始解释现有 `base64://` 图片段。QQ 群和 C2C 完整执行 `upload_prepare`、预签名分片 PUT、`upload_part_finish`、`/files(upload_id)` 和 `media.file_info` 发送，不再要求插件先搭建图床。
+- 频道和 DMS 本地图片使用 `multipart/form-data` 的 `file_image`；被动回复和 API 0.4+ 主动发送共用同一媒体执行路径。
+- 增加文件头、Base64、空数据和内存上限校验；图片、视频、语音和文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB。预签名 PUT 不携带 QQ 鉴权头，日志不记录 Base64 正文。
+- API 0.6 在不修改 FFI 结构的前提下补充语音、视频和文件的 URL/Base64 builder；已有 API 0.1 至 0.5 动态库继续兼容，使用 `image_base64()` 的旧插件无需升级 ABI。
+
+### 示例、模板与文档
+
+- 动态插件示例升级为 API 0.6，提供覆盖主要表单控件的 Schema、UI Schema、数组密钥、插件语义校验和后台线程即时重配实现。
+- 独立动态插件模板增加在线配置文件和 `reload` 生效示例；在配套 crate 发布前固定到公开 Git revision，不要求开发者持有主框架源码，也不把 crates.io `0.1.12` 误写为支持 API 0.6。
+- 新增动态插件在线配置完整教程，补齐 FFI、配置目录、Web 面板、商城兼容和插件开发 Skill。
+
+---
+
 ## v0.1.17 (2026-08-03)
 
 ### 插件商城

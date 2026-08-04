@@ -1,0 +1,53 @@
+{
+  "": {
+    "ui:order": ["display", "background_push", "connections", "delivery", "advanced", "metadata"]
+  },
+  "/display/severity": {
+    "ui:widget": "badges"
+  },
+  "/display/scenes": {
+    "ui:widget": "badges",
+    "labels": {
+      "private": "私聊",
+      "group": "群聊",
+      "channel": "频道",
+      "channel-private": "频道私信"
+    }
+  },
+  "/background_push/selector": {
+    "ui:widget": "badges"
+  },
+  "/background_push/kind": {
+    "ui:widget": "select"
+  },
+  "/background_push/message": {
+    "ui:widget": "textarea",
+    "rows": 4,
+    "placeholder": "输入推送正文"
+  },
+  "/background_push/interval_secs": {
+    "ui:widget": "slider",
+    "unit": "秒",
+    "step": 5
+  },
+  "/connections": {
+    "itemTitle": "name",
+    "itemLabel": "连接",
+    "addLabel": "添加连接",
+    "collapsible": true
+  },
+  "/connections/*/timeout_secs": {
+    "unit": "秒"
+  },
+  "/advanced/retry_limit": {
+    "ui:widget": "slider",
+    "unit": "次"
+  },
+  "/advanced/sampling_ratio": {
+    "ui:widget": "slider",
+    "step": 0.05
+  },
+  "/metadata": {
+    "addLabel": "添加元数据"
+  }
+}

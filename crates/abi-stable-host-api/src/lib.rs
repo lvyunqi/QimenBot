@@ -13,6 +13,8 @@
 //!   Added `PluginInitConfig` / `PluginInitResult` lifecycle hooks.
 //! - **0.4** - Added the versioned host API binding and real-time proactive sends.
 //! - **0.5** - Added framework-hosted HTTP webhook descriptors and callbacks.
+//! - **0.6** - Added schema-driven plugin configuration descriptors, validation,
+//!   live apply callbacks, and media builder helpers without changing FFI layouts.
 
 use abi_stable::std_types::{RString, RVec};
 use std::{
@@ -23,12 +25,12 @@ use std::{
 /// Current plugin API version. Dynamic plugins must declare the same version
 /// to be loaded by the host.
 pub fn expected_api_version() -> RString {
-    RString::from("0.5")
+    RString::from("0.6")
 }
 
-/// Also accept legacy 0.1-0.4 plugins for backward compatibility.
+/// Also accept legacy 0.1-0.5 plugins for backward compatibility.
 pub fn is_compatible_api_version(version: &str) -> bool {
-    matches!(version, "0.1" | "0.2" | "0.3" | "0.4" | "0.5")
+    matches!(version, "0.1" | "0.2" | "0.3" | "0.4" | "0.5" | "0.6")
 }
 
 // ─── Action constants ───────────────────────────────────────────────────
@@ -169,6 +171,28 @@ pub struct ReplyBuilder {
     segments: Vec<String>,
 }
 
+fn media_segment_json(kind: &str, source: &str, file_name: Option<&str>) -> String {
+    let kind = escape_json_string(kind);
+    let source = escape_json_string(source);
+    match file_name {
+        Some(file_name) => format!(
+            r#"{{"type":"{}","data":{{"file":"{}","file_name":"{}"}}}}"#,
+            kind,
+            source,
+            escape_json_string(file_name)
+        ),
+        None => format!(r#"{{"type":"{}","data":{{"file":"{}"}}}}"#, kind, source),
+    }
+}
+
+fn base64_media_source(base64: &str) -> String {
+    if base64.starts_with("base64://") || base64.starts_with("data:") {
+        base64.to_string()
+    } else {
+        format!("base64://{base64}")
+    }
+}
+
 impl ReplyBuilder {
     pub fn new() -> Self {
         Self {
@@ -178,12 +202,7 @@ impl ReplyBuilder {
 
     /// Add a text segment.
     pub fn text(mut self, text: &str) -> Self {
-        let escaped = text
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
+        let escaped = escape_json_string(text);
         self.segments.push(format!(
             r#"{{"type":"text","data":{{"text":"{}"}}}}"#,
             escaped
@@ -214,29 +233,70 @@ impl ReplyBuilder {
 
     /// Add an image segment by URL.
     pub fn image_url(mut self, url: &str) -> Self {
-        let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"{}"}}}}"#,
-            escaped
-        ));
+        self.segments.push(media_segment_json("image", url, None));
         self
     }
 
     /// Add an image segment by base64 data.
     pub fn image_base64(mut self, base64: &str) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"base64://{}"}}}}"#,
-            base64
+        self.segments.push(media_segment_json(
+            "image",
+            &base64_media_source(base64),
+            None,
         ));
         self
     }
 
-    /// Add a record (voice) segment.
+    /// Add a record (voice) segment. Kept as the compatibility alias for `record_url`.
     pub fn record(mut self, file: &str) -> Self {
-        let escaped = file.replace('\\', "\\\\").replace('"', "\\\"");
-        self.segments.push(format!(
-            r#"{{"type":"record","data":{{"file":"{}"}}}}"#,
-            escaped
+        self.segments.push(media_segment_json("record", file, None));
+        self
+    }
+
+    /// Add a record (voice) segment by URL.
+    pub fn record_url(self, url: &str) -> Self {
+        self.record(url)
+    }
+
+    /// Add a record (voice) segment by base64-encoded SILK data.
+    pub fn record_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "record",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add an MP4 video segment by URL.
+    pub fn video_url(mut self, url: &str) -> Self {
+        self.segments.push(media_segment_json("video", url, None));
+        self
+    }
+
+    /// Add an MP4 video segment by base64 data.
+    pub fn video_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "video",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add a file segment by URL and preserve its download name.
+    pub fn file_url(mut self, url: &str, file_name: &str) -> Self {
+        self.segments
+            .push(media_segment_json("file", url, Some(file_name)));
+        self
+    }
+
+    /// Add a file segment by base64 data and preserve its download name.
+    pub fn file_base64(mut self, base64: &str, file_name: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "file",
+            &base64_media_source(base64),
+            Some(file_name),
         ));
         self
     }
@@ -381,7 +441,7 @@ pub struct RouteDescriptorEntry {
 // appended to PluginDescriptor. Keeping PluginDescriptor's layout unchanged is
 // required so hosts can continue loading API 0.1-0.4 dynamic libraries.
 
-/// Describes one exact HTTP webhook route exported by an API 0.5 plugin.
+/// Describes one exact HTTP webhook route exported by an API 0.5+ plugin.
 #[repr(C)]
 #[derive(Clone)]
 pub struct WebhookDescriptorEntry {
@@ -393,7 +453,7 @@ pub struct WebhookDescriptorEntry {
     pub callback_symbol: RString,
 }
 
-/// Host-owned HTTP request passed to an API 0.5 webhook callback.
+/// Host-owned HTTP request passed to an API 0.5+ webhook callback.
 #[repr(C)]
 pub struct WebhookRequest {
     pub method: RString,
@@ -407,7 +467,7 @@ pub struct WebhookRequest {
     pub remote_addr: RString,
 }
 
-/// HTTP response returned by an API 0.5 webhook callback.
+/// HTTP response returned by an API 0.5+ webhook callback.
 #[repr(C)]
 pub struct WebhookResponse {
     pub status_code: u16,
@@ -439,6 +499,88 @@ impl WebhookResponse {
     pub fn with_headers_json(mut self, headers_json: &str) -> Self {
         self.headers_json = RString::from(headers_json);
         self
+    }
+}
+
+// 配置描述符使用独立导出符号，不能追加到 PluginDescriptor，否则旧动态库的
+// C 布局会发生变化。后续扩展通过新的 descriptor ABI 版本继续演进。
+
+/// `qimen_plugin_config_descriptor_v1` 使用的描述符 ABI 版本。
+pub const PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION: u32 = 1;
+
+/// 配置保存后由插件即时应用。
+pub const CONFIG_APPLY_LIVE: &str = "live";
+/// 配置保存后重新加载动态插件。
+pub const CONFIG_APPLY_RELOAD: &str = "reload";
+/// 配置保存后等待宿主重启。
+pub const CONFIG_APPLY_RESTART: &str = "restart";
+
+/// API 0.6 插件导出的配置表单契约。
+#[repr(C)]
+#[derive(Clone)]
+pub struct PluginConfigDescriptorV1 {
+    /// 描述符自身的 ABI 版本，当前必须为 1。
+    pub abi_version: u32,
+    /// 插件配置结构版本，用于后续迁移提示。
+    pub config_version: u32,
+    /// `live`、`reload` 或 `restart`。
+    pub apply_mode: RString,
+    /// JSON Schema Draft 2020-12 文本。
+    pub schema_json: RString,
+    /// 可选的 QimenBot UI Schema；空字符串表示完全按 JSON Schema 渲染。
+    pub ui_schema_json: RString,
+}
+
+impl PluginConfigDescriptorV1 {
+    /// 创建配置描述符；Schema 文本通常通过 `include_str!` 编译进动态库。
+    pub fn new(
+        config_version: u32,
+        apply_mode: &str,
+        schema_json: &str,
+        ui_schema_json: &str,
+    ) -> Self {
+        Self {
+            abi_version: PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION,
+            config_version,
+            apply_mode: RString::from(apply_mode),
+            schema_json: RString::from(schema_json),
+            ui_schema_json: RString::from(ui_schema_json),
+        }
+    }
+}
+
+/// 宿主传给配置校验或即时应用回调的完整配置快照。
+#[repr(C)]
+#[derive(Clone)]
+pub struct PluginConfigRequest {
+    pub plugin_id: RString,
+    /// 已合并保留密钥后的新配置 JSON。
+    pub config_json: RString,
+    /// 保存前的配置 JSON；首次配置时为空字符串。
+    pub previous_config_json: RString,
+}
+
+/// 配置校验或即时应用回调的 ABI 稳定结果。
+#[repr(C)]
+pub struct PluginConfigResult {
+    /// 0 表示成功，非 0 表示拒绝配置或应用失败。
+    pub code: i32,
+    pub error_message: RString,
+}
+
+impl PluginConfigResult {
+    pub fn ok() -> Self {
+        Self {
+            code: 0,
+            error_message: RString::new(),
+        }
+    }
+
+    pub fn err(message: &str) -> Self {
+        Self {
+            code: 1,
+            error_message: RString::from(message),
+        }
     }
 }
 
@@ -936,12 +1078,28 @@ impl ProactiveBotApi {
 }
 
 fn escape_json_string(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0c}' => escaped.push_str("\\f"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character <= '\u{1f}' => {
+                let value = character as usize;
+                escaped.push_str("\\u00");
+                escaped.push(HEX[(value >> 4) & 0x0f] as char);
+                escaped.push(HEX[value & 0x0f] as char);
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 /// Fluent builder for constructing and queuing a rich-media send to an
@@ -1078,19 +1236,65 @@ impl SendBuilder {
 
     /// Add an image segment by URL.
     pub fn image_url(mut self, url: &str) -> Self {
-        let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"{}"}}}}"#,
-            escaped
-        ));
+        self.segments.push(media_segment_json("image", url, None));
         self
     }
 
     /// Add an image segment by base64 data.
     pub fn image_base64(mut self, base64: &str) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"base64://{}"}}}}"#,
-            base64
+        self.segments.push(media_segment_json(
+            "image",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add a record (voice) segment by URL.
+    pub fn record_url(mut self, url: &str) -> Self {
+        self.segments.push(media_segment_json("record", url, None));
+        self
+    }
+
+    /// Add a record (voice) segment by base64-encoded SILK data.
+    pub fn record_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "record",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add an MP4 video segment by URL.
+    pub fn video_url(mut self, url: &str) -> Self {
+        self.segments.push(media_segment_json("video", url, None));
+        self
+    }
+
+    /// Add an MP4 video segment by base64 data.
+    pub fn video_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "video",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add a file segment by URL and preserve its download name.
+    pub fn file_url(mut self, url: &str, file_name: &str) -> Self {
+        self.segments
+            .push(media_segment_json("file", url, Some(file_name)));
+        self
+    }
+
+    /// Add a file segment by base64 data and preserve its download name.
+    pub fn file_base64(mut self, base64: &str, file_name: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "file",
+            &base64_media_source(base64),
+            Some(file_name),
         ));
         self
     }
@@ -1147,12 +1351,26 @@ mod tests {
     }
 
     #[test]
-    fn api_05_is_current_and_legacy_versions_remain_compatible() {
-        assert_eq!(expected_api_version().as_str(), "0.5");
-        for version in ["0.1", "0.2", "0.3", "0.4", "0.5"] {
+    fn api_06_is_current_and_legacy_versions_remain_compatible() {
+        assert_eq!(expected_api_version().as_str(), "0.6");
+        for version in ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"] {
             assert!(is_compatible_api_version(version));
         }
-        assert!(!is_compatible_api_version("0.6"));
+        assert!(!is_compatible_api_version("0.7"));
+    }
+
+    #[test]
+    fn plugin_config_descriptor_owns_schema_and_apply_metadata() {
+        let descriptor = PluginConfigDescriptorV1::new(
+            2,
+            CONFIG_APPLY_LIVE,
+            r#"{"type":"object"}"#,
+            r#"{"/token":{"widget":"password"}}"#,
+        );
+        assert_eq!(descriptor.abi_version, 1);
+        assert_eq!(descriptor.config_version, 2);
+        assert_eq!(descriptor.apply_mode.as_str(), "live");
+        assert!(descriptor.schema_json.contains("object"));
     }
 
     #[test]
@@ -1161,6 +1379,39 @@ mod tests {
         assert_eq!(response.status_code, 202);
         assert_eq!(response.body.as_slice(), b"accepted");
         assert!(response.headers_json.contains("text/plain"));
+    }
+
+    #[test]
+    fn media_builders_cover_url_and_base64_without_changing_ffi_layouts() {
+        let response = ReplyBuilder::new()
+            .image_base64("YWJj")
+            .record_base64("ZGVm")
+            .video_url("https://example.invalid/video.mp4")
+            .file_base64("ZmlsZQ==", "report.txt")
+            .build();
+        let segments = response.action.segments_json.as_str();
+        assert!(segments.contains(r#""type":"image""#));
+        assert!(segments.contains("base64://YWJj"));
+        assert!(segments.contains(r#""type":"record""#));
+        assert!(segments.contains("base64://ZGVm"));
+        assert!(segments.contains(r#""type":"video""#));
+        assert!(segments.contains("https://example.invalid/video.mp4"));
+        assert!(segments.contains(r#""file_name":"report.txt""#));
+
+        let send = SendBuilder::group("group-1")
+            .image_url("https://example.invalid/image.png")
+            .record_url("https://example.invalid/audio.silk")
+            .video_base64("dmlkZW8=")
+            .file_url("https://example.invalid/file.zip", "file.zip");
+        let segments = send.segments.join(",");
+        assert!(segments.contains("image.png"));
+        assert!(segments.contains("audio.silk"));
+        assert!(segments.contains("base64://dmlkZW8="));
+        assert!(segments.contains(r#""file_name":"file.zip""#));
+
+        let escaped = media_segment_json("file", "https://example.invalid/a", Some("a\0b.zip"));
+        assert!(escaped.contains(r#""file_name":"a\u0000b.zip""#));
+        assert!(!escaped.contains('\0'));
     }
 
     #[test]

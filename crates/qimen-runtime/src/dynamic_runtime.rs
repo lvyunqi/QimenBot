@@ -2,18 +2,20 @@ use crate::proactive_send::{ProactiveHostContext, ProactiveSendHub, host_enqueue
 use abi_stable::std_types::RString;
 use abi_stable::std_types::RVec;
 use abi_stable_host_api::{
-    ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY, CommandRequest, CommandResponse,
+    ACTION_APPROVE, ACTION_IGNORE, ACTION_REJECT, ACTION_REPLY, CONFIG_APPLY_LIVE,
+    CONFIG_APPLY_RELOAD, CONFIG_APPLY_RESTART, CommandRequest, CommandResponse,
     DynamicActionResponse, HOST_API_V1_ABI_VERSION, HostApiV1, InterceptorRequest,
-    InterceptorResponse, NoticeRequest, NoticeResponse, PluginDescriptor, PluginInitConfig,
-    PluginInitResult, SendAction, SendEnqueueStatus, WebhookDescriptorEntry, WebhookRequest,
-    WebhookResponse, is_compatible_api_version,
+    InterceptorResponse, NoticeRequest, NoticeResponse, PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION,
+    PluginConfigDescriptorV1, PluginConfigRequest, PluginConfigResult, PluginDescriptor,
+    PluginInitConfig, PluginInitResult, SendAction, SendEnqueueStatus, WebhookDescriptorEntry,
+    WebhookRequest, WebhookResponse, is_compatible_api_version,
 };
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
     DynamicCommandDescriptor, DynamicCommandEntry, DynamicInterceptorDescriptor,
     DynamicInterceptorEntry, DynamicMetaDescriptor, DynamicNoticeDescriptor,
-    DynamicPluginReportEntry, DynamicRequestDescriptor, DynamicRouteEntry,
-    DynamicRuntimeHealthEntry, DynamicWebhookDescriptor, DynamicWebhookEntry,
+    DynamicPluginConfigEntry, DynamicPluginReportEntry, DynamicRequestDescriptor,
+    DynamicRouteEntry, DynamicRuntimeHealthEntry, DynamicWebhookDescriptor, DynamicWebhookEntry,
 };
 use qimen_message::Message;
 use std::collections::{HashMap, VecDeque};
@@ -22,6 +24,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_ERROR_HISTORY: usize = 10;
+const MAX_PLUGIN_CONFIG_SCHEMA_BYTES: usize = 256 * 1024;
 
 /// Format a loader error with actionable guidance for unsupported musl builds.
 pub fn dynamic_library_load_error_message(path: &Path, error: impl std::fmt::Display) -> String {
@@ -93,7 +96,7 @@ pub enum DynamicResponse {
     Reject(Option<String>),
 }
 
-/// Host-owned response copied before an API 0.5 webhook callback returns.
+/// Host-owned response copied before an API 0.5+ webhook callback returns.
 pub(crate) struct OwnedWebhookResponse {
     pub status_code: u16,
     pub headers_json: String,
@@ -457,7 +460,46 @@ impl DynamicPluginRuntime {
         })
     }
 
-    /// Execute an API 0.5 webhook callback and copy all plugin-owned buffers.
+    /// 调用可选的 API 0.6 配置语义校验；未导出回调时仅依赖宿主 Schema 校验。
+    pub(crate) fn execute_config_validation_on_handle(
+        handle: &LibraryHandle,
+        library_path: &str,
+        request: PluginConfigRequest,
+    ) -> Result<()> {
+        Self::with_handle(handle, library_path, move |library| unsafe {
+            let symbol =
+                match library
+                    .get::<unsafe extern "C" fn(&PluginConfigRequest) -> PluginConfigResult>(
+                        b"qimen_plugin_validate_config_v1",
+                    ) {
+                    Ok(symbol) => symbol,
+                    Err(_) => return Ok(()),
+                };
+            call_plugin_config_callback(symbol, &request, library_path, "validation")
+        })
+    }
+
+    /// 独占插件生命周期锁执行 API 0.6 即时配置应用，避免与消息回调并发修改状态。
+    pub(crate) fn execute_config_apply_on_handle(
+        handle: &LibraryHandle,
+        library_path: &str,
+        request: PluginConfigRequest,
+    ) -> Result<()> {
+        Self::with_exclusive_handle(handle, library_path, move |library| unsafe {
+            let symbol: libloading::Symbol<
+                unsafe extern "C" fn(&PluginConfigRequest) -> PluginConfigResult,
+            > = library
+                .get(b"qimen_plugin_apply_config_v1")
+                .map_err(|error| {
+                    QimenError::Runtime(format!(
+                        "plugin '{library_path}' does not export live config apply: {error}"
+                    ))
+                })?;
+            call_plugin_config_callback(symbol, &request, library_path, "apply")
+        })
+    }
+
+    /// Execute an API 0.5+ webhook callback and copy all plugin-owned buffers.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn execute_webhook_on_handle(
         handle: &LibraryHandle,
@@ -576,6 +618,54 @@ impl DynamicPluginRuntime {
             }
         }
 
+        result
+    }
+
+    /// 配置应用需要阻止新的插件回调进入，因此使用生命周期写锁。
+    fn with_exclusive_handle<T, F>(handle: &LibraryHandle, path: &str, operation: F) -> Result<T>
+    where
+        F: FnOnce(&libloading::Library) -> Result<T>,
+    {
+        {
+            let mut meta = handle.meta.lock().map_err(|_| {
+                QimenError::Runtime(format!("per-library meta lock poisoned for '{path}'"))
+            })?;
+            if let Some(until) = meta.tripped_until {
+                if Instant::now() < until {
+                    return Err(QimenError::Runtime(format!(
+                        "dynamic plugin '{path}' is temporarily isolated after repeated failures"
+                    )));
+                }
+                meta.tripped_until = None;
+            }
+        }
+
+        let _lifecycle = handle.lifecycle.write().map_err(|_| {
+            QimenError::Runtime(format!("per-library lifecycle lock poisoned for '{path}'"))
+        })?;
+        let result = operation(&handle.library);
+        match &result {
+            Ok(_) => {
+                if let Ok(mut meta) = handle.meta.lock() {
+                    meta.failures = 0;
+                    meta.last_error = None;
+                }
+            }
+            Err(error) => {
+                if let Ok(mut meta) = handle.meta.lock() {
+                    meta.failures += 1;
+                    let error_text = error.to_string();
+                    meta.last_error = Some(error_text.clone());
+                    meta.recent_errors.push_back(error_text);
+                    while meta.recent_errors.len() > MAX_ERROR_HISTORY {
+                        meta.recent_errors.pop_front();
+                    }
+                    if meta.failures >= 3 {
+                        meta.tripped_until = Some(Instant::now() + Duration::from_secs(60));
+                    }
+                }
+            }
+        }
         result
     }
 
@@ -946,6 +1036,32 @@ impl DynamicPluginRuntime {
     }
 }
 
+fn call_plugin_config_callback(
+    symbol: libloading::Symbol<
+        '_,
+        unsafe extern "C" fn(&PluginConfigRequest) -> PluginConfigResult,
+    >,
+    request: &PluginConfigRequest,
+    library_path: &str,
+    operation: &str,
+) -> Result<()> {
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { symbol(request) }))
+            .map_err(|_| {
+                QimenError::Runtime(format!(
+                    "plugin '{library_path}' panicked during config {operation}"
+                ))
+            })?;
+    if result.code == 0 {
+        Ok(())
+    } else {
+        Err(QimenError::Runtime(format!(
+            "plugin '{library_path}' rejected config {operation}: {}",
+            result.error_message
+        )))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod lifecycle_tests {
@@ -1307,14 +1423,14 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
 
         if !is_compatible_api_version(descriptor.api_version.as_str()) {
             return Err(QimenError::Module(format!(
-                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 through 0.5)",
+                "dynamic plugin '{}' api version '{}' is not compatible (expected 0.1 through 0.6)",
                 descriptor.plugin_id, descriptor.api_version,
             )));
         }
 
         let is_v2_plus = matches!(
             descriptor.api_version.as_str(),
-            "0.2" | "0.3" | "0.4" | "0.5"
+            "0.2" | "0.3" | "0.4" | "0.5" | "0.6"
         );
 
         // Parse v0.2+ multi-command entries
@@ -1411,7 +1527,7 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             })
             .collect();
 
-        let webhooks = if descriptor.api_version.as_str() == "0.5" {
+        let webhooks = if matches!(descriptor.api_version.as_str(), "0.5" | "0.6") {
             let symbol: libloading::Symbol<unsafe extern "C" fn() -> RVec<WebhookDescriptorEntry>> =
                 library
                     .get(b"qimen_plugin_webhook_descriptors_v1")
@@ -1440,6 +1556,13 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             Vec::new()
         };
 
+        let config = load_plugin_config_descriptor(
+            &library,
+            path,
+            descriptor.plugin_id.as_str(),
+            descriptor.api_version.as_str(),
+        )?;
+
         Ok(DynamicPluginReportEntry {
             path: path.display().to_string(),
             plugin_id: descriptor.plugin_id.to_string(),
@@ -1449,6 +1572,7 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             routes,
             interceptors,
             webhooks,
+            config,
             // Legacy fields
             command_name: descriptor.command_name.to_string(),
             command_description: descriptor.command_description.to_string(),
@@ -1460,5 +1584,165 @@ fn load_dynamic_report_entry(path: &Path) -> Result<DynamicPluginReportEntry> {
             meta_route: descriptor.meta_route.to_string(),
             meta_callback_symbol: "qimen_demo_plugin_handle_notice".to_string(),
         })
+    }
+}
+
+/// 读取 API 0.6 的可选配置描述符，并在插件进入运行时前验证边界。
+#[doc(hidden)]
+pub unsafe fn load_plugin_config_descriptor(
+    library: &libloading::Library,
+    path: &Path,
+    plugin_id: &str,
+    api_version: &str,
+) -> Result<Option<DynamicPluginConfigEntry>> {
+    if api_version != "0.6" {
+        return Ok(None);
+    }
+    let symbol = match unsafe {
+        library.get::<unsafe extern "C" fn() -> PluginConfigDescriptorV1>(
+            b"qimen_plugin_config_descriptor_v1",
+        )
+    } {
+        Ok(symbol) => symbol,
+        Err(_) => return Ok(None),
+    };
+    let descriptor = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { symbol() }))
+        .map_err(|_| {
+            QimenError::Module(format!(
+                "plugin '{}' panicked while exporting its config descriptor",
+                path.display()
+            ))
+        })?;
+    if descriptor.abi_version != PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config descriptor ABI {} is unsupported",
+            descriptor.abi_version
+        )));
+    }
+    if descriptor.config_version == 0 {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config_version must be greater than zero"
+        )));
+    }
+    if !is_safe_plugin_config_id(plugin_id) {
+        return Err(QimenError::Module(format!(
+            "plugin id '{plugin_id}' cannot be used as a configuration file name"
+        )));
+    }
+
+    let schema_json = descriptor.schema_json.to_string();
+    let ui_schema_json = descriptor.ui_schema_json.to_string();
+    if schema_json.is_empty() || schema_json.len() > MAX_PLUGIN_CONFIG_SCHEMA_BYTES {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config schema must be 1-{} bytes",
+            MAX_PLUGIN_CONFIG_SCHEMA_BYTES
+        )));
+    }
+    let schema: serde_json::Value = serde_json::from_str(&schema_json).map_err(|error| {
+        QimenError::Module(format!(
+            "plugin '{plugin_id}' config schema is not valid JSON: {error}"
+        ))
+    })?;
+    if !schema.is_object() {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config schema root must be an object"
+        )));
+    }
+    let root_types = schema.get("type");
+    let declares_object = root_types == Some(&serde_json::Value::String("object".to_string()))
+        || root_types
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|types| types.iter().any(|value| value.as_str() == Some("object")));
+    if !declares_object {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config schema must explicitly declare root type object"
+        )));
+    }
+    if let Some(reference) = external_schema_reference(&schema) {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config schema cannot use external reference '{reference}'"
+        )));
+    }
+    if ui_schema_json.len() > MAX_PLUGIN_CONFIG_SCHEMA_BYTES {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' UI schema is too large"
+        )));
+    }
+    if !ui_schema_json.trim().is_empty() {
+        let ui_schema: serde_json::Value =
+            serde_json::from_str(&ui_schema_json).map_err(|error| {
+                QimenError::Module(format!(
+                    "plugin '{plugin_id}' UI schema is not valid JSON: {error}"
+                ))
+            })?;
+        if !ui_schema.is_object() {
+            return Err(QimenError::Module(format!(
+                "plugin '{plugin_id}' UI schema root must be an object"
+            )));
+        }
+    }
+
+    let apply_mode = descriptor.apply_mode.to_string();
+    if !matches!(
+        apply_mode.as_str(),
+        CONFIG_APPLY_LIVE | CONFIG_APPLY_RELOAD | CONFIG_APPLY_RESTART
+    ) {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' config apply mode '{apply_mode}' is invalid"
+        )));
+    }
+    let validates_config = unsafe {
+        library
+            .get::<unsafe extern "C" fn(&PluginConfigRequest) -> PluginConfigResult>(
+                b"qimen_plugin_validate_config_v1",
+            )
+            .is_ok()
+    };
+    let applies_live = unsafe {
+        library
+            .get::<unsafe extern "C" fn(&PluginConfigRequest) -> PluginConfigResult>(
+                b"qimen_plugin_apply_config_v1",
+            )
+            .is_ok()
+    };
+    if apply_mode == CONFIG_APPLY_LIVE && !applies_live {
+        return Err(QimenError::Module(format!(
+            "plugin '{plugin_id}' declares live config but does not export qimen_plugin_apply_config_v1"
+        )));
+    }
+
+    Ok(Some(DynamicPluginConfigEntry {
+        config_version: descriptor.config_version,
+        apply_mode,
+        schema_json,
+        ui_schema_json,
+        validates_config,
+        applies_live,
+    }))
+}
+
+pub fn is_safe_plugin_config_id(plugin_id: &str) -> bool {
+    !plugin_id.is_empty()
+        && plugin_id.len() <= 128
+        && !matches!(plugin_id, "." | "..")
+        && plugin_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn external_schema_reference(value: &serde_json::Value) -> Option<&str> {
+    match value {
+        serde_json::Value::Object(object) => {
+            for keyword in ["$ref", "$dynamicRef"] {
+                if let Some(reference) = object.get(keyword).and_then(serde_json::Value::as_str)
+                    && !reference.starts_with('#')
+                {
+                    return Some(reference);
+                }
+            }
+            object.values().find_map(external_schema_reference)
+        }
+        serde_json::Value::Array(items) => items.iter().find_map(external_schema_reference),
+        _ => None,
     }
 }

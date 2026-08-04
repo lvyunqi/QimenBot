@@ -373,8 +373,12 @@ QQ official Gateway recommends multiple shards; using one unsharded connection
 | 发送频道消息 | `POST /channels/{channel_id}/messages` |
 | 发送 QQ 群消息 | `POST /v2/groups/{group_openid}/messages` |
 | 上传 QQ 群媒体 | `POST /v2/groups/{group_openid}/files` |
+| 预上传 QQ 群本地媒体 | `POST /v2/groups/{group_openid}/upload_prepare` |
+| 确认 QQ 群上传分片 | `POST /v2/groups/{group_openid}/upload_part_finish` |
 | 发送 C2C 消息 | `POST /v2/users/{openid}/messages` |
 | 上传 C2C 媒体 | `POST /v2/users/{openid}/files` |
+| 预上传 C2C 本地媒体 | `POST /v2/users/{openid}/upload_prepare` |
+| 确认 C2C 上传分片 | `POST /v2/users/{openid}/upload_part_finish` |
 | 发送频道私信 | `POST /dms/{guild_id}/messages` |
 | 确认互动 | `PUT /interactions/{interaction_id}` |
 | 撤回消息 | 对对应消息 URL 发送 `DELETE` |
@@ -416,7 +420,7 @@ QQ 群和 C2C 请求使用 `msg_type`：
 
 ### 媒体上传
 
-群和 C2C 的图片、视频、语音和文件使用两段式流程：
+群和 C2C 的公网媒体 URL 使用两段式流程：
 
 ```text
 Message segment URL
@@ -434,7 +438,26 @@ Message segment URL
 | `record` / `audio` / `voice` | `3` |
 | `file` | `4` |
 
-高层适配只把 `http://` 和 `https://` 识别为可上传 URL。上传响应必须包含 `file_info`，发送阶段只携带这个字段，不把完整上传响应原样塞回消息体。
+高层适配只把 `http://` 和 `https://` 识别为远程 URL。上传响应必须包含 `file_info`，发送阶段只携带这个字段，不把完整上传响应原样塞回消息体。
+
+Base64 本地数据走官方分片预上传流程：
+
+```text
+decode + validate
+  -> /upload_prepare
+  <- upload_id, block_size, parts[], upload_config
+  -> PUT parts[].presigned_url（parts 非空时）
+  -> /upload_part_finish（每个实际上传的分片）
+  -> /files { upload_id, file_type, file_name, srv_send_msg }
+  <- file_info
+  -> /messages { msg_type: 7, media: { file_info } }
+```
+
+`upload_prepare` 包含 `file_size`、`file_name`、完整文件 MD5、SHA1，以及前 `10002432` 字节的 MD5。命中平台秒传时 `parts` 可以为空，QimenBot 会跳过 PUT 和 `upload_part_finish`，直接携带 `upload_id` 调用 `/files` 完成合并。需要实际上传时，服务端返回的分片序号从 0 开始；QimenBot 按返回的 `block_size` 切分数据，并把并发数限制在 1 至 8。单个分片最多尝试 3 次，单片重试窗口不超过 60 秒，延迟不超过 5 秒；整个分片阶段遵守服务端 `retry_timeout`，并封顶为 300 秒，避免一次发送无限阻塞运行时。
+
+预签名 URL 属于对象存储，不是 QQ OpenAPI。对应 `PUT` 只发送分片正文，不能带 `Authorization: QQBot ...` 或 `X-Union-Appid`；逐片上传成功后才调用 `upload_part_finish`。所有分片完成后再用 `upload_id` 合并，不提前构造 `media.file_info`。
+
+频道和 DMS 的本地图片使用 `multipart/form-data`，文件字段为 `file_image`。这条路径不调用 `/files`，也不支持视频、语音或普通文件。嵌套的消息对象会编码为 JSON 字符串；`message_reference` 与 `file_image` 组合会被移除，引用回复应使用 `msg_id` 或 `event_id`。
 
 `srv_send_msg = true` 只允许主动、纯媒体的群/C2C 上传，不能同时携带文本、Markdown、Keyboard、回复 ID 或事件 ID。其他组合会在请求发出前被拒绝。
 
@@ -487,6 +510,12 @@ OpenAPI 非 2xx 响应会保留以下信息：
 - [群 @ 消息事件](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html)
 - [发送群消息](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_messages.post.html)
 - [发送 C2C 消息](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_openid_messages.post.html)
+- [群聊富媒体预上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_id_upload_prepare.post.html)
+- [群聊分片上传完成](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_id_upload_part_finish.post.html)
+- [群聊富媒体上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_files.post.html)
+- [C2C 富媒体预上传](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_id_upload_prepare.post.html)
+- [C2C 分片上传完成](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_id_upload_part_finish.post.html)
+- [频道发送消息](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/channel/message/send.html)
 - [互动事件 ACK](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/interactions_interaction_id.put.html)
 - [OpenAPI 错误码](https://bot.q.qq.com/wiki/develop/api-v2/openapi/error/error.html)
 
