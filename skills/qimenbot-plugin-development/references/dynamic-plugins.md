@@ -66,8 +66,8 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "f6aa64841a6afca024b8f6e99b2945f05c1f007a" }
-qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "f6aa64841a6afca024b8f6e99b2945f05c1f007a" }
+abi-stable-host-api = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
+qimen-dynamic-plugin-derive = { git = "https://github.com/lvyunqi/QimenBot.git", rev = "5a69e242df31813ddafa327ccbc005bb48c8c3d3" }
 abi_stable = "0.11"
 serde_json = "1"
 ```

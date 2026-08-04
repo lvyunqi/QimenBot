@@ -9,7 +9,7 @@
 
 > **预发布依赖**
 >
-> crates.io `0.1.12` 只支持 API 0.1 至 0.5。当前模板把两个 QimenBot 专用依赖固定到公开提交 `f6aa64841a6afca024b8f6e99b2945f05c1f007a`，没有主框架源码也能构建 API 0.6，并且不会随分支移动而改变依赖内容。
+> crates.io `0.1.12` 只支持 API 0.1 至 0.5。当前模板把两个 QimenBot 专用依赖固定到公开提交 `5a69e242df31813ddafa327ccbc005bb48c8c3d3`，没有主框架源码也能构建 API 0.6，并且不会随分支移动而改变依赖内容。
 >
 > 正式发布后，运行 `cargo search abi-stable-host-api --limit 1` 和 `cargo search qimen-dynamic-plugin-derive --limit 1`。确认两个包的同一版本明确支持 API 0.6，再把两条 Git 依赖一起改成该 crates.io 版本。
 

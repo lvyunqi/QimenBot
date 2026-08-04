@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "abi-stable-host-api"
 version = "0.1.17"
-source = "git+https://github.com/lvyunqi/QimenBot.git?rev=f6aa64841a6afca024b8f6e99b2945f05c1f007a#f6aa64841a6afca024b8f6e99b2945f05c1f007a"
+source = "git+https://github.com/lvyunqi/QimenBot.git?rev=5a69e242df31813ddafa327ccbc005bb48c8c3d3#5a69e242df31813ddafa327ccbc005bb48c8c3d3"
 dependencies = [
  "abi_stable",
 ]
@@ -208,7 +208,7 @@ dependencies = [
 [[package]]
 name = "qimen-dynamic-plugin-derive"
 version = "0.1.17"
-source = "git+https://github.com/lvyunqi/QimenBot.git?rev=f6aa64841a6afca024b8f6e99b2945f05c1f007a#f6aa64841a6afca024b8f6e99b2945f05c1f007a"
+source = "git+https://github.com/lvyunqi/QimenBot.git?rev=5a69e242df31813ddafa327ccbc005bb48c8c3d3#5a69e242df31813ddafa327ccbc005bb48c8c3d3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -216,7 +216,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "qimen-dynamic-plugin-template-test"
+name = "qimen-dynamic-plugin-template"
 version = "0.1.0"
 dependencies = [
  "abi-stable-host-api",
