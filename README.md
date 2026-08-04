@@ -195,7 +195,7 @@ metrics_bind = "127.0.0.1:9090"  # Metrics 暴露地址（预留）
 [official_host]
 # 内置模块（框架自带的核心功能）
 # 可选值：
-#   "command"   — 命令系统（/ping、/echo、/help 等）
+#   "command"   — 命令系统（/echo、/help 等）
 #   "admin"     — 管理模块（权限管理、插件管理）
 #   "scheduler" — 定时任务调度器
 #   "bridge"    — 消息桥接（跨群/跨bot转发）
@@ -795,7 +795,6 @@ let status = SendBuilder::channel(channel_id)
 
 | 命令 | 说明 |
 |------|------|
-| `ping` / `/ping` | 返回 pong |
 | `echo <text>` / `/echo <text>` | 回显文本 |
 | `status` / `/status` | 运行时状态 |
 | `help` / `/help` | 自动生成的帮助信息 |

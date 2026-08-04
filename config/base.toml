@@ -60,7 +60,7 @@ auto_update = false
 # ── Official Host 配置 / Official Host ───────────────────────────────────
 [official_host]
 # 启用的内置模块列表，可选值：
-#   "command"   — 命令系统（/ping、/echo、/help 等内置命令）
+#   "command"   — 命令系统（/echo、/help 等内置命令）
 #   "admin"     — 管理模块（权限管理、插件管理）
 #   "scheduler" — 定时任务调度器
 #   "bridge"    — 消息桥接（跨群/跨bot转发）

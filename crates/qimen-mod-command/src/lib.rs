@@ -28,7 +28,6 @@ pub enum CommandTrigger {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinCommand {
-    Ping,
     Echo(String),
     Status,
     Help,
@@ -83,7 +82,6 @@ pub fn match_builtin_command(event: &NormalizedEvent) -> Option<MatchedCommand> 
 
 pub fn build_builtin_reply(bot_label: &str, command: &BuiltinCommand) -> Message {
     match command {
-        BuiltinCommand::Ping => Message::text("pong"),
         BuiltinCommand::Echo(text) => Message::text(text.clone()),
         BuiltinCommand::Status => Message::text(format!(
             "bot={} protocol=onebot11 transport=ws-forward status=ok",
@@ -99,10 +97,6 @@ pub fn build_builtin_reply(bot_label: &str, command: &BuiltinCommand) -> Message
 fn parse_builtin(input: &str) -> Option<BuiltinCommand> {
     let normalized = input.trim();
     let normalized = normalized.strip_prefix('/').unwrap_or(normalized).trim();
-
-    if normalized.eq_ignore_ascii_case("ping") {
-        return Some(BuiltinCommand::Ping);
-    }
 
     if normalized.eq_ignore_ascii_case("status") {
         return Some(BuiltinCommand::Status);
