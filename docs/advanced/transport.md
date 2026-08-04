@@ -453,7 +453,7 @@ decode + validate
   -> /messages { msg_type: 7, media: { file_info } }
 ```
 
-`upload_prepare` 包含 `file_size`、`file_name`、完整文件 MD5、SHA1，以及前 `10002432` 字节的 MD5。命中平台秒传时 `parts` 可以为空，QimenBot 会跳过 PUT 和 `upload_part_finish`，直接携带 `upload_id` 调用 `/files` 完成合并。需要实际上传时，服务端返回的分片序号从 0 开始；QimenBot 按返回的 `block_size` 切分数据，并把并发数限制在 1 至 8。单个分片最多尝试 3 次，单片重试窗口不超过 60 秒，延迟不超过 5 秒；整个分片阶段遵守服务端 `retry_timeout`，并封顶为 300 秒，避免一次发送无限阻塞运行时。
+`upload_prepare` 包含 `file_size`、`file_name`、完整文件 MD5、SHA1，以及前 `10002432` 字节的 MD5。命中平台秒传时 `parts` 可以为空，QimenBot 会跳过 PUT 和 `upload_part_finish`，直接携带 `upload_id` 调用 `/files` 完成合并。需要实际上传时，官方文档将分片序号描述为从 0 开始，但生产响应也可能从 1 开始；QimenBot 兼容两种连续序号，并在 `upload_part_finish` 中原样回传服务端序号。宿主按返回的 `block_size` 切分数据，并把并发数限制在 1 至 8。单个分片最多尝试 3 次，单片重试窗口不超过 60 秒，延迟不超过 5 秒；整个分片阶段遵守服务端 `retry_timeout`，并封顶为 300 秒，避免一次发送无限阻塞运行时。
 
 预签名 URL 属于对象存储，不是 QQ OpenAPI。对应 `PUT` 只发送分片正文，不能带 `Authorization: QQBot ...` 或 `X-Union-Appid`；逐片上传成功后才调用 `upload_part_finish`。所有分片完成后再用 `upload_id` 合并，不提前构造 `media.file_info`。
 
