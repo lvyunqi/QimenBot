@@ -1,6 +1,6 @@
 # 动态插件开发
 
-除了与框架一同编译的**静态插件**，QimenBot 还支持**动态插件**——编译为独立的动态库（`.so` / `.dll` / `.dylib`），运行时通过 `dlopen` 加载，支持 `/plugins reload` 热重载。
+除了与框架一同编译的**静态插件**，QimenBot 还支持**动态插件**——编译为独立的动态库（`.so` / `.dll` / `.dylib`），运行时通过 `dlopen` 加载，并可从 Web 插件页热重载。
 
 ## 两种插件对比
 
@@ -13,7 +13,7 @@
 | HTTP Webhook | 由静态模块自行启动服务 | API 0.5+ `#[webhook]`，由框架 Gateway 统一托管 |
 | 在线配置 | 自行实现配置入口 | API 0.6 JSON Schema，由管理面板生成表单 |
 | 拦截器 | `MessageEventInterceptor` trait（async） | `#[pre_handle]` / `#[after_completion]`（同步 FFI） |
-| 热重载 | 需要重启进程 | `/plugins reload` 即可 |
+| 热重载 | 需要重启进程 | Web 插件页重新扫描 |
 | 生命周期 | `on_load` / `on_unload` | `#[init]` / `#[shutdown]` |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
 
@@ -174,7 +174,7 @@ ldd ./plugins/bin/libqimen_dynamic_plugin_myplugin.so
 
 ### 第 6 步：加载
 
-在 Bot 中发送 `/plugins reload`，无需重启即可加载新插件。
+打开 Web 管理面板的“插件”页点击“重新扫描”，无需重启宿主即可加载新插件。也可以使用带管理 Token 的 `POST /api/v1/plugins/reload`。
 
 ## `#[dynamic_plugin]` 宏详解 {#macro}
 
@@ -537,7 +537,7 @@ fn on_init(config: PluginInitConfig) -> PluginInitResult {
 }
 ```
 
-没有配置文件时 `config_json` 是空字符串，不能直接 `unwrap()` 当作 JSON。插件应把空字符串当作空对象，并为缺失字段提供默认值。手工编辑 TOML 后，执行 `/plugins reload` 才会重新调用动态插件的 `init`。
+没有配置文件时 `config_json` 是空字符串，不能直接 `unwrap()` 当作 JSON。插件应把空字符串当作空对象，并为缺失字段提供默认值。手工编辑 TOML 后，在 Web 插件页重新扫描才会再次调用动态插件的 `init`。
 
 API 0.6 插件可以把 JSON Schema 编进动态库，让 Web 管理面板生成在线表单：
 
@@ -925,13 +925,15 @@ fn notify(req: &CommandRequest) -> CommandResponse {
 
 ## 运行时管理 {#runtime}
 
-| 命令 | 说明 |
-|------|------|
-| `/plugins reload` | 热重载：重新扫描 `plugin_bin_dir`，卸载旧库，加载新库 |
-| `/plugins enable <id>` | 启用插件 |
-| `/plugins disable <id>` | 禁用插件（持久化到 `plugin-state.toml`） |
-| `/dynamic-errors` | 查看动态插件健康状态 |
-| `/dynamic-errors clear` | 清除错误计数，解除隔离 |
+插件管理不占用聊天命令。打开 Web 管理面板的“插件”页，可以启用或停用插件、重新扫描动态库、编辑插件配置、调整命令优先级，并查看熔断状态。自动化部署可调用同一组带管理 Token 的 API：
+
+```text
+GET  /api/v1/plugins
+PUT  /api/v1/plugins/{id}
+POST /api/v1/plugins/reload
+```
+
+静态插件开关保存后需要重启宿主；动态插件重新扫描会等待在途回调结束，然后让已启用的 Bot 短暂重连并重建路由。
 
 ## 熔断器机制 {#circuit-breaker}
 
@@ -950,7 +952,7 @@ fn notify(req: &CommandRequest) -> CommandResponse {
     60 秒后自动恢复
 ```
 
-使用 `/dynamic-errors` 查看各插件的健康状态，`/dynamic-errors clear` 可以手动重置错误计数。
+Web 插件页会显示失败次数和最近错误。执行成功会自动重置失败计数；重新扫描会重建动态运行时状态。
 
 ### 常见加载错误
 

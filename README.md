@@ -195,7 +195,7 @@ metrics_bind = "127.0.0.1:9090"  # Metrics 暴露地址（预留）
 [official_host]
 # 内置模块（框架自带的核心功能）
 # 可选值：
-#   "command"   — 命令系统（/echo、/help 等）
+#   "command"   — 命令解析与插件路由（不附带业务命令）
 #   "admin"     — 管理模块（权限管理、插件管理）
 #   "scheduler" — 定时任务调度器
 #   "bridge"    — 消息桥接（跨群/跨bot转发）
@@ -210,7 +210,7 @@ builtin_modules = ["command", "admin", "scheduler", "bridge"]
 plugin_modules = ["example-plugin"]
 
 # 插件启用状态和命令优先级的持久化文件
-# 用 /plugins 命令或 Web 管理面板修改后会保存在这里
+# 用 Web 管理面板或管理 API 修改后会保存在这里
 plugin_state_path = "config/plugin-state.toml"
 
 # 动态插件（.so/.dll/.dylib）的扫描目录
@@ -218,9 +218,20 @@ plugin_bin_dir = "plugins/bin"
 
 # 动态插件独立 TOML 配置目录
 plugin_config_dir = "config/plugins"
+
+[official_host.commands]
+# 插件未注册 help/h 时提供分页目录；关闭后 help 完全由插件接管
+help_enabled = true
+help_page_size = 6            # /help 2 查看第 2 页，范围 1-20
+prefixes = ["/"]              # 可配置多个；空数组表示关闭前缀入口
+private_bare_enabled = true   # 私聊可直接输入命令
+mention_enabled = true        # 支持 @机器人 命令
+reply_enabled = true          # 支持回复机器人后输入命令
 ```
 
 多个插件注册同名命令时，可以在 Web 管理面板的“插件”页面设置 `0-1000` 的命令优先级。数值越大越先匹配，默认顺序是静态插件 `30`、动态插件 `20`；数值相同才使用插件声明顺序和插件 ID 决定结果。修改会写入 `plugin-state.toml`，并让已启用的 Bot 重连以刷新命令路由。
+
+Runtime 不注册 `ping`、`echo`、`status` 等业务命令，也不再提供聊天内的插件管理命令。只有插件实际注册的命令才会进入路由和帮助目录。宿主的 `help` 是低侵入兜底：插件注册 `help` 或 `h` 后插件优先；也可以在 Web“配置 → 命令入口”中关闭。
 
 ### `[[bots]]` — Bot 实例配置
 
@@ -546,7 +557,7 @@ impl MyPlugin { /* ... */ }
 | HTTP Webhook | 由应用自行挂载 HTTP 服务 | API 0.5+ `#[webhook]`，由框架统一提供网关 |
 | 在线配置 | 自行开发配置入口 | API 0.6 JSON Schema，由 Web 面板生成表单 |
 | 生命周期 | 随框架启停 | `#[init]` / `#[shutdown]` 钩子 |
-| 热重载 | 需要重启进程 | `/plugins reload` 即可 |
+| 热重载 | 需要重启进程 | Web 插件页点击“重新扫描” |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
 
 ### 在主仓库外独立开发
@@ -713,7 +724,7 @@ cargo build --release
 scp target/release/libqimen_dynamic_plugin_myplugin.so user@bot-host:/opt/qimenbot/plugins/bin/
 # Windows: Copy-Item target/release/qimen_dynamic_plugin_myplugin.dll C:\qimenbot\plugins\bin\
 
-# 4. 在 Bot 中执行 /plugins reload 热重载
+# 4. 在 Web 管理面板的“插件”页点击“重新扫描”
 ```
 
 动态库必须与 QimenBot 的操作系统、CPU 架构和 C 运行时一致。Docker `linux/amd64` 使用 `x86_64-unknown-linux-gnu` 插件，Docker `linux/arm64` 使用 `aarch64-unknown-linux-gnu` 插件；musl 发行包不支持动态插件。完整 target 对照和排错流程见[动态插件开发文档](docs/plugin/dynamic.md)。
@@ -774,13 +785,7 @@ let status = SendBuilder::channel(channel_id)
 
 ### 运行时管理
 
-| 命令 | 说明 |
-|------|------|
-| `/plugins reload` | 热重载：重新扫描 plugin_bin_dir，卸载旧库，加载新库 |
-| `/plugins enable <id>` | 启用插件（动态/静态均可） |
-| `/plugins disable <id>` | 禁用插件（持久化到 plugin-state.toml） |
-| `/dynamic-errors` | 查看动态插件健康状态（熔断器、错误历史） |
-| `/dynamic-errors clear` | 清除错误计数，解除隔离 |
+插件启用、停用、重新扫描、在线配置和健康状态都在 Web 管理面板的“插件”页操作。管理动作走带 Token 鉴权的 `/api/v1/plugins` 接口，不占用聊天命令名，也不会与第三方插件冲突。静态插件开关需要重启；动态插件可在面板中重新扫描并热加载。
 
 ### 熔断器机制
 
@@ -789,22 +794,15 @@ let status = SendBuilder::channel(channel_id)
 - 连续 3 次失败 → 插件自动隔离 60 秒
 - 隔离期间所有请求直接返回错误
 - 成功执行后自动重置失败计数
-- `/dynamic-errors clear` 手动重置
+- 在 Web 插件页重新扫描后重建动态运行时状态
 
 完整示例见 [`plugins/qimen-dynamic-plugin-example/`](plugins/qimen-dynamic-plugin-example/)。
 
-## 内置命令
+## 命令入口
 
-| 命令 | 说明 |
-|------|------|
-| `echo <text>` / `/echo <text>` | 回显文本 |
-| `status` / `/status` | 运行时状态 |
-| `help` / `/help` | 自动生成的帮助信息 |
-| `plugins` / `/plugins` | 已加载插件列表 |
-| `plugins reload` | 热重载动态插件 |
-| `dynamic-errors` | 动态插件健康状态 |
+框架本身不附带业务命令，`ping`、`echo`、`status` 等名称都由插件决定。默认只启用分页帮助兜底：`/help` 查看第一页，`/help 2` 查看第二页；插件注册 `help` 后会直接接管，也可从 Web 面板关闭兜底。
 
-命令触发方式：私聊直发、`/前缀`、`@bot 提及`、回复触发。
+命令入口支持前缀、私聊直发、`@bot` 提及和回复触发。前缀可配置多个，四类入口都能在“配置 → 命令入口”中独立调整，保存后 Bot 自动重连生效。
 
 ## 项目结构
 

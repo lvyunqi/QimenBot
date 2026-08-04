@@ -91,6 +91,10 @@ for interceptor in &interceptor_chain {
 | @提及 | `@Bot ping` | 群聊 |
 | 回复消息 | (回复 Bot 消息) `ping` | 群聊和私聊 |
 
+触发方式由 `[official_host.commands]` 控制，Web 面板入口是“配置 → 命令入口”。群聊普通文本不会直接进入命令路由；前缀、@ 和回复均关闭时，群聊消息仍会经过事件插件和拦截器，但不会匹配命令。
+
+Runtime 只做解析和路由，不注册 `ping`、`echo`、`status` 等业务命令。上表命令名仅作为插件命令示例；没有插件声明时不会产生回复。
+
 ### 第 7 步：插件分发
 
 匹配到的命令会被路由到对应的 `CommandPlugin`：

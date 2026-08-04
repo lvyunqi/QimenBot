@@ -1,7 +1,7 @@
 use qimen_error::{QimenError, Result};
 use qimen_plugin_api::RateLimiterConfig;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -107,6 +107,9 @@ pub struct OfficialHostConfig {
     /// Timeout in seconds for dynamic plugin FFI calls (default: 30).
     #[serde(default = "default_dynamic_plugin_timeout_secs")]
     pub dynamic_plugin_timeout_secs: u64,
+    /// Command recognition and host-provided help fallback.
+    #[serde(default)]
+    pub commands: CommandConfig,
     /// Real-time proactive send queue settings for dynamic plugins.
     #[serde(default)]
     pub proactive_send: ProactiveSendConfig,
@@ -124,8 +127,43 @@ impl Default for OfficialHostConfig {
             plugin_bin_dir: default_plugin_bin_dir(),
             plugin_config_dir: default_plugin_config_dir(),
             dynamic_plugin_timeout_secs: default_dynamic_plugin_timeout_secs(),
+            commands: CommandConfig::default(),
             proactive_send: ProactiveSendConfig::default(),
             webhook: WebhookGatewayConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandConfig {
+    /// Provide `/help [page]` only when no plugin has claimed `help`.
+    #[serde(default = "default_true")]
+    pub help_enabled: bool,
+    #[serde(default = "default_help_page_size")]
+    pub help_page_size: usize,
+    /// Prefixes accepted in group, channel, and private conversations.
+    #[serde(default = "default_command_prefixes")]
+    pub prefixes: Vec<String>,
+    /// Accept a command without a prefix in private conversations.
+    #[serde(default = "default_true")]
+    pub private_bare_enabled: bool,
+    /// Accept text directed at the Bot with a leading mention.
+    #[serde(default = "default_true")]
+    pub mention_enabled: bool,
+    /// Accept text following a reply segment.
+    #[serde(default = "default_true")]
+    pub reply_enabled: bool,
+}
+
+impl Default for CommandConfig {
+    fn default() -> Self {
+        Self {
+            help_enabled: true,
+            help_page_size: default_help_page_size(),
+            prefixes: default_command_prefixes(),
+            private_bare_enabled: true,
+            mention_enabled: true,
+            reply_enabled: true,
         }
     }
 }
@@ -308,6 +346,29 @@ impl AppConfig {
             return Err(QimenError::Config(
                 "official_host.plugin_config_dir cannot be empty".to_string(),
             ));
+        }
+
+        let commands = &self.official_host.commands;
+        if !(1..=20).contains(&commands.help_page_size) {
+            return Err(QimenError::Config(
+                "official_host.commands.help_page_size must be between 1 and 20".to_string(),
+            ));
+        }
+        let mut prefixes = HashSet::new();
+        for prefix in &commands.prefixes {
+            if prefix.is_empty()
+                || prefix.chars().any(char::is_whitespace)
+                || prefix.chars().count() > 8
+            {
+                return Err(QimenError::Config(format!(
+                    "official_host.commands prefix '{prefix}' must contain 1 to 8 non-whitespace characters"
+                )));
+            }
+            if !prefixes.insert(prefix) {
+                return Err(QimenError::Config(format!(
+                    "official_host.commands prefix '{prefix}' is duplicated"
+                )));
+            }
         }
 
         let webhook = &self.official_host.webhook;
@@ -522,6 +583,14 @@ fn default_plugin_config_dir() -> String {
 
 fn default_dynamic_plugin_timeout_secs() -> u64 {
     30
+}
+
+fn default_help_page_size() -> usize {
+    6
+}
+
+fn default_command_prefixes() -> Vec<String> {
+    vec!["/".to_string()]
 }
 
 fn default_proactive_send_queue_capacity() -> usize {
@@ -757,6 +826,12 @@ transport = "ws-forward"
         );
         assert_eq!(config.official_host.plugin_bin_dir, "plugins/bin");
         assert_eq!(config.official_host.plugin_config_dir, "config/plugins");
+        assert!(config.official_host.commands.help_enabled);
+        assert_eq!(config.official_host.commands.help_page_size, 6);
+        assert_eq!(config.official_host.commands.prefixes, vec!["/"]);
+        assert!(config.official_host.commands.private_bare_enabled);
+        assert!(config.official_host.commands.mention_enabled);
+        assert!(config.official_host.commands.reply_enabled);
         assert_eq!(config.official_host.proactive_send.queue_capacity, 256);
         assert_eq!(config.official_host.proactive_send.offline_ttl_secs, 60);
         assert!(!config.official_host.webhook.enabled);
@@ -766,6 +841,62 @@ transport = "ws-forward"
         assert_eq!(config.official_host.webhook.request_timeout_ms, 5_000);
         assert_eq!(config.official_host.webhook.max_in_flight, 64);
         assert!(config.official_host.webhook.access_token.is_empty());
+    }
+
+    #[test]
+    fn parse_and_validate_command_config() {
+        let mut config = valid_config();
+        config.official_host.commands = toml::from_str(
+            r#"
+help_enabled = false
+help_page_size = 4
+prefixes = ["/", "!"]
+private_bare_enabled = false
+mention_enabled = true
+reply_enabled = false
+"#,
+        )
+        .unwrap();
+
+        config.validate().unwrap();
+        assert!(!config.official_host.commands.help_enabled);
+        assert_eq!(config.official_host.commands.help_page_size, 4);
+        assert_eq!(config.official_host.commands.prefixes, vec!["/", "!"]);
+        assert!(!config.official_host.commands.private_bare_enabled);
+        assert!(config.official_host.commands.mention_enabled);
+        assert!(!config.official_host.commands.reply_enabled);
+    }
+
+    #[test]
+    fn validate_rejects_invalid_command_config() {
+        let mut config = valid_config();
+        config.official_host.commands.help_page_size = 0;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("help_page_size")
+        );
+
+        config.official_host.commands.help_page_size = 6;
+        config.official_host.commands.prefixes = vec!["/".to_string(), "/".to_string()];
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicated")
+        );
+
+        config.official_host.commands.prefixes = vec!["bad prefix".to_string()];
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("non-whitespace")
+        );
     }
 
     #[test]

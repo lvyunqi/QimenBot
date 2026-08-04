@@ -217,4 +217,6 @@ cargo check -p qimenbotd
 - 参数缺失、非数字 ID、私聊/群聊和字符串 ID 不会 panic。
 - 事件与拦截器的放行、阻断和信号符合预期。
 
-运行宿主后确认启动报告包含模块 ID，并用 `/plugins` 检查状态。找不到模块时依次检查 daemon 依赖、`extern crate`、`black_box`、`plugin_modules` 和 `plugin-state.toml`。
+运行宿主后确认启动报告包含模块 ID，并在 Web 管理面板“插件”页检查实际状态和命令清单。找不到模块时依次检查 daemon 依赖、`extern crate`、`black_box`、`plugin_modules` 和 `plugin-state.toml`。
+
+Runtime 不提供业务命令。`ping`、`echo`、`status` 等测试命令必须由插件自身声明；停用插件后命令和帮助项会同时消失。命令入口由 `[official_host.commands]` 统一控制，插件不应自行判断固定 `/` 前缀或解析平台 @ 标签。

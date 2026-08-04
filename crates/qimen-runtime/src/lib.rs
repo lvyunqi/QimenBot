@@ -13,7 +13,7 @@ pub mod proactive_send;
 pub mod rate_limiter;
 pub mod webhook_gateway;
 
-use self::command_dispatch::{CommandDispatchSignal, CommandDispatcher, render_help_text};
+use self::command_dispatch::{CommandDispatchSignal, CommandDispatcher};
 use self::dynamic_runtime::{DynamicPluginRuntime, DynamicResponse};
 use self::interceptor::InterceptorChain;
 use self::onebot11_dispatch::{OneBotSystemDispatchSignal, OneBotSystemDispatcher};
@@ -33,7 +33,7 @@ use base64::{
 use bytes::Bytes;
 use qimen_adapter_onebot11::OneBot11Adapter;
 use qimen_adapter_qqbot::QqBotAdapter;
-use qimen_config::{AppConfig, qq_official_intents_value};
+use qimen_config::{AppConfig, CommandConfig, qq_official_intents_value};
 use qimen_error::{QimenError, Result};
 use qimen_host_types::{
     DynamicCommandDescriptor, DynamicInterceptorDescriptor, DynamicPluginReportEntry,
@@ -41,8 +41,8 @@ use qimen_host_types::{
 };
 use qimen_message::Message;
 use qimen_plugin_api::{
-    BuiltinCommandAction, CommandPlugin, OwnedTaskFuture, PluginBundle, RateLimiterConfig,
-    RuntimeBotContext, SystemPlugin, TaskHandle,
+    CommandPlugin, OwnedTaskFuture, PluginBundle, RateLimiterConfig, RuntimeBotContext,
+    SystemPlugin, TaskHandle,
 };
 use qimen_protocol_core::{
     ActionMeta, ActionStatus, CapabilitySet, EventKind, IncomingPacket, NormalizedActionRequest,
@@ -576,6 +576,7 @@ pub struct Runtime {
     system_plugins: Vec<std::sync::Arc<dyn SystemPlugin>>,
     host_plugin_report: std::sync::RwLock<Option<HostPluginReport>>,
     plugin_priorities: std::sync::RwLock<BTreeMap<String, u32>>,
+    command_config: std::sync::RwLock<CommandConfig>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
     plugin_config_dir: Option<String>,
@@ -610,6 +611,7 @@ impl Default for Runtime {
             system_plugins: Vec::new(),
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_priorities: std::sync::RwLock::new(BTreeMap::new()),
+            command_config: std::sync::RwLock::new(CommandConfig::default()),
             plugin_state_path: None,
             plugin_bin_dir: None,
             plugin_config_dir: None,
@@ -800,6 +802,7 @@ impl Runtime {
             system_plugins: plugins.system_plugins,
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_priorities: std::sync::RwLock::new(plugin_priorities),
+            command_config: std::sync::RwLock::new(config.official_host.commands.clone()),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
             plugin_config_dir: Some(config.official_host.plugin_config_dir.clone()),
@@ -913,6 +916,22 @@ impl Runtime {
             .read()
             .map(|priorities| priorities.clone())
             .unwrap_or_default()
+    }
+
+    pub fn command_config(&self) -> CommandConfig {
+        self.command_config
+            .read()
+            .map(|config| config.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_command_config(&self, config: CommandConfig) -> Result<()> {
+        *self
+            .command_config
+            .write()
+            .map_err(|_| QimenError::Runtime("command config lock poisoned".to_string()))? = config;
+        self.reconnect_all_bots();
+        Ok(())
     }
 
     pub fn plugin_priority(&self, plugin_id: &str, kind: &str) -> u32 {
@@ -1478,47 +1497,12 @@ impl Runtime {
 
     fn build_command_dispatcher(&self) -> Result<CommandDispatcher> {
         let mut command_dispatcher =
-            CommandDispatcher::with_plugin_priorities(self.plugin_priorities());
+            CommandDispatcher::with_config(self.plugin_priorities(), self.command_config());
         for plugin in &self.command_plugins {
             command_dispatcher.register_plugin(plugin.clone());
         }
         let report_guard = self.host_plugin_report.read().unwrap();
         if let Some(report) = report_guard.as_ref() {
-            command_dispatcher.set_dynamic_status_entries(
-                report
-                    .dynamic_plugins
-                    .iter()
-                    .map(|entry| {
-                        let command_descriptions: Vec<String> = entry
-                            .commands
-                            .iter()
-                            .map(|cmd| format!("{}: {}", cmd.name, cmd.description))
-                            .collect();
-                        let commands: Vec<String> =
-                            entry.commands.iter().map(|cmd| cmd.name.clone()).collect();
-                        command_dispatch::PluginStatusEntry {
-                            id: entry.plugin_id.clone(),
-                            name: entry.plugin_id.clone(),
-                            version: entry.plugin_version.clone(),
-                            api_version: entry.api_version.clone(),
-                            command_descriptions,
-                            commands,
-                            dynamic: true,
-                            enabled: Some(true),
-                            callback_symbol: entry
-                                .commands
-                                .first()
-                                .map(|c| c.callback_symbol.clone()),
-                        }
-                    })
-                    .collect(),
-            );
-            let health = self
-                .dynamic_runtime
-                .lock()
-                .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
-                .health_entries();
-            command_dispatcher.merge_dynamic_health(&health);
             // Build command descriptors from v0.2 multi-command entries
             let mut dynamic_cmd_descriptors = Vec::new();
             for entry in &report.dynamic_plugins {
@@ -1801,9 +1785,8 @@ impl Runtime {
             .register_qq_official_executor(bot, Arc::clone(&api_client))
             .await;
         let adapter = QqBotAdapter;
-        let mut system_dispatcher = self.build_system_dispatcher();
-        let mut command_dispatcher = self.build_command_dispatcher()?;
-        let mut command_help_text = render_help_text(&command_dispatcher.describe_commands());
+        let system_dispatcher = self.build_system_dispatcher();
+        let command_dispatcher = self.build_command_dispatcher()?;
         let reconnect_policy = ReconnectPolicy::default();
         let mut reconnect_delay = reconnect_policy.initial_delay;
         let mut session = QqBotGatewaySession {
@@ -1868,7 +1851,6 @@ impl Runtime {
                     &api_client,
                     &system_dispatcher,
                     &command_dispatcher,
-                    &command_help_text,
                     &mut client,
                     &reconnect_policy,
                     limiter,
@@ -1879,20 +1861,6 @@ impl Runtime {
 
             match session_result {
                 Ok(SessionEnd::Shutdown) => break,
-                Ok(SessionEnd::PluginReload { reply_action }) => {
-                    tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
-                    if let Some(action) = reply_action
-                        && let Err(err) = self
-                            .execute_qqbot_action(bot, &adapter, &api_client, action)
-                            .await
-                    {
-                        tracing::warn!(bot_id = %bot.id, error = %err, "failed to send reload reply");
-                    }
-                    system_dispatcher = self.build_system_dispatcher();
-                    command_dispatcher = self.build_command_dispatcher()?;
-                    command_help_text = render_help_text(&command_dispatcher.describe_commands());
-                    continue;
-                }
                 Ok(SessionEnd::Reconnect(reason)) => {
                     self.set_bot_connection_state(
                         &bot.id,
@@ -1936,7 +1904,6 @@ impl Runtime {
         api_client: &QqBotOpenApiClient,
         system_dispatcher: &OneBotSystemDispatcher,
         command_dispatcher: &CommandDispatcher,
-        command_help_text: &str,
         client: &mut QqBotGatewayClient,
         reconnect_policy: &ReconnectPolicy,
         limiter: &TokenBucketLimiter,
@@ -1974,7 +1941,6 @@ impl Runtime {
                                     api_client,
                                     system_dispatcher,
                                     command_dispatcher,
-                                    command_help_text,
                                     event,
                                     limiter,
                                 )
@@ -1983,9 +1949,6 @@ impl Runtime {
                             match signal {
                                 SessionSignal::Heartbeat(_) | SessionSignal::EventHandled => {
                                     idle_timer.as_mut().reset(tokio::time::Instant::now() + reconnect_policy.idle_timeout);
-                                }
-                                SessionSignal::EndSession(end) => {
-                                    return Ok(end);
                                 }
                             }
                         }
@@ -2031,9 +1994,8 @@ impl Runtime {
         })
         .await?;
         let adapter = OneBot11Adapter;
-        let mut system_dispatcher = self.build_system_dispatcher();
-        let mut command_dispatcher = self.build_command_dispatcher()?;
-        let mut command_help_text = render_help_text(&command_dispatcher.describe_commands());
+        let system_dispatcher = self.build_system_dispatcher();
+        let command_dispatcher = self.build_command_dispatcher()?;
         let reconnect_policy = ReconnectPolicy::default();
         self.set_bot_connection_state(&bot.id, BotConnectionState::Reconnecting, None);
 
@@ -2070,7 +2032,6 @@ impl Runtime {
                         &adapter,
                         &system_dispatcher,
                         &command_dispatcher,
-                        &command_help_text,
                         &mut client,
                         &reconnect_policy,
                         limiter,
@@ -2085,19 +2046,6 @@ impl Runtime {
                                 .await;
                         }
                         return Ok(());
-                    }
-                    Ok(SessionEnd::PluginReload { reply_action }) => {
-                        tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
-                        if let Some(action) = reply_action
-                            && let Err(err) =
-                                self.execute_action(bot, &adapter, &client, action).await
-                        {
-                            tracing::warn!(bot_id = %bot.id, error = %err, "failed to send reload reply");
-                        }
-                        system_dispatcher = self.build_system_dispatcher();
-                        command_dispatcher = self.build_command_dispatcher()?;
-                        command_help_text =
-                            render_help_text(&command_dispatcher.describe_commands());
                     }
                     Ok(SessionEnd::Reconnect(reason)) => {
                         self.set_bot_connection_state(
@@ -2140,9 +2088,8 @@ impl Runtime {
         tracing::info!(bot_id = %bot.id, endpoint = %endpoint, "connecting to OneBot11 forward WS");
 
         let adapter = OneBot11Adapter;
-        let mut system_dispatcher = self.build_system_dispatcher();
-        let mut command_dispatcher = self.build_command_dispatcher()?;
-        let mut command_help_text = render_help_text(&command_dispatcher.describe_commands());
+        let system_dispatcher = self.build_system_dispatcher();
+        let command_dispatcher = self.build_command_dispatcher()?;
         let reconnect_policy = ReconnectPolicy::default();
         let mut reconnect_delay = reconnect_policy.initial_delay;
 
@@ -2190,7 +2137,6 @@ impl Runtime {
                     &adapter,
                     &system_dispatcher,
                     &command_dispatcher,
-                    &command_help_text,
                     &mut client,
                     &reconnect_policy,
                     limiter,
@@ -2205,26 +2151,6 @@ impl Runtime {
                             .await;
                     }
                     break;
-                }
-                Ok(SessionEnd::PluginReload { reply_action }) => {
-                    tracing::info!(bot_id = %bot.id, "plugin reload triggered, rebuilding dispatchers");
-                    // Send the reload reply before rebuilding
-                    if let Some(action) = reply_action
-                        && let Err(err) = self.execute_action(bot, &adapter, &client, action).await
-                    {
-                        tracing::warn!(bot_id = %bot.id, error = %err, "failed to send reload reply");
-                    }
-                    // Rebuild dispatchers from updated host_plugin_report
-                    system_dispatcher = self.build_system_dispatcher();
-                    command_dispatcher = self.build_command_dispatcher()?;
-                    command_help_text = render_help_text(&command_dispatcher.describe_commands());
-                    if let Some(registration_id) = proactive_registration {
-                        self.proactive_send_hub
-                            .unregister_executor(&bot.id, registration_id)
-                            .await;
-                    }
-                    // Continue the loop without reconnecting — reuse the existing connection
-                    continue;
                 }
                 Ok(SessionEnd::Reconnect(reason)) => {
                     self.set_bot_connection_state(
@@ -2268,7 +2194,6 @@ impl Runtime {
         adapter: &OneBot11Adapter,
         system_dispatcher: &OneBotSystemDispatcher,
         command_dispatcher: &CommandDispatcher,
-        command_help_text: &str,
         client: &mut OneBot11WsClient,
         reconnect_policy: &ReconnectPolicy,
         limiter: &TokenBucketLimiter,
@@ -2290,7 +2215,15 @@ impl Runtime {
                     match maybe_event {
                         Some(text) => {
                             let signal = self
-                                .handle_onebot11_payload(bot, adapter, system_dispatcher, command_dispatcher, command_help_text, client, &text, limiter)
+                                .handle_onebot11_payload(
+                                    bot,
+                                    adapter,
+                                    system_dispatcher,
+                                    command_dispatcher,
+                                    client,
+                                    &text,
+                                    limiter,
+                                )
                                 .await?;
 
                             let next_deadline = match signal {
@@ -2299,9 +2232,6 @@ impl Runtime {
                                 }
                                 SessionSignal::EventHandled => {
                                     tokio::time::Instant::now() + reconnect_policy.idle_timeout
-                                }
-                                SessionSignal::EndSession(end) => {
-                                    return Ok(end);
                                 }
                             };
                             idle_timer.as_mut().reset(next_deadline);
@@ -2323,7 +2253,6 @@ impl Runtime {
         adapter: &OneBot11Adapter,
         system_dispatcher: &OneBotSystemDispatcher,
         command_dispatcher: &CommandDispatcher,
-        command_help_text: &str,
         client: &OneBot11WsClient,
         text: &str,
         limiter: &TokenBucketLimiter,
@@ -2426,15 +2355,8 @@ impl Runtime {
             "received OneBot event"
         );
 
-        self.handle_normalized_event(
-            bot,
-            event,
-            command_dispatcher,
-            command_help_text,
-            &runtime_ctx,
-            limiter,
-        )
-        .await
+        self.handle_normalized_event(bot, event, command_dispatcher, &runtime_ctx, limiter)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2446,7 +2368,6 @@ impl Runtime {
         api_client: &QqBotOpenApiClient,
         system_dispatcher: &OneBotSystemDispatcher,
         command_dispatcher: &CommandDispatcher,
-        command_help_text: &str,
         gateway_event: qimen_transport_qqbot::GatewayEvent,
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionSignal> {
@@ -2508,15 +2429,8 @@ impl Runtime {
             return Ok(SessionSignal::EventHandled);
         }
 
-        self.handle_normalized_event(
-            bot,
-            event,
-            command_dispatcher,
-            command_help_text,
-            &runtime_ctx,
-            limiter,
-        )
-        .await
+        self.handle_normalized_event(bot, event, command_dispatcher, &runtime_ctx, limiter)
+            .await
     }
 
     async fn handle_qqbot_system_event(
@@ -2597,7 +2511,6 @@ impl Runtime {
         bot: &BotRuntimeInfo,
         event: NormalizedEvent,
         command_dispatcher: &CommandDispatcher,
-        command_help_text: &str,
         runtime_ctx: &dyn NormalizedActionExecutor,
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionSignal> {
@@ -2659,32 +2572,11 @@ impl Runtime {
             .await;
 
         let outcome = self
-            .handle_command_signal(
-                &event,
-                command_dispatcher,
-                command_help_text,
-                command_result,
-                runtime_ctx,
-            )
+            .handle_command_signal(&event, command_dispatcher, command_result, runtime_ctx)
             .await?;
         let reply = match outcome {
             NormalizedCommandOutcome::Reply(reply) => Some(reply),
-            NormalizedCommandOutcome::Reload { reply_action } => {
-                return Ok(SessionSignal::EndSession(SessionEnd::PluginReload {
-                    reply_action,
-                }));
-            }
             NormalizedCommandOutcome::None => None,
-        };
-
-        let reply = match event.message.as_ref().map(|message| message.plain_text()) {
-            Some(text)
-                if text.trim().eq_ignore_ascii_case("help")
-                    || text.trim().eq_ignore_ascii_case("/help") =>
-            {
-                Some(Message::text(command_help_text.to_string()))
-            }
-            _ => reply,
         };
 
         if let Some(reply) = reply {
@@ -2712,82 +2604,12 @@ impl Runtime {
         &self,
         event: &NormalizedEvent,
         command_dispatcher: &CommandDispatcher,
-        command_help_text: &str,
         command_result: Option<CommandDispatchSignal>,
         runtime_ctx: &dyn NormalizedActionExecutor,
     ) -> Result<NormalizedCommandOutcome> {
         Ok(match command_result {
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsShow)) => {
-                let health = self
-                    .dynamic_runtime
-                    .lock()
-                    .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
-                    .health_entries();
-                let mut snapshot = CommandDispatcher::with_default_handlers();
-                snapshot.set_dynamic_status_entries(command_dispatcher.plugin_status_entries());
-                snapshot.merge_dynamic_health(&health);
-                NormalizedCommandOutcome::Reply(Message::text(render_plugin_status_text(&snapshot)))
-            }
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryReport)) => {
-                NormalizedCommandOutcome::Reply(Message::text(render_registry_report(
-                    command_dispatcher,
-                )))
-            }
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryConflicts)) => {
-                NormalizedCommandOutcome::Reply(Message::text(render_registry_conflicts_report(
-                    command_dispatcher,
-                )))
-            }
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::DynamicErrors)) => {
-                let health = self
-                    .dynamic_runtime
-                    .lock()
-                    .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
-                    .health_entries();
-                NormalizedCommandOutcome::Reply(Message::text(render_dynamic_errors_report(
-                    &health,
-                )))
-            }
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::DynamicErrorsClear)) => {
-                self.dynamic_runtime
-                    .lock()
-                    .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
-                    .clear_errors();
-                NormalizedCommandOutcome::Reply(Message::text(
-                    "dynamic runtime error state cleared",
-                ))
-            }
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsEnable {
-                plugin_id,
-            })) => NormalizedCommandOutcome::Reply(Message::text(self.update_plugin_state(
-                plugin_id,
-                true,
-                command_dispatcher,
-            )?)),
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsDisable {
-                plugin_id,
-            })) => NormalizedCommandOutcome::Reply(Message::text(self.update_plugin_state(
-                plugin_id,
-                false,
-                command_dispatcher,
-            )?)),
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsReload)) => {
-                match self.rescan_dynamic_plugins().await {
-                    Ok(count) => {
-                        let reply_msg = Message::text(format!(
-                            "dynamic plugins reloaded: {} plugin(s) discovered, dispatchers will be rebuilt",
-                            count
-                        ));
-                        let reply_action = runtime_ctx.build_reply_action(event, reply_msg).ok();
-                        NormalizedCommandOutcome::Reload { reply_action }
-                    }
-                    Err(err) => NormalizedCommandOutcome::Reply(Message::text(format!(
-                        "plugin reload failed: {err}"
-                    ))),
-                }
-            }
-            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::Help)) => {
-                NormalizedCommandOutcome::Reply(Message::text(command_help_text.to_string()))
+            Some(CommandDispatchSignal::Help { page }) => {
+                NormalizedCommandOutcome::Reply(Message::text(command_dispatcher.render_help(page)))
             }
             Some(CommandDispatchSignal::DynamicCommand { descriptor, args }) => {
                 match self
@@ -3761,54 +3583,6 @@ impl Runtime {
         Ok(())
     }
 
-    fn update_plugin_state(
-        &self,
-        plugin_id: String,
-        enabled: bool,
-        command_dispatcher: &CommandDispatcher,
-    ) -> Result<String> {
-        let Some(path) = &self.plugin_state_path else {
-            return Err(QimenError::Runtime(
-                "plugin state path not configured".to_string(),
-            ));
-        };
-
-        let entries = command_dispatcher.plugin_status_entries();
-        let known_static = entries.iter().find(|entry| entry.id == plugin_id);
-
-        let Some(entry) = known_static else {
-            return Ok(format!("plugin '{}' not found", plugin_id));
-        };
-
-        let mut state = load_plugin_state(path)?;
-        let current = state.is_enabled(&plugin_id);
-        if current == enabled {
-            return Ok(format!(
-                "plugin '{}' is already {}",
-                plugin_id,
-                if enabled { "enabled" } else { "disabled" }
-            ));
-        }
-
-        state.set_enabled(plugin_id.clone(), enabled);
-        state.save_to_path(path)?;
-
-        if entry.dynamic {
-            Ok(format!(
-                "plugin '{}' {} (takes effect after restart)",
-                plugin_id,
-                if enabled { "enabled" } else { "disabled" },
-            ))
-        } else {
-            Ok(format!(
-                "plugin '{}' {} in {}",
-                plugin_id,
-                if enabled { "enabled" } else { "disabled" },
-                path
-            ))
-        }
-    }
-
     async fn execute_dynamic_system_route(
         &self,
         report: &HostPluginReport,
@@ -4022,9 +3796,6 @@ fn find_route_entry<'a>(
 enum SessionEnd {
     Shutdown,
     Reconnect(String),
-    PluginReload {
-        reply_action: Option<NormalizedActionRequest>,
-    },
 }
 
 fn epoch_millis() -> u64 {
@@ -4045,14 +3816,10 @@ fn result_summary<T>(result: Result<T>) -> String {
 enum SessionSignal {
     EventHandled,
     Heartbeat(u64),
-    EndSession(SessionEnd),
 }
 
 enum NormalizedCommandOutcome {
     Reply(Message),
-    Reload {
-        reply_action: Option<NormalizedActionRequest>,
-    },
     None,
 }
 
@@ -4929,173 +4696,6 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-fn render_plugin_status_text(command_dispatcher: &CommandDispatcher) -> String {
-    let entries = command_dispatcher.plugin_status_entries();
-    if entries.is_empty() {
-        return "no registered plugins".to_string();
-    }
-
-    let mut static_plugins = Vec::new();
-    let mut dynamic_descriptors = Vec::new();
-    let mut dynamic_health = Vec::new();
-
-    for entry in &entries {
-        if entry.dynamic {
-            dynamic_descriptors.push(entry);
-            if entry
-                .command_descriptions
-                .iter()
-                .any(|item| item.starts_with("health:"))
-            {
-                dynamic_health.push(entry);
-            }
-        } else {
-            static_plugins.push(entry);
-        }
-    }
-
-    let mut lines = vec!["[plugins]".to_string()];
-    lines.push("[static plugins]".to_string());
-    lines.extend(render_plugin_section(&static_plugins));
-    lines.push("[dynamic descriptors]".to_string());
-    lines.extend(render_plugin_section(&dynamic_descriptors));
-    lines.push("[dynamic runtime health]".to_string());
-    lines.extend(render_plugin_section(&dynamic_health));
-    lines.join("\n")
-}
-
-fn render_registry_report(command_dispatcher: &CommandDispatcher) -> String {
-    let diagnostics = command_dispatcher.registry().diagnostics();
-    let precedence = command_dispatcher.registry().precedence_report();
-    let mut lines = vec!["[registry report]".to_string()];
-
-    lines.push("[diagnostics]".to_string());
-    if diagnostics.is_empty() {
-        lines.push("  - none".to_string());
-    } else {
-        lines.extend(diagnostics.iter().map(|item| {
-            format!(
-                "  - key={} incoming={} existing={}",
-                item.key,
-                item.incoming_source,
-                item.existing_sources.join(",")
-            )
-        }));
-    }
-
-    lines.push("[effective commands]".to_string());
-    for (definition, source) in command_dispatcher.describe_commands() {
-        lines.push(format!(
-            "  - {} (source={}, category={}, role={})",
-            definition.name,
-            source,
-            definition.category,
-            match definition.required_role {
-                qimen_plugin_api::CommandRole::Anyone => "anyone",
-                qimen_plugin_api::CommandRole::Admin => "admin",
-                qimen_plugin_api::CommandRole::Owner => "owner",
-            }
-        ));
-    }
-
-    lines.push("[precedence]".to_string());
-    for (key, entries) in precedence {
-        let summary = entries
-            .iter()
-            .map(|(source, priority)| format!("{}(p={})", source, priority))
-            .collect::<Vec<_>>()
-            .join(" > ");
-        lines.push(format!("  - {} => {}", key, summary));
-    }
-
-    lines.join("\n")
-}
-
-fn render_registry_conflicts_report(command_dispatcher: &CommandDispatcher) -> String {
-    let diagnostics = command_dispatcher.registry().diagnostics();
-    let mut lines = vec!["[registry conflicts]".to_string()];
-    if diagnostics.is_empty() {
-        lines.push("  - none".to_string());
-        return lines.join("\n");
-    }
-
-    for item in diagnostics {
-        lines.push(format!(
-            "  - key={}\n    incoming={}\n    existing={}",
-            item.key,
-            item.incoming_source,
-            item.existing_sources.join(",")
-        ));
-    }
-
-    lines.join("\n")
-}
-
-fn render_dynamic_errors_report(health: &[qimen_host_types::DynamicRuntimeHealthEntry]) -> String {
-    let mut lines = vec!["[dynamic errors]".to_string()];
-    if health.is_empty() {
-        lines.push("  - none".to_string());
-        return lines.join("\n");
-    }
-
-    for entry in health {
-        lines.push(format!(
-            "  - path={}\n    failures={}\n    isolated_until={}\n    last_error={}",
-            entry.path,
-            entry.failures,
-            entry
-                .isolated_until_epoch_ms
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            entry.last_error.clone().unwrap_or_else(|| "-".to_string())
-        ));
-        if !entry.recent_errors.is_empty() {
-            lines.push(format!(
-                "    recent_errors={}",
-                entry.recent_errors.join(" | ")
-            ));
-        }
-    }
-
-    lines.join("\n")
-}
-
-fn render_plugin_section(entries: &[&command_dispatch::PluginStatusEntry]) -> Vec<String> {
-    if entries.is_empty() {
-        return vec!["  - none".to_string()];
-    }
-
-    entries
-        .iter()
-        .map(|entry| {
-            format!(
-                "  - plugin: {}\n    name: {}\n    version: {}\n    api: {}\n    state: {}\n    dynamic: {}\n    command_descriptions: {}\n    callback: {}\n    commands: {}",
-                entry.id,
-                entry.name,
-                entry.version,
-                entry.api_version,
-                match entry.enabled {
-                    Some(true) => "enabled",
-                    Some(false) => "disabled",
-                    None => "unknown",
-                },
-                if entry.dynamic { "yes" } else { "no" },
-                if entry.command_descriptions.is_empty() {
-                    "-".to_string()
-                } else {
-                    entry.command_descriptions.join(" | ")
-                },
-                entry.callback_symbol.as_deref().unwrap_or("-"),
-                if entry.commands.is_empty() {
-                    "-".to_string()
-                } else {
-                    entry.commands.join(",")
-                }
-            )
-        })
-        .collect()
-}
-
 /// Convert a TOML value to a serde_json::Value.
 fn read_plugin_config_json(path: &std::path::Path) -> Result<String> {
     let raw = match std::fs::read_to_string(path) {
@@ -5141,7 +4741,11 @@ fn toml_to_json(val: &toml::Value) -> serde_json::Value {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use qimen_plugin_api::MessageEventInterceptor;
+    use qimen_plugin_api::{
+        CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext,
+        CommandPluginSignal, CommandRole, CommandScope, MessageEventInterceptor,
+        PluginCompatibility, PluginMetadata,
+    };
     use qimen_protocol_core::{ActorRef, ChatRef};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -5649,12 +5253,63 @@ path = "/onebot/reverse"
         }
     }
 
+    struct EchoPlugin;
+
+    #[async_trait]
+    impl CommandPlugin for EchoPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                id: "test-echo",
+                name: "Test Echo",
+                version: "0.1.0",
+                description: "Generic command pipeline fixture",
+                api_version: "0.1",
+                compatibility: PluginCompatibility {
+                    host_api: "0.1",
+                    framework_min: "0.1.0",
+                    framework_max: "0.1.x",
+                },
+            }
+        }
+
+        fn commands(&self) -> Vec<CommandDefinition> {
+            vec![CommandDefinition {
+                name: "echo",
+                description: "Echo plugin input",
+                aliases: &[],
+                examples: &["/echo hello"],
+                category: "tests",
+                hidden: false,
+                required_role: CommandRole::Anyone,
+                scope: CommandScope::All,
+                filter: None,
+            }]
+        }
+
+        async fn on_command(
+            &self,
+            _ctx: &CommandPluginContext<'_>,
+            invocation: &CommandInvocation,
+        ) -> Option<CommandPluginSignal> {
+            (invocation.definition.name == "echo").then(|| {
+                CommandPluginSignal::Reply(Message::text(
+                    invocation.args.first().cloned().unwrap_or_default(),
+                ))
+            })
+        }
+    }
+
+    fn test_command_dispatcher() -> CommandDispatcher {
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
+        dispatcher.register_plugin(Arc::new(EchoPlugin));
+        dispatcher
+    }
+
     #[tokio::test]
     async fn qq_official_message_pipeline_replies_for_supported_chats() {
         let runtime = Runtime::default();
         let bot = qq_official_bot();
-        let dispatcher = CommandDispatcher::with_default_handlers();
-        let help_text = render_help_text(&dispatcher.describe_commands());
+        let dispatcher = test_command_dispatcher();
         let executor = RecordingQqOfficialExecutor::new();
         let limiter = TokenBucketLimiter::new(&bot.limiter_config);
 
@@ -5664,7 +5319,7 @@ path = "/onebot/reverse"
         {
             let event = qq_official_message_event(chat_kind, "/echo pong", &format!("msg-{index}"));
             let signal = runtime
-                .handle_normalized_event(&bot, event, &dispatcher, &help_text, &executor, &limiter)
+                .handle_normalized_event(&bot, event, &dispatcher, &executor, &limiter)
                 .await
                 .expect("message should be handled");
 
@@ -5707,13 +5362,12 @@ path = "/onebot/reverse"
             .unwrap();
         let runtime = Runtime::default();
         let bot = qq_official_bot();
-        let dispatcher = CommandDispatcher::with_default_handlers();
-        let help_text = render_help_text(&dispatcher.describe_commands());
+        let dispatcher = test_command_dispatcher();
         let executor = RecordingQqOfficialExecutor::new();
         let limiter = TokenBucketLimiter::new(&bot.limiter_config);
 
         let signal = runtime
-            .handle_normalized_event(&bot, event, &dispatcher, &help_text, &executor, &limiter)
+            .handle_normalized_event(&bot, event, &dispatcher, &executor, &limiter)
             .await
             .expect("message should be handled");
 
@@ -5736,14 +5390,13 @@ path = "/onebot/reverse"
             }));
 
         let bot = qq_official_bot();
-        let dispatcher = CommandDispatcher::with_default_handlers();
-        let help_text = render_help_text(&dispatcher.describe_commands());
+        let dispatcher = test_command_dispatcher();
         let executor = RecordingQqOfficialExecutor::new();
         let limiter = TokenBucketLimiter::new(&bot.limiter_config);
         let event = qq_official_message_event("private", "/help", "help-msg");
 
         let signal = runtime
-            .handle_normalized_event(&bot, event, &dispatcher, &help_text, &executor, &limiter)
+            .handle_normalized_event(&bot, event, &dispatcher, &executor, &limiter)
             .await
             .expect("help should be handled");
 
@@ -5753,7 +5406,7 @@ path = "/onebot/reverse"
 
         let replies = executor.replies.lock().unwrap();
         assert_eq!(replies.len(), 1);
-        assert!(replies[0].contains("[help]"));
+        assert!(replies[0].contains("[help 1/1]"));
         assert!(replies[0].contains("/echo"));
         assert!(!replies[0].contains("/ping"));
     }

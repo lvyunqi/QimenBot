@@ -30,6 +30,14 @@ plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
 dynamic_plugin_timeout_secs = 30
 
+[official_host.commands]
+help_enabled = true
+help_page_size = 6
+prefixes = ["/"]
+private_bare_enabled = true
+mention_enabled = true
+reply_enabled = true
+
 [official_host.proactive_send]
 queue_capacity = 256
 offline_ttl_secs = 60

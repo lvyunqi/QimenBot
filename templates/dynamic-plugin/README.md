@@ -129,15 +129,14 @@ file /opt/qimenbot/runtime/qimenbotd /opt/qimenbot/plugins/bin/libqimen_dynamic_
 ldd /opt/qimenbot/plugins/bin/libqimen_dynamic_plugin_myplugin.so
 ```
 
-然后在 Bot 中执行：
+然后在 Web 管理面板打开“插件”页，点击“重新扫描”。自动化部署可以使用带管理 Token 的管理 API：
 
 ```text
-/plugins reload
-/plugins
-/dynamic-errors
+POST /api/v1/plugins/reload
+GET  /api/v1/plugins
 ```
 
-加载失败时先检查 CPU、GNU/musl、glibc、缺失共享库和 `config/plugin-state.toml`。完整开发与排错说明见：
+Runtime 不再提供聊天内的插件管理或错误诊断命令。加载失败时在插件卡片和实时日志中查看第一条错误，再检查 CPU、GNU/musl、glibc、缺失共享库和 `config/plugin-state.toml`。完整开发与排错说明见：
 
 - <https://lvyunqi.github.io/QimenBot/plugin/dynamic.html>
 - <https://github.com/lvyunqi/QimenBot/tree/main/skills/qimenbot-plugin-development>

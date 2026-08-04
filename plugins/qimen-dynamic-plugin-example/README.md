@@ -57,7 +57,7 @@ Copy-Item target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 
 ### 3. 加载
 
-启动 QimenBot，或在 Bot 中执行 `/plugins reload` 热重载动态库。
+启动 QimenBot，或在 Web 管理面板的“插件”页点击“重新扫描”热重载动态库。自动化场景可以使用带管理 Token 的 `POST /api/v1/plugins/reload`。
 
 ## 本示例包含
 

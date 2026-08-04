@@ -247,7 +247,7 @@ INFO inventory plugin modules discovered, count=1, modules=my-plugin
 **不需要修改 `qimen-official-host` 或框架中的任何其他代码。**
 
 ::: tip 不想重新编译？
-需要在不重新编译框架的情况下更新插件时，可使用 [动态插件](/plugin/dynamic)。动态插件编译为独立的 `.so/.dll` 文件，并通过 `/plugins reload` 热重载。
+需要在不重新编译框架的情况下更新插件时，可使用 [动态插件](/plugin/dynamic)。动态插件编译为独立的 `.so/.dll` 文件，并可在 Web 插件页重新扫描后热加载。
 :::
 
 ## 下一步

@@ -46,6 +46,8 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - 官方 QQ 本地媒体通过通用 Base64 消息段交给宿主处理；插件不读取 Bot 凭据、不自行实现分片上传，也不把 Base64 正文写入日志。
 - 不把 Secret、Token、用户配置、数据库或编译后的动态库提交到 QimenBot 主仓库。
 - 主框架代码必须保持插件无关；具体插件逻辑只能进入插件目录或独立插件仓库。
+- Runtime 不附带 `ping`、`echo`、`status`、`plugins` 等聊天命令。命令是否存在只看插件描述符；宿主 `help` 是可关闭、可被插件接管的分页兜底。
+- 命令前缀、私聊裸命令、@ 和回复入口由 `[official_host.commands]` 控制。插件不要自行删除协议 @ 标签或硬编码 `/`。
 - 动态插件回调是同步 FFI，不直接使用 `async fn`；跨 FFI 边界只用 Host API 提供的 ABI 稳定类型。
 - API 0.6 配置必须使用独立 Schema 描述符；不要把字段追加到旧 `PluginDescriptor`，也不要让插件提供 HTML/JavaScript。
 - 密钥只能使用 Schema 的 `writeOnly` / `x-qimen-secret` / `format = "password"` 标记；不要在普通配置值、日志、默认值或 README 中放凭据。
@@ -63,6 +65,7 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - API 0.6 插件同时使用已发布的 `abi-stable-host-api 0.1.13` 与 `qimen-dynamic-plugin-derive 0.1.13`，没有混用 `0.1.12`、浮动 Git 分支或本地 path。
 - 在线配置已覆盖 Schema、UI Schema、密钥保留、revision 冲突和 `live/reload/restart` 生效语义。
 - 已覆盖权限、作用域、字符串 ID、错误处理和资源清理。
+- 已确认命令在目标宿主入口配置下可触发，帮助描述、隐藏状态和分页展示符合预期。
 - 动态后台线程能在 `#[shutdown]` 中停止并 `join`；Webhook 已考虑鉴权、签名、超时和重放。
 - 商城投稿已核对公开仓库、许可证、驱动矩阵、固定资产名、target、glibc、大小、SHA256 和构建证明。
 - 已运行最小相关检查，并报告实际结果。

@@ -107,7 +107,7 @@ pub struct ConfigView {
     pub bots: Vec<BotView>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GeneralConfigView {
     pub environment: String,
     pub shutdown_timeout_secs: u64,
@@ -131,6 +131,12 @@ pub struct GeneralConfigView {
     pub plugin_bin_dir: String,
     pub plugin_config_dir: String,
     pub dynamic_plugin_timeout_secs: u64,
+    pub command_help_enabled: bool,
+    pub command_help_page_size: usize,
+    pub command_prefixes: Vec<String>,
+    pub command_private_bare_enabled: bool,
+    pub command_mention_enabled: bool,
+    pub command_reply_enabled: bool,
     pub proactive_queue_capacity: usize,
     pub proactive_offline_ttl_secs: u64,
     pub webhook_enabled: bool,
@@ -172,6 +178,12 @@ pub struct GeneralMutation {
     pub plugin_bin_dir: String,
     pub plugin_config_dir: String,
     pub dynamic_plugin_timeout_secs: u64,
+    pub command_help_enabled: bool,
+    pub command_help_page_size: usize,
+    pub command_prefixes: Vec<String>,
+    pub command_private_bare_enabled: bool,
+    pub command_mention_enabled: bool,
+    pub command_reply_enabled: bool,
     pub proactive_queue_capacity: usize,
     pub proactive_offline_ttl_secs: u64,
     pub webhook_enabled: bool,
@@ -335,6 +347,12 @@ pub fn general_view(config: &AppConfig) -> GeneralConfigView {
         plugin_bin_dir: config.official_host.plugin_bin_dir.clone(),
         plugin_config_dir: config.official_host.plugin_config_dir.clone(),
         dynamic_plugin_timeout_secs: config.official_host.dynamic_plugin_timeout_secs,
+        command_help_enabled: config.official_host.commands.help_enabled,
+        command_help_page_size: config.official_host.commands.help_page_size,
+        command_prefixes: config.official_host.commands.prefixes.clone(),
+        command_private_bare_enabled: config.official_host.commands.private_bare_enabled,
+        command_mention_enabled: config.official_host.commands.mention_enabled,
+        command_reply_enabled: config.official_host.commands.reply_enabled,
         proactive_queue_capacity: config.official_host.proactive_send.queue_capacity,
         proactive_offline_ttl_secs: config.official_host.proactive_send.offline_ttl_secs,
         webhook_enabled: config.official_host.webhook.enabled,

@@ -78,6 +78,12 @@ export interface GeneralConfigView {
   plugin_bin_dir: string
   plugin_config_dir: string
   dynamic_plugin_timeout_secs: number
+  command_help_enabled: boolean
+  command_help_page_size: number
+  command_prefixes: string[]
+  command_private_bare_enabled: boolean
+  command_mention_enabled: boolean
+  command_reply_enabled: boolean
   proactive_queue_capacity: number
   proactive_offline_ttl_secs: number
   webhook_enabled: boolean
@@ -440,10 +446,26 @@ function auditPath(page: number, pageSize: number) {
   return `/audit?${query}`
 }
 
+function normalizeConfigView(config: ConfigView): ConfigView {
+  const general = config.general
+  return {
+    ...config,
+    general: {
+      ...general,
+      command_help_enabled: general.command_help_enabled ?? true,
+      command_help_page_size: general.command_help_page_size ?? 6,
+      command_prefixes: Array.isArray(general.command_prefixes) ? general.command_prefixes : ["/"],
+      command_private_bare_enabled: general.command_private_bare_enabled ?? true,
+      command_mention_enabled: general.command_mention_enabled ?? true,
+      command_reply_enabled: general.command_reply_enabled ?? true,
+    },
+  }
+}
+
 export const api = {
   snapshot: () => request<AdminSnapshot>("/snapshot"),
   bots: () => request<BotView[]>("/bots"),
-  config: () => request<ConfigView>("/config"),
+  config: () => request<ConfigView>("/config").then(normalizeConfigView),
   plugins: () => request<PluginView[]>("/plugins"),
   marketplace: (params: MarketplaceListParams) =>
     request<MarketplaceView>(marketplacePath("/marketplace", params)),
@@ -586,6 +608,12 @@ export interface GeneralMutation {
   plugin_bin_dir: string
   plugin_config_dir: string
   dynamic_plugin_timeout_secs: number
+  command_help_enabled: boolean
+  command_help_page_size: number
+  command_prefixes: string[]
+  command_private_bare_enabled: boolean
+  command_mention_enabled: boolean
+  command_reply_enabled: boolean
   proactive_queue_capacity: number
   proactive_offline_ttl_secs: number
   webhook_enabled: boolean

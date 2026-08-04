@@ -283,6 +283,16 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
     document["official_host"]["plugin_config_dir"] = value(update.plugin_config_dir.trim());
     document["official_host"]["dynamic_plugin_timeout_secs"] =
         value(update.dynamic_plugin_timeout_secs as i64);
+    ensure_child_table(&mut document["official_host"], "commands");
+    document["official_host"]["commands"]["help_enabled"] = value(update.command_help_enabled);
+    document["official_host"]["commands"]["help_page_size"] =
+        value(update.command_help_page_size as i64);
+    document["official_host"]["commands"]["prefixes"] = string_array(&update.command_prefixes);
+    document["official_host"]["commands"]["private_bare_enabled"] =
+        value(update.command_private_bare_enabled);
+    document["official_host"]["commands"]["mention_enabled"] =
+        value(update.command_mention_enabled);
+    document["official_host"]["commands"]["reply_enabled"] = value(update.command_reply_enabled);
     document["official_host"]["proactive_send"]["queue_capacity"] =
         value(update.proactive_queue_capacity as i64);
     document["official_host"]["proactive_send"]["offline_ttl_secs"] =
@@ -308,6 +318,12 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
 fn ensure_table(document: &mut DocumentMut, key: &str) {
     if document.get(key).is_none_or(|item| !item.is_table()) {
         document[key] = Item::Table(Table::new());
+    }
+}
+
+fn ensure_child_table(parent: &mut Item, key: &str) {
+    if parent.get(key).is_none_or(|item| !item.is_table()) {
+        parent[key] = Item::Table(Table::new());
     }
 }
 
@@ -431,7 +447,7 @@ fn atomic_replace(path: &Path, raw: &str) -> Result<(), AdminError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::RateLimiterView;
+    use crate::types::{RateLimiterView, general_view};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -496,6 +512,74 @@ mod tests {
         assert!(raw.contains("ws://127.0.0.1:4001"));
         assert!(saved.config.bots[0].limiter.enable);
         assert_eq!(saved.config.bots[0].limiter.capacity, 8);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn general_update_creates_command_table() {
+        let directory = temp_directory();
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("base.toml");
+        fs::write(&path, test_config()).unwrap();
+        let store = ConfigStore::new(&path);
+        let current = store.read().await.unwrap();
+        let view = general_view(&current.config);
+        let update = GeneralMutation {
+            environment: view.environment,
+            shutdown_timeout_secs: view.shutdown_timeout_secs,
+            task_grace_secs: view.task_grace_secs,
+            log_level: view.log_level,
+            json_logs: view.json_logs,
+            admin_enabled: view.admin_enabled,
+            admin_bind: view.admin_bind,
+            admin_access_token: None,
+            log_capacity: view.log_capacity,
+            audit_path: view.audit_path,
+            marketplace_enabled: view.marketplace_enabled,
+            marketplace_cache_dir: view.marketplace_cache_dir,
+            marketplace_lock_path: view.marketplace_lock_path,
+            marketplace_request_timeout_secs: view.marketplace_request_timeout_secs,
+            marketplace_allow_prerelease: view.marketplace_allow_prerelease,
+            marketplace_auto_update: view.marketplace_auto_update,
+            builtin_modules: view.builtin_modules,
+            plugin_modules: view.plugin_modules,
+            plugin_state_path: view.plugin_state_path,
+            plugin_bin_dir: view.plugin_bin_dir,
+            plugin_config_dir: view.plugin_config_dir,
+            dynamic_plugin_timeout_secs: view.dynamic_plugin_timeout_secs,
+            command_help_enabled: false,
+            command_help_page_size: 4,
+            command_prefixes: vec!["!".to_string(), "::".to_string()],
+            command_private_bare_enabled: false,
+            command_mention_enabled: true,
+            command_reply_enabled: false,
+            proactive_queue_capacity: view.proactive_queue_capacity,
+            proactive_offline_ttl_secs: view.proactive_offline_ttl_secs,
+            webhook_enabled: view.webhook_enabled,
+            webhook_bind: view.webhook_bind,
+            webhook_base_path: view.webhook_base_path,
+            webhook_max_body_bytes: view.webhook_max_body_bytes,
+            webhook_request_timeout_ms: view.webhook_request_timeout_ms,
+            webhook_max_in_flight: view.webhook_max_in_flight,
+            webhook_access_token: None,
+        };
+
+        let saved = store
+            .update_general(&current.revision, &update)
+            .await
+            .unwrap();
+        assert!(!saved.config.official_host.commands.help_enabled);
+        assert_eq!(saved.config.official_host.commands.help_page_size, 4);
+        assert_eq!(
+            saved.config.official_host.commands.prefixes,
+            vec!["!", "::"]
+        );
+        assert!(!saved.config.official_host.commands.private_bare_enabled);
+        assert!(saved.config.official_host.commands.mention_enabled);
+        assert!(!saved.config.official_host.commands.reply_enabled);
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("[official_host.commands]"));
         fs::remove_dir_all(directory).unwrap();
     }
 

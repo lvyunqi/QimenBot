@@ -173,7 +173,7 @@ let status = SendBuilder::channel("channel-id")
 
 同步 FFI 代码无法被 Rust 安全地强制终止。因此 `504` 只表示 HTTP 客户端停止等待，不表示插件回调已经停止。超时后的回调仍在隔离的 blocking 线程中运行，并继续持有动态库生命周期读锁和并发 permit，直到真正返回。
 
-执行 `/plugins reload` 时，Runtime 会：
+在 Web 插件页重新扫描，或调用 `POST /api/v1/plugins/reload` 时，Runtime 会：
 
 1. 停止接收新 Webhook；
 2. 等待所有在途回调真正返回；

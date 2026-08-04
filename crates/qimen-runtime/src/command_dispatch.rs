@@ -1,59 +1,30 @@
-use async_trait::async_trait;
 use qimen_command_registry::CommandRegistry;
-use qimen_host_types::{DynamicCommandDescriptor, DynamicRuntimeHealthEntry};
+use qimen_config::CommandConfig;
+use qimen_host_types::DynamicCommandDescriptor;
 use qimen_message::Message;
-use qimen_mod_command::{CommandTrigger, strip_command_name_and_args};
+use qimen_mod_command::{
+    CommandTrigger, CommandTriggerPolicy, match_command_input, strip_command_name_and_args,
+};
 use qimen_plugin_api::{
-    BuiltinCommandAction, CommandDefinition, CommandInvocation, CommandPlugin,
-    CommandPluginContext, CommandPluginSignal, CommandRole, CommandScope, RuntimeBotContext,
+    CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext, CommandPluginSignal,
+    CommandRole, CommandScope, RuntimeBotContext,
 };
 use qimen_protocol_core::NormalizedEvent;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::plugin_acl::PluginAclManager;
 
-#[derive(Clone)]
-pub struct CommandContext<'a> {
-    pub bot_id: &'a str,
-    #[allow(dead_code)]
-    pub event: &'a NormalizedEvent,
-    pub runtime: &'a dyn RuntimeBotContext,
-    pub is_admin: bool,
-    pub is_owner: bool,
-}
-
-impl std::fmt::Debug for CommandContext<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CommandContext")
-            .field("bot_id", &self.bot_id)
-            .field("is_admin", &self.is_admin)
-            .field("is_owner", &self.is_owner)
-            .finish_non_exhaustive()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum CommandDispatchSignal {
     Reply(Message),
-    Builtin(BuiltinCommandAction),
+    Help {
+        page: usize,
+    },
     DynamicCommand {
         descriptor: DynamicCommandDescriptor,
         args: Vec<String>,
     },
-}
-
-#[derive(Debug, Clone)]
-pub struct PluginStatusEntry {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub api_version: String,
-    pub command_descriptions: Vec<String>,
-    pub commands: Vec<String>,
-    pub dynamic: bool,
-    pub enabled: Option<bool>,
-    pub callback_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,56 +35,41 @@ pub struct ParsedCommandInput {
     pub source_text: String,
 }
 
-#[async_trait]
-pub trait CommandHandler: Send + Sync {
-    async fn on_command(
-        &self,
-        _ctx: &CommandContext<'_>,
-        _parsed: &ParsedCommandInput,
-    ) -> Option<CommandDispatchSignal> {
-        None
-    }
-}
-
 pub struct CommandDispatcher {
-    handlers: Vec<Arc<dyn CommandHandler>>,
     plugins: Vec<Arc<dyn CommandPlugin>>,
-    dynamic_status_entries: Vec<PluginStatusEntry>,
     dynamic_command_descriptors: Vec<DynamicCommandDescriptor>,
     plugin_priorities: BTreeMap<String, u32>,
+    command_config: CommandConfig,
     registry: CommandRegistry,
 }
 
 impl CommandDispatcher {
-    pub fn with_default_handlers() -> Self {
-        Self::with_plugin_priorities(BTreeMap::new())
+    pub fn new(command_config: CommandConfig) -> Self {
+        Self::with_config(BTreeMap::new(), command_config)
     }
 
     pub fn with_plugin_priorities(plugin_priorities: BTreeMap<String, u32>) -> Self {
+        Self::with_config(plugin_priorities, CommandConfig::default())
+    }
+
+    pub fn with_config(
+        plugin_priorities: BTreeMap<String, u32>,
+        command_config: CommandConfig,
+    ) -> Self {
         let mut dispatcher = Self {
-            handlers: vec![Arc::new(BuiltinCommandHandler)],
             plugins: Vec::new(),
-            dynamic_status_entries: Vec::new(),
             dynamic_command_descriptors: Vec::new(),
             registry: CommandRegistry::with_plugin_priorities(plugin_priorities.clone()),
             plugin_priorities,
+            command_config,
         };
         dispatcher.rebuild_registry();
         dispatcher
     }
 
-    #[allow(dead_code)]
-    pub fn register_handler(&mut self, handler: Arc<dyn CommandHandler>) {
-        self.handlers.push(handler);
-    }
-
     pub fn register_plugin(&mut self, plugin: Arc<dyn CommandPlugin>) {
         self.plugins.push(plugin);
         self.rebuild_registry();
-    }
-
-    pub fn set_dynamic_status_entries(&mut self, entries: Vec<PluginStatusEntry>) {
-        self.dynamic_status_entries = entries;
     }
 
     pub fn set_dynamic_command_descriptors(&mut self, descriptors: Vec<DynamicCommandDescriptor>) {
@@ -126,39 +82,34 @@ impl CommandDispatcher {
     }
 
     pub fn describe_commands(&self) -> Vec<(CommandDefinition, String)> {
-        self.registry.describe()
+        let mut effective_entries = BTreeSet::new();
+        let mut descriptions = Vec::new();
+
+        for (definition, _) in self.registry.describe() {
+            for key in std::iter::once(definition.name).chain(definition.aliases.iter().copied()) {
+                let Some(entry) = self.registry.match_command(key) else {
+                    continue;
+                };
+                let identity = (
+                    entry.source_label.clone(),
+                    entry.definition.name.to_string(),
+                );
+                if effective_entries.insert(identity) {
+                    descriptions.push((entry.definition.clone(), entry.source_label.clone()));
+                }
+            }
+        }
+
+        descriptions
     }
 
-    pub fn plugin_status_entries(&self) -> Vec<PluginStatusEntry> {
-        let mut entries: Vec<PluginStatusEntry> = self
-            .plugins
-            .iter()
-            .map(|plugin| {
-                let metadata = plugin.metadata();
-                PluginStatusEntry {
-                    id: metadata.id.to_string(),
-                    name: metadata.name.to_string(),
-                    version: metadata.version.to_string(),
-                    api_version: metadata.api_version.to_string(),
-                    command_descriptions: plugin
-                        .commands()
-                        .iter()
-                        .map(|command| format!("{}: {}", command.name, command.description))
-                        .collect(),
-                    commands: plugin
-                        .commands()
-                        .into_iter()
-                        .map(|command| command.name.to_string())
-                        .collect(),
-                    dynamic: plugin.is_dynamic(),
-                    enabled: Some(true),
-                    callback_symbol: None,
-                }
-            })
-            .collect();
-
-        entries.extend(self.dynamic_status_entries.clone());
-        entries
+    pub fn render_help(&self, page: usize) -> String {
+        render_help_page(
+            &self.describe_commands(),
+            page,
+            self.command_config.help_page_size,
+            &self.command_config.prefixes,
+        )
     }
 
     pub fn dispatch<'a>(
@@ -178,34 +129,8 @@ impl CommandDispatcher {
         }
     }
 
-    pub fn merge_dynamic_health(&mut self, health: &[DynamicRuntimeHealthEntry]) {
-        for entry in &mut self.dynamic_status_entries {
-            if !entry.dynamic {
-                continue;
-            }
-
-            if let Some(health_entry) = health
-                .iter()
-                .find(|item| entry.callback_symbol.is_some() && item.path.contains(&entry.id))
-            {
-                let health_text = format!(
-                    "health: failures={} isolated_until={}",
-                    health_entry.failures,
-                    health_entry
-                        .isolated_until_epoch_ms
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-                entry.command_descriptions.push(health_text);
-            }
-        }
-    }
-
     fn rebuild_registry(&mut self) {
         let mut registry = CommandRegistry::with_plugin_priorities(self.plugin_priorities.clone());
-        for definition in builtin_command_definitions() {
-            registry.add_builtin(definition);
-        }
         let mut sorted_plugins: Vec<_> = self.plugins.iter().collect();
         sorted_plugins.sort_by_key(|plugin| plugin.priority());
         for plugin in sorted_plugins {
@@ -243,18 +168,7 @@ impl<'a> CommandDispatch<'a> {
     }
 
     pub async fn execute(&self) -> Option<CommandDispatchSignal> {
-        let parsed = parse_command_input(self.event)?;
-        let ctx = CommandContext {
-            bot_id: self.bot_id,
-            event: self.event,
-            runtime: self.runtime,
-            is_admin: self.is_admin,
-            is_owner: self.is_owner,
-        };
-
-        if let Some(signal) = match_builtin(&parsed, self.is_admin, self.is_owner) {
-            return Some(signal);
-        }
+        let parsed = parse_command_input(self.event, &self.dispatcher.command_config)?;
 
         // 先精确匹配；若失败且命令名无空格分隔参数，尝试前缀匹配
         // Exact match first; if it fails and the name has no space-separated args,
@@ -366,122 +280,47 @@ impl<'a> CommandDispatch<'a> {
             }
         }
 
-        for handler in &self.dispatcher.handlers {
-            if let Some(signal) = handler.on_command(&ctx, &parsed).await {
-                return Some(signal);
-            }
+        if self.dispatcher.command_config.help_enabled && is_help_command(&parsed.name) {
+            return Some(CommandDispatchSignal::Help {
+                page: parse_help_page(&parsed.args),
+            });
         }
 
         None
     }
 }
 
-pub struct BuiltinCommandHandler;
-
-#[async_trait]
-impl CommandHandler for BuiltinCommandHandler {
-    async fn on_command(
-        &self,
-        ctx: &CommandContext<'_>,
-        parsed: &ParsedCommandInput,
-    ) -> Option<CommandDispatchSignal> {
-        let signal = match parsed.name.as_str() {
-            "echo" => Some(CommandDispatchSignal::Reply(Message::text(
-                parsed.args.first().cloned().unwrap_or_default(),
-            ))),
-            "status" => Some(CommandDispatchSignal::Reply(Message::text(format!(
-                "bot={} protocol=onebot11 transport=ws-forward status=ok",
-                ctx.bot_id
-            )))),
-            _ => None,
-        };
-
-        if signal.is_some() {
-            tracing::info!(
-                bot_id = %ctx.bot_id,
-                trigger = ?parsed.trigger,
-                command = %parsed.name,
-                "matched builtin command"
-            );
-        }
-
-        signal
-    }
-}
-
-fn parse_command_input(event: &NormalizedEvent) -> Option<ParsedCommandInput> {
-    let message = event.message.as_ref()?;
-    let text = message.plain_text();
-    let trimmed = text.trim();
-    let normalized = trimmed.strip_prefix('/').unwrap_or(trimmed);
-    let (name, args) = strip_command_name_and_args(normalized)?;
+fn parse_command_input(
+    event: &NormalizedEvent,
+    command_config: &CommandConfig,
+) -> Option<ParsedCommandInput> {
+    let matched = match_command_input(
+        event,
+        CommandTriggerPolicy {
+            prefixes: &command_config.prefixes,
+            private_bare_enabled: command_config.private_bare_enabled,
+            mention_enabled: command_config.mention_enabled,
+            reply_enabled: command_config.reply_enabled,
+        },
+    )?;
+    let (name, args) = strip_command_name_and_args(&matched.command_text)?;
     Some(ParsedCommandInput {
-        trigger: CommandTrigger::Prefix,
+        trigger: matched.trigger,
         name: name.to_string(),
         args,
-        source_text: text,
+        source_text: matched.source_text,
     })
 }
 
-fn match_builtin(
-    parsed: &ParsedCommandInput,
-    is_admin: bool,
-    is_owner: bool,
-) -> Option<CommandDispatchSignal> {
-    match parsed.name.as_str() {
-        "help" => Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::Help)),
-        "dynamic-errors" => Some(dispatch_dynamic_errors_action(&parsed.source_text)),
-        "registry" => Some(dispatch_registry_action(&parsed.source_text)),
-        "plugins" => {
-            if !role_allowed(&CommandRole::Admin, is_admin, is_owner) {
-                return Some(CommandDispatchSignal::Reply(Message::text(
-                    "permission denied for this command",
-                )));
-            }
-            Some(dispatch_plugins_action(&parsed.source_text))
-        }
-        _ => None,
-    }
+fn is_help_command(name: &str) -> bool {
+    name.eq_ignore_ascii_case("help") || name.eq_ignore_ascii_case("h")
 }
 
-fn dispatch_plugins_action(source_text: &str) -> CommandDispatchSignal {
-    let normalized = source_text.trim().trim_start_matches('/').trim();
-    let mut parts = normalized.split_whitespace();
-    let _root = parts.next();
-    match parts.next() {
-        Some("enable") => {
-            let plugin_id = parts.next().unwrap_or_default().to_string();
-            CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsEnable { plugin_id })
-        }
-        Some("disable") => {
-            let plugin_id = parts.next().unwrap_or_default().to_string();
-            CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsDisable { plugin_id })
-        }
-        Some("reload") => CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsReload),
-        _ => CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsShow),
-    }
-}
-
-fn dispatch_registry_action(source_text: &str) -> CommandDispatchSignal {
-    let normalized = source_text.trim().trim_start_matches('/').trim();
-    let mut parts = normalized.split_whitespace();
-    let _root = parts.next();
-    match parts.next() {
-        Some("conflicts") => {
-            CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryConflicts)
-        }
-        _ => CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryReport),
-    }
-}
-
-fn dispatch_dynamic_errors_action(source_text: &str) -> CommandDispatchSignal {
-    let normalized = source_text.trim().trim_start_matches('/').trim();
-    let mut parts = normalized.split_whitespace();
-    let _root = parts.next();
-    match parts.next() {
-        Some("clear") => CommandDispatchSignal::Builtin(BuiltinCommandAction::DynamicErrorsClear),
-        _ => CommandDispatchSignal::Builtin(BuiltinCommandAction::DynamicErrors),
-    }
+fn parse_help_page(args: &[String]) -> usize {
+    args.first()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|page| *page > 0)
+        .unwrap_or(1)
 }
 
 fn role_allowed(role: &CommandRole, is_admin: bool, is_owner: bool) -> bool {
@@ -492,110 +331,54 @@ fn role_allowed(role: &CommandRole, is_admin: bool, is_owner: bool) -> bool {
     }
 }
 
-fn builtin_command_definitions() -> Vec<CommandDefinition> {
-    vec![
-        CommandDefinition {
-            name: "echo",
-            description: "Echo text back to the sender",
-            aliases: &["e"],
-            examples: &["/echo hello", "echo hello"],
-            category: "general",
-            hidden: false,
-            required_role: CommandRole::Anyone,
-            scope: CommandScope::All,
-            filter: None,
+pub fn render_help_page(
+    registry_entries: &[(CommandDefinition, String)],
+    requested_page: usize,
+    page_size: usize,
+    prefixes: &[String],
+) -> String {
+    let mut entries = registry_entries
+        .iter()
+        .filter(|(definition, _)| !definition.hidden)
+        .cloned()
+        .collect::<Vec<_>>();
+    entries.sort_by(
+        |(left_definition, left_source), (right_definition, right_source)| {
+            source_rank(left_source)
+                .cmp(&source_rank(right_source))
+                .then(left_source.cmp(right_source))
+                .then(left_definition.category.cmp(right_definition.category))
+                .then(left_definition.name.cmp(right_definition.name))
         },
-        CommandDefinition {
-            name: "status",
-            description: "Show runtime status",
-            aliases: &["st"],
-            examples: &["/status", "status"],
-            category: "system",
-            hidden: false,
-            required_role: CommandRole::Anyone,
-            scope: CommandScope::All,
-            filter: None,
-        },
-        CommandDefinition {
-            name: "help",
-            description: "Show command help",
-            aliases: &["h"],
-            examples: &["/help", "help"],
-            category: "system",
-            hidden: false,
-            required_role: CommandRole::Anyone,
-            scope: CommandScope::All,
-            filter: None,
-        },
-        CommandDefinition {
-            name: "plugins",
-            description: "Show or manage plugin status",
-            aliases: &["pl"],
-            examples: &[
-                "/plugins",
-                "/plugins show",
-                "/plugins enable example-plugin",
-                "/plugins disable example-plugin",
-                "/plugins reload",
-            ],
-            category: "system",
-            hidden: false,
-            required_role: CommandRole::Admin,
-            scope: CommandScope::All,
-            filter: None,
-        },
-        CommandDefinition {
-            name: "registry",
-            description: "Show command registry diagnostics and precedence",
-            aliases: &["reg"],
-            examples: &["/registry", "/registry conflicts"],
-            category: "system",
-            hidden: false,
-            required_role: CommandRole::Admin,
-            scope: CommandScope::All,
-            filter: None,
-        },
-        CommandDefinition {
-            name: "dynamic-errors",
-            description: "Show dynamic runtime errors and circuit-breaker state",
-            aliases: &["derr"],
-            examples: &["/dynamic-errors", "/dynamic-errors clear"],
-            category: "system",
-            hidden: false,
-            required_role: CommandRole::Admin,
-            scope: CommandScope::All,
-            filter: None,
-        },
-    ]
-}
+    );
 
-pub fn render_help_text(registry_entries: &[(CommandDefinition, String)]) -> String {
-    let mut builtin = Vec::new();
-    let mut static_plugins = Vec::new();
-    let mut dynamic_descriptors = Vec::new();
+    let page_size = page_size.max(1);
+    let total_items = entries.len();
+    let total_pages = total_items.div_ceil(page_size).max(1);
+    let page = requested_page.max(1).min(total_pages);
+    let start = (page - 1) * page_size;
+    let end = (start + page_size).min(total_items);
+    let prefix = prefixes.first().map(String::as_str).unwrap_or("");
 
-    for (definition, source) in registry_entries {
-        if source == "builtin" {
-            builtin.push((definition.clone(), source.clone()));
-        } else if source.starts_with("static-plugin:") {
-            static_plugins.push((definition.clone(), source.clone()));
-        } else if source.starts_with("dynamic-descriptor:") || source.starts_with("dynamic-plugin:")
-        {
-            dynamic_descriptors.push((definition.clone(), source.clone()));
-        }
+    let mut lines = vec![format!("[help {page}/{total_pages}]")];
+    if total_items == 0 {
+        lines.push("No plugin commands are currently registered.".to_string());
+    } else {
+        lines.extend(render_command_groups(&entries[start..end], prefix));
     }
-
-    let mut lines = vec!["[help]".to_string()];
-    lines.push("[builtin]".to_string());
-    lines.extend(render_command_groups(&builtin));
-    lines.push("[static plugins]".to_string());
-    lines.extend(render_command_groups(&static_plugins));
-    lines.push("[dynamic descriptors]".to_string());
-    lines.extend(render_command_groups(&dynamic_descriptors));
+    lines.push(format!(
+        "[page {page}/{total_pages} · {total_items} commands]"
+    ));
+    if page > 1 {
+        lines.push(format!("prev: {prefix}help {}", page - 1));
+    }
+    if page < total_pages {
+        lines.push(format!("next: {prefix}help {}", page + 1));
+    }
     lines.join("\n")
 }
 
-fn render_command_groups(entries: &[(CommandDefinition, String)]) -> Vec<String> {
+fn render_command_groups(entries: &[(CommandDefinition, String)], prefix: &str) -> Vec<String> {
     let mut grouped = BTreeMap::<String, Vec<(&CommandDefinition, &String)>>::new();
     for (definition, source) in entries.iter().filter(|(definition, _)| !definition.hidden) {
         grouped
@@ -613,30 +396,49 @@ fn render_command_groups(entries: &[(CommandDefinition, String)]) -> Vec<String>
             } else {
                 definition.aliases.join(",")
             };
-            let examples = if definition.examples.is_empty() {
-                "-".to_string()
-            } else {
-                definition.examples.join(" | ")
+            let examples = match definition.examples {
+                [] => "-".to_string(),
+                [example] => (*example).to_string(),
+                [example, rest @ ..] => format!("{example} (+{} more)", rest.len()),
             };
-            let scope_line = match &definition.scope {
-                CommandScope::Group => "\n    scope: group",
-                CommandScope::Private => "\n    scope: private",
-                _ => "",
+            let scope = match &definition.scope {
+                CommandScope::Group => "group",
+                CommandScope::Private => "private",
+                _ => "all",
             };
             lines.push(format!(
-                "  - /{}\n    desc: {}\n    source: {}\n    aliases: {}\n    role: {}{}\n    examples: {}",
+                "  - {}{}\n    desc: {}\n    source: {} | role: {} | scope: {} | aliases: {}\n    example: {}",
+                prefix,
                 definition.name,
                 definition.description,
-                source,
-                aliases,
+                render_source(source),
                 render_command_role(&definition.required_role),
-                scope_line,
+                scope,
+                aliases,
                 examples
             ));
         }
     }
 
     lines
+}
+
+fn source_rank(source: &str) -> u8 {
+    if source.starts_with("static-plugin:") {
+        0
+    } else if source.starts_with("dynamic-") {
+        1
+    } else {
+        2
+    }
+}
+
+fn render_source(source: &str) -> &str {
+    source
+        .strip_prefix("static-plugin:")
+        .or_else(|| source.strip_prefix("dynamic-descriptor:"))
+        .or_else(|| source.strip_prefix("dynamic-plugin:"))
+        .unwrap_or(source)
 }
 
 fn render_command_role(role: &CommandRole) -> &'static str {
@@ -649,8 +451,9 @@ fn render_command_role(role: &CommandRole) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandContext, CommandDispatchSignal, CommandDispatcher, CommandHandler};
+    use super::{CommandDispatchSignal, CommandDispatcher, render_help_page};
     use async_trait::async_trait;
+    use qimen_config::CommandConfig;
     use qimen_error::{QimenError, Result};
     use qimen_message::Message;
     use qimen_plugin_api::{
@@ -722,23 +525,6 @@ mod tests {
 
     static TEST_RUNTIME: TestRuntimeBotContext = TestRuntimeBotContext;
 
-    struct CustomHandler;
-
-    #[async_trait]
-    impl CommandHandler for CustomHandler {
-        async fn on_command(
-            &self,
-            _ctx: &CommandContext<'_>,
-            parsed: &super::ParsedCommandInput,
-        ) -> Option<CommandDispatchSignal> {
-            if parsed.name == "ping" {
-                Some(CommandDispatchSignal::Reply(Message::text("custom pong")))
-            } else {
-                None
-            }
-        }
-    }
-
     struct PluginEcho;
 
     #[async_trait]
@@ -782,6 +568,49 @@ mod tests {
             } else {
                 Some(CommandPluginSignal::Continue)
             }
+        }
+    }
+
+    struct PluginHelp;
+
+    #[async_trait]
+    impl CommandPlugin for PluginHelp {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                id: "plugin-help",
+                name: "Plugin Help",
+                version: "0.1.0",
+                description: "Plugin-owned help command",
+                api_version: "0.1",
+                compatibility: PluginCompatibility {
+                    host_api: "0.1",
+                    framework_min: "0.1.0",
+                    framework_max: "0.1.x",
+                },
+            }
+        }
+
+        fn commands(&self) -> Vec<CommandDefinition> {
+            vec![CommandDefinition {
+                name: "help",
+                description: "Plugin help",
+                aliases: &["h"],
+                examples: &["/help"],
+                category: "support",
+                hidden: false,
+                required_role: CommandRole::Anyone,
+                scope: CommandScope::All,
+                filter: None,
+            }]
+        }
+
+        async fn on_command(
+            &self,
+            _ctx: &CommandPluginContext<'_>,
+            invocation: &CommandInvocation,
+        ) -> Option<CommandPluginSignal> {
+            (invocation.definition.name == "help")
+                .then(|| CommandPluginSignal::Reply(Message::text("plugin help")))
         }
     }
 
@@ -834,6 +663,52 @@ mod tests {
         }
     }
 
+    struct AliasPlugin {
+        id: &'static str,
+        command: &'static str,
+        aliases: &'static [&'static str],
+    }
+
+    #[async_trait]
+    impl CommandPlugin for AliasPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                id: self.id,
+                name: self.id,
+                version: "0.1.0",
+                description: "Alias precedence test plugin",
+                api_version: "0.1",
+                compatibility: PluginCompatibility {
+                    host_api: "0.1",
+                    framework_min: "0.1.0",
+                    framework_max: "0.1.x",
+                },
+            }
+        }
+
+        fn commands(&self) -> Vec<CommandDefinition> {
+            vec![CommandDefinition {
+                name: self.command,
+                description: "Alias precedence test command",
+                aliases: self.aliases,
+                examples: &[],
+                category: "tests",
+                hidden: false,
+                required_role: CommandRole::Anyone,
+                scope: CommandScope::All,
+                filter: None,
+            }]
+        }
+
+        async fn on_command(
+            &self,
+            _ctx: &CommandPluginContext<'_>,
+            _invocation: &CommandInvocation,
+        ) -> Option<CommandPluginSignal> {
+            Some(CommandPluginSignal::Continue)
+        }
+    }
+
     #[test]
     fn admin_priority_precedes_declared_priority() {
         let mut priorities = BTreeMap::new();
@@ -857,6 +732,9 @@ mod tests {
                 .source_label,
             "static-plugin:admin-wins"
         );
+        let descriptions = dispatcher.describe_commands();
+        assert_eq!(descriptions.len(), 1);
+        assert_eq!(descriptions[0].1, "static-plugin:admin-wins");
     }
 
     #[test]
@@ -882,6 +760,29 @@ mod tests {
                 .source_label,
             "static-plugin:z-plugin"
         );
+    }
+
+    #[test]
+    fn help_descriptions_deduplicate_alias_winners() {
+        let mut priorities = BTreeMap::new();
+        priorities.insert("alias-winner".to_string(), 100);
+        priorities.insert("canonical-loser".to_string(), 1);
+        let mut dispatcher = CommandDispatcher::with_plugin_priorities(priorities);
+        dispatcher.register_plugin(Arc::new(AliasPlugin {
+            id: "alias-winner",
+            command: "primary",
+            aliases: &["shadowed"],
+        }));
+        dispatcher.register_plugin(Arc::new(AliasPlugin {
+            id: "canonical-loser",
+            command: "shadowed",
+            aliases: &[],
+        }));
+
+        let descriptions = dispatcher.describe_commands();
+        assert_eq!(descriptions.len(), 1);
+        assert_eq!(descriptions[0].0.name, "primary");
+        assert_eq!(descriptions[0].1, "static-plugin:alias-winner");
     }
 
     fn sample_event(text: &str) -> NormalizedEvent {
@@ -910,27 +811,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn custom_command_handler_can_be_registered() {
-        let mut dispatcher = CommandDispatcher::with_default_handlers();
-        dispatcher.register_handler(Arc::new(CustomHandler));
-
-        let event = sample_event("ping");
-        let signal = dispatcher
-            .dispatch("qq-main", &event, &TEST_RUNTIME)
-            .execute()
-            .await;
-
-        match signal {
-            Some(CommandDispatchSignal::Reply(message)) => {
-                assert_eq!(message.plain_text(), "custom pong");
-            }
-            _ => panic!("expected command reply signal"),
+    async fn runtime_does_not_claim_plugin_commands() {
+        let dispatcher = CommandDispatcher::new(CommandConfig::default());
+        for command in [
+            "ping",
+            "echo hello",
+            "status",
+            "plugins",
+            "registry",
+            "dynamic-errors",
+        ] {
+            let event = sample_event(command);
+            assert!(
+                dispatcher
+                    .dispatch("qq-main", &event, &TEST_RUNTIME)
+                    .execute()
+                    .await
+                    .is_none(),
+                "runtime unexpectedly claimed {command}"
+            );
         }
     }
 
     #[tokio::test]
     async fn command_plugin_can_be_registered() {
-        let mut dispatcher = CommandDispatcher::with_default_handlers();
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
         dispatcher.register_plugin(Arc::new(PluginEcho));
 
         let event = sample_event("status");
@@ -945,5 +850,74 @@ mod tests {
             }
             _ => panic!("expected command reply signal"),
         }
+    }
+
+    #[tokio::test]
+    async fn help_is_optional_fallback_after_plugins() {
+        let event = sample_event("help 2");
+        let dispatcher = CommandDispatcher::new(CommandConfig::default());
+        assert!(matches!(
+            dispatcher
+                .dispatch("qq-main", &event, &TEST_RUNTIME)
+                .execute()
+                .await,
+            Some(CommandDispatchSignal::Help { page: 2 })
+        ));
+
+        let mut disabled = CommandConfig::default();
+        disabled.help_enabled = false;
+        let dispatcher = CommandDispatcher::new(disabled);
+        assert!(
+            dispatcher
+                .dispatch("qq-main", &event, &TEST_RUNTIME)
+                .execute()
+                .await
+                .is_none()
+        );
+
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
+        dispatcher.register_plugin(Arc::new(PluginHelp));
+        let event = sample_event("help");
+        match dispatcher
+            .dispatch("qq-main", &event, &TEST_RUNTIME)
+            .execute()
+            .await
+        {
+            Some(CommandDispatchSignal::Reply(message)) => {
+                assert_eq!(message.plain_text(), "plugin help");
+            }
+            _ => panic!("plugin should own the help command"),
+        }
+    }
+
+    #[test]
+    fn help_output_is_paginated_without_builtin_entries() {
+        let definition = |name| CommandDefinition {
+            name,
+            description: "Test command",
+            aliases: &[],
+            examples: &[],
+            category: "tests",
+            hidden: false,
+            required_role: CommandRole::Anyone,
+            scope: CommandScope::All,
+            filter: None,
+        };
+        let entries = vec![
+            (definition("alpha"), "static-plugin:sample".to_string()),
+            (definition("beta"), "static-plugin:sample".to_string()),
+            (
+                definition("gamma"),
+                "dynamic-descriptor:sample-dynamic".to_string(),
+            ),
+        ];
+
+        let page = render_help_page(&entries, 2, 1, &["!".to_string()]);
+        assert!(page.contains("[help 2/3]"));
+        assert!(page.contains("!beta"));
+        assert!(!page.contains("!alpha"));
+        assert!(!page.contains("[builtin]"));
+        assert!(page.contains("prev: !help 1"));
+        assert!(page.contains("next: !help 3"));
     }
 }

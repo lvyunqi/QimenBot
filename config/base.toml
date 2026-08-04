@@ -60,7 +60,7 @@ auto_update = false
 # ── Official Host 配置 / Official Host ───────────────────────────────────
 [official_host]
 # 启用的内置模块列表，可选值：
-#   "command"   — 命令系统（/echo、/help 等内置命令）
+#   "command"   — 命令解析与插件路由（不提供 ping、echo、status 等业务命令）
 #   "admin"     — 管理模块（权限管理、插件管理）
 #   "scheduler" — 定时任务调度器
 #   "bridge"    — 消息桥接（跨群/跨bot转发）
@@ -74,8 +74,8 @@ builtin_modules = ["command", "admin", "scheduler", "bridge"]
 #   "example-events"  — 事件处理示例（戳一戳、入群欢迎、撤回、好友请求、心跳）
 plugin_modules = ["example-basic"]
 
-# 插件启用/禁用状态的持久化文件路径
-# 通过 /plugins 命令或管理 API 修改的状态会保存在这里
+# 插件启用状态和命令优先级的持久化文件路径
+# 通过 Web 管理面板或管理 API 修改后会保存在这里
 plugin_state_path = "config/plugin-state.toml"
 
 # 动态插件（.so/.dll/.dylib）的扫描目录
@@ -86,6 +86,21 @@ plugin_config_dir = "config/plugins"
 # 单次动态插件 FFI 回调的执行超时时间（秒）
 # 超时后宿主会记录错误并停止等待该次调用，避免插件长期阻塞事件分发
 dynamic_plugin_timeout_secs = 30
+
+# ── 命令入口与帮助 ──
+[official_host.commands]
+# 插件没有注册 help/h 时，由宿主提供分页命令目录；关闭后名称完全交给插件
+help_enabled = true
+# 每页展示的插件命令数，有效范围 1-20
+help_page_size = 6
+# 可同时配置多个前缀；设为空数组可关闭前缀触发
+prefixes = ["/"]
+# 私聊可直接输入命令，不要求前缀
+private_bare_enabled = true
+# 群聊 @ 机器人后可直接输入命令
+mention_enabled = true
+# 回复机器人消息后可直接输入命令
+reply_enabled = true
 
 # ── 动态插件实时主动发送（API 0.4）──
 [official_host.proactive_send]

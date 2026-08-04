@@ -1412,6 +1412,12 @@ pub struct CommandInvocation {
     pub source_text: String,
 }
 
+/// Legacy host action identifiers kept for static-plugin source compatibility.
+///
+/// The runtime no longer registers or dispatches these chat commands. Plugin
+/// management is exposed through the authenticated admin API, and plugins may
+/// freely register the corresponding command names themselves.
+#[deprecated(note = "host chat commands were removed; use plugin commands or the admin API")]
 #[derive(Debug, Clone)]
 pub enum BuiltinCommandAction {
     Help,

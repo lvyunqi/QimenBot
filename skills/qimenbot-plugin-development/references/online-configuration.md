@@ -120,8 +120,8 @@ fn apply(request: &PluginConfigRequest) -> PluginConfigResult {
 
 检查顺序：
 
-1. `/plugins` 是否显示 API `0.6` 和配置能力；
-2. `/dynamic-errors` 是否记录 Schema 根类型、引用或描述符错误；
+1. Web 插件页是否显示 API `0.6` 和配置能力；
+2. 插件卡片健康状态和实时日志是否记录 Schema 根类型、引用或描述符错误；
 3. `config/plugins/<id>.toml` 是否为有效 TOML；
 4. `config_apply` 与回调导出是否匹配；
 5. `shutdown` 是否真的停止并 join 后台线程；

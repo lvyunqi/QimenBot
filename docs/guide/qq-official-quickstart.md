@@ -299,7 +299,7 @@ AppID 和 AppSecret 不匹配、Secret 已重置，或复制时带入了空格�
 plugin_modules = ["example-basic"]
 ```
 
-`config/plugin-state.toml` 中也不能把它持久化为禁用状态。可用 `/plugins` 查看当前插件状态。
+`config/plugin-state.toml` 中也不能把它持久化为禁用状态。打开 Web 管理面板的“插件”页可查看实际加载状态、失败原因和命令列表。
 
 ### 返回 `unknown qq-official intent`
 

@@ -252,7 +252,7 @@ mod plugin {
   明文。更新密钥必须通过面板的密钥专用通道；插件仍应把缺少密钥视为“未配置”，不要
   用默认值伪造凭据。
 
-API 0.6 的最小验证方式：先在宿主中加载示例插件，确认 `/plugins` 显示配置能力，
+API 0.6 的最小验证方式：先在宿主中加载示例插件，确认 Web 插件页显示 API 0.6 和配置能力，
 再分别测试默认值、条件字段、对象数组增删移动、密钥保留、保存冲突和每种生效模式。
 没有真实宿主时，至少运行插件自身的 `cargo check --locked`、`cargo test --locked` 和
 宿主管理 API 的配置测试。
@@ -355,15 +355,15 @@ file /opt/qimenbot/runtime/qimenbotd /opt/qimenbot/plugins/bin/libqimen_dynamic_
 ldd /opt/qimenbot/plugins/bin/libqimen_dynamic_plugin_myplugin.so
 ```
 
-然后执行：
+然后在 Web 插件页点击“重新扫描”，检查插件卡片、命令列表、配置能力和失败状态。自动化部署可调用带管理 Token 的接口：
 
 ```text
-/plugins reload
-/plugins
-/dynamic-errors
+GET  /api/v1/plugins
+POST /api/v1/plugins/reload
+PUT  /api/v1/plugins/{id}
 ```
 
-`/plugins enable <id>`、`/plugins disable <id>` 会写入 `config/plugin-state.toml`。重新复制二进制但仍未加载时，先检查它是否被持久化禁用。
+启用或停用会写入 `config/plugin-state.toml`。重新复制二进制但仍未加载时，先检查插件页和状态文件是否将它持久化禁用。Runtime 不保留聊天内的插件管理命令。
 
 常见错误：
 
