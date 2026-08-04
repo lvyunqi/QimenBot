@@ -24,13 +24,13 @@ mod plugin {
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.12"
-qimen-dynamic-plugin-derive = "0.1.12"
+abi-stable-host-api = "0.1.13"
+qimen-dynamic-plugin-derive = "0.1.13"
 abi_stable = "0.11"
 serde_json = "1"
 ~~~
 
-`0.1.12` 已发布到 crates.io；只使用旧版按实例别名 `for_bot` / `bot` 接口的插件仍可继续依赖 `0.1.11`。
+`0.1.13` 是当前发布版本；稳定账号接口从 `0.1.12` 起可用，只使用旧版按实例别名 `for_bot` / `bot` 接口的插件仍可继续依赖 `0.1.11`。
 
 ## 宿主队列配置
 
