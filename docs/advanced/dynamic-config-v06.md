@@ -7,7 +7,7 @@ API 0.6 允许动态插件把配置结构交给 QimenBot。插件声明 JSON Sch
 ::: tip 发布状态
 `abi-stable-host-api 0.1.13` 和 `qimen-dynamic-plugin-derive 0.1.13` 已发布到 crates.io，并完整支持动态 API 0.6。两个包必须使用同一版本；`0.1.12` 只支持到 API 0.5，不能保持旧依赖却声明 `api = "0.6"`。
 
-crate 发布不等于宿主已经升级。正式版 QimenBot `v0.1.17` 只接受到动态 API 0.5；加载 API 0.6 插件需要当前仓库源码或后续 `v0.1.18` 宿主。
+crate 发布不等于宿主已经升级。QimenBot `v0.1.17` 及更早版本只接受到动态 API 0.5；加载 API 0.6 插件需要 `v0.1.18` 或更高版本宿主。
 :::
 
 ## 宿主实际做了什么

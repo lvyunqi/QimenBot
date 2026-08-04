@@ -26,7 +26,7 @@
 
 | 版本 | 示例 | 作用 |
 |---|---|---|
-| QimenBot Release | `v0.1.18`（开发中） | 首个接受 API 0.6 的宿主程序版本；`v0.1.17` 只到 API 0.5 |
+| QimenBot Release | `v0.1.18` | 首个接受 API 0.6 的宿主程序版本；`v0.1.17` 只到 API 0.5 |
 | crates.io 包版本 | `0.1.13` | Rust 依赖发布版本 |
 | 动态 ABI API | `api = "0.6"` | 插件与宿主协商的能力版本；包含在线配置契约 |
 
@@ -39,8 +39,8 @@ cargo search abi-stable-host-api --limit 1
 cargo search qimen-dynamic-plugin-derive --limit 1
 ```
 
-crate `0.1.13` 只解决插件编译依赖，不会升级宿主。API 0.6 插件必须部署到当前仓库
-源码或后续 `v0.1.18` 宿主；放入 `v0.1.17` 会因 API 版本不受支持而拒绝加载。
+crate `0.1.13` 只解决插件编译依赖，不会升级宿主。API 0.6 插件必须部署到
+`v0.1.18` 或更高版本宿主；放入 `v0.1.17` 会因 API 版本不受支持而拒绝加载。
 
 API 0.6 包含 API 0.5 的 Webhook 和实时主动发送；省略 `api` 会生成兼容旧宿主的
 API 0.3 插件，不应作为新项目默认值。只需要 Webhook、暂时不需要在线配置时，仍可

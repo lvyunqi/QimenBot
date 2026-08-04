@@ -8,7 +8,7 @@
 
 | 项目 | 当前仓库源码 | crates.io 已发布 |
 |---|---|---|
-| QimenBot 宿主 | API 0.6 | 当前源码或后续 `v0.1.18`；`v0.1.17` 只到 API 0.5 |
+| QimenBot 宿主 | API 0.6 | `v0.1.18` 及更高版本；`v0.1.17` 只到 API 0.5 |
 | `abi-stable-host-api` | API 0.6 类型已实现 | `0.1.13` 支持 API 0.6 |
 | `qimen-dynamic-plugin-derive` | API 0.6 宏已实现 | `0.1.13` 支持 API 0.6 |
 

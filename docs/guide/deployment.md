@@ -81,7 +81,7 @@ Compose 和宿主机相关变量：
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `QIMENBOT_IMAGE` | `mryunqi/qimenbot` | Docker Hub 镜像名 |
-| `QIMENBOT_TAG` | `latest` | 镜像版本；生产环境建议固定为 `0.1.17` 这类版本号 |
+| `QIMENBOT_TAG` | `latest` | 镜像版本；生产环境建议固定为 `0.1.18` 这类版本号 |
 | `QIMEN_CONFIG_DIR` | `./data/config` | 宿主机配置目录 |
 | `QIMEN_PLUGIN_DIR` | `./data/plugins` | 宿主机动态插件目录 |
 | `QIMEN_LOG_DIR` | `./data/logs` | 宿主机日志或插件文件目录 |
@@ -91,7 +91,7 @@ Compose 和宿主机相关变量：
 
 ```dotenv
 QIMENBOT_IMAGE=mryunqi/qimenbot
-QIMENBOT_TAG=0.1.17
+QIMENBOT_TAG=0.1.18
 
 QIMEN_CONFIG_DIR=/srv/qimenbot/config
 QIMEN_PLUGIN_DIR=/srv/qimenbot/plugins
@@ -293,10 +293,10 @@ $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 
 ### 5. 校验下载文件（可选）
 
-完整压缩包带有同名 `.sha256`。以下命令以 `v0.1.17` Linux x86_64 GNU 包为例：
+完整压缩包带有同名 `.sha256`。以下命令以 `v0.1.18` Linux x86_64 GNU 包为例：
 
 ```bash
-sha256sum -c QimenBot-v0.1.17-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c QimenBot-v0.1.18-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 ## 从源码构建

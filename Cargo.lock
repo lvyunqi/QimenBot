@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-adapter-onebot11"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1300,11 +1300,11 @@ dependencies = [
 
 [[package]]
 name = "qimen-adapter-onebot12"
-version = "0.1.17"
+version = "0.1.18"
 
 [[package]]
 name = "qimen-adapter-qqbot"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1318,11 +1318,11 @@ dependencies = [
 
 [[package]]
 name = "qimen-adapter-satori"
-version = "0.1.17"
+version = "0.1.18"
 
 [[package]]
 name = "qimen-admin-web"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "axum",
  "chrono",
@@ -1349,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-command-registry"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-host-types",
  "qimen-plugin-api",
@@ -1357,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-config"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-error",
  "qimen-plugin-api",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-error"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-framework"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-command-registry",
  "qimen-config",
@@ -1400,7 +1400,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-host-types"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-error",
  "toml",
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-message"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "serde",
  "serde_json",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-admin"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1429,7 +1429,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-bridge"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-command"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1450,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-mod-scheduler"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-observability"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "chrono",
  "qimen-error",
@@ -1476,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-official-host"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "abi-stable-host-api",
  "abi_stable",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-api"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "inventory",
@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-example"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1539,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-host"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-plugin-marketplace"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "chrono",
  "futures-util",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-protocol-core"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-runtime"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "abi-stable-host-api",
  "abi_stable",
@@ -1609,7 +1609,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-storage"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-error",
  "serde",
@@ -1620,14 +1620,14 @@ dependencies = [
 
 [[package]]
 name = "qimen-testkit"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "qimen-transport-core"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "qimen-error",
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-transport-http"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-error",
  "reqwest",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-transport-qqbot"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-transport-ws"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-error",
  "rustls",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "qimen-update-protocol"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "serde",
  "serde_json",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "qimenbot"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "futures-util",
  "qimen-update-protocol",
@@ -1702,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "qimenbotd"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "dotenvy",
  "qimen-error",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "qimenctl"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "qimen-config",
  "qimen-error",
