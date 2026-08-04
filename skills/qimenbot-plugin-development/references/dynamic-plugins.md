@@ -179,9 +179,18 @@ CommandResponse::builder()
     .build_auto()
 ```
 
-可用 `.text()`、`.at()`、`.at_all()`、`.face()`、`.image_url()`、`.image_base64()`、`.record()`、`.reply()`。简单回复使用 `CommandResponse::text()`，不回复使用 `CommandResponse::ignore()`。
+可用 `.text()`、`.at()`、`.at_all()`、`.face()`、`.image_url()`、`.image_base64()`、`.record()`、`.reply()`。当前 API 0.6 源码还提供 `.record_url()`、`.record_base64()`、`.video_url()`、`.video_base64()`、`.file_url(url, file_name)` 和 `.file_base64(base64, file_name)`。简单回复使用 `CommandResponse::text()`，不回复使用 `CommandResponse::ignore()`。
 
-富消息在不同协议上的支持不同。官方 QQ Bot 的 ID、媒体上传和回复额度由宿主约束；插件应优先返回通用段并检查真实平台测试结果。
+`image_base64()` 已存在于 crates.io `0.1.12`，旧插件不改 ABI 即可由新版宿主解释。其余媒体便捷方法需要 API 0.6 Git revision 或后续正式发布的配套 crate；不要告诉使用 `0.1.12` 的插件调用尚未发布的方法。
+
+官方 QQ Bot 本地媒体由宿主上传，动态插件不得自行取得或绕过宿主凭据：
+
+- 群/C2C 的 Base64 图片、MP4、SILK 和文件：宿主执行 `upload_prepare`、预签名分片 PUT、`upload_part_finish`、`/files(upload_id)`，再发送 `media.file_info`。
+- 频道/DMS 的 Base64 图片：宿主使用 `multipart/form-data` 的 `file_image`；不支持本地视频、语音或普通文件。
+- 图片、视频、语音、文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB；更大媒体使用 QQ 可访问的 HTTPS URL。
+- 消息段中的 Windows/Linux 本地路径和 `file://` 不会由宿主读取。插件应读取文件并编码为 Base64，且不能把 Base64 正文写入日志。
+
+富消息在不同协议上的支持不同。官方 QQ Bot 的 ID、媒体上传、消息格式和回复额度由宿主约束；插件应优先返回通用段并检查真实平台测试结果。
 
 ## 配置与生命周期
 

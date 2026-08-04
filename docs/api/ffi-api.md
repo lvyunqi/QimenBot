@@ -29,7 +29,7 @@ pub fn is_compatible_api_version(version: &str) -> bool
 | **0.3** | `CommandRequest` 新增 `sender_nickname` / `message_id` / `timestamp`；`ReplyBuilder` 流式构建；`PluginInitConfig` / `PluginInitResult` 生命周期钩子；`CommandDescriptorEntry` 新增 `scope` 字段；`InterceptorRequest` / `InterceptorResponse` / `InterceptorDescriptorEntry` 拦截器支持 |
 | **0.4** | `ProactiveSendRequest`、`HostApiV1`、`SendEnqueueStatus`；按 Bot 实时主动发送；安全 bind/unbind 生命周期；私聊、群聊、频道和频道私信目标 |
 | **0.5** | 累积包含 API 0.4，并新增框架托管的 HTTP Webhook 描述符、回调和 Gateway |
-| **0.6** | 独立配置描述符、JSON Schema / UI Schema、插件语义校验、即时配置应用和管理面板在线配置 |
+| **0.6** | 独立配置描述符、JSON Schema / UI Schema、插件语义校验、即时配置应用、管理面板在线配置，以及不改变 FFI 布局的语音/视频/文件媒体 builder |
 
 ## PluginDescriptor
 
@@ -190,7 +190,9 @@ let response = CommandResponse::builder()
     .face(1)                     // QQ 表情
     .image_url("https://...")    // 图片（URL）
     .image_base64("iVBOR...")    // 图片（Base64）
-    .record("https://...")       // 语音
+    .record_base64(&silk_base64) // 语音（Base64）
+    .video_url("https://...mp4") // 视频（URL）
+    .file_base64(&data, "report.zip")
     .build();                    // → CommandResponse
 ```
 
@@ -202,9 +204,16 @@ let response = CommandResponse::builder()
 | `face(id)` | `i32` | QQ 表情 |
 | `image_url(url)` | `&str` | 图片（URL） |
 | `image_base64(base64)` | `&str` | 图片（Base64） |
-| `record(file)` | `&str` | 语音（URL 或路径） |
+| `record(file)` / `record_url(url)` | `&str` | 语音 URL；`record` 是兼容别名 |
+| `record_base64(base64)` | `&str` | SILK 语音（Base64） |
+| `video_url(url)` | `&str` | MP4 视频（URL） |
+| `video_base64(base64)` | `&str` | MP4 视频（Base64） |
+| `file_url(url, file_name)` | `&str, &str` | 文件 URL 和文件名 |
+| `file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 和文件名 |
 | `reply(message_id)` | `&str` | 引用回复 |
 | `build()` | — | 构建为 `CommandResponse` |
+
+这些方法只写入 `segments_json`，没有向任何 `#[repr(C)]` 结构增加字段。已编译的 API 0.1-0.5 插件保持可加载；旧版 `image_base64()` 插件连接新版宿主后，也能直接使用官方 QQ 本地图片上传。
 
 ## InterceptorDescriptorEntry
 
@@ -489,6 +498,10 @@ SendBuilder::private(user_id: &str) -> SendBuilder
 | `.face(id)` | `i32` | QQ 表情 |
 | `.image_url(url)` | `&str` | 图片（URL） |
 | `.image_base64(base64)` | `&str` | 图片（Base64） |
+| `.record_url(url)` / `.record_base64(base64)` | `&str` | 语音 URL / SILK Base64 |
+| `.video_url(url)` / `.video_base64(base64)` | `&str` | 视频 URL / MP4 Base64 |
+| `.file_url(url, file_name)` | `&str, &str` | 文件 URL |
+| `.file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 |
 | `.send()` | — | 入队发送（消耗 builder） |
 
 ### 使用示例

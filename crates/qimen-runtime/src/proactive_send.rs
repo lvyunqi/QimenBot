@@ -10,7 +10,7 @@ use qimen_protocol_core::{
     ActionMeta, ActionStatus, IncomingPacket, NormalizedActionRequest, NormalizedActionResponse,
     ProtocolAdapter, ProtocolId,
 };
-use qimen_transport_qqbot::{QqBotOpenApiClient, SendMessagePayload, UploadFilePayload};
+use qimen_transport_qqbot::{QqBotOpenApiClient, SendMessagePayload};
 use qimen_transport_ws::OneBot11WsActionSender;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Notify, mpsc};
 
 use crate::{
-    BotRuntimeInfo, QqBotMediaUploadOutcome, build_echo, upload_qqbot_media,
+    BotRuntimeInfo, build_echo, execute_qqbot_file_upload, send_qqbot_message,
     value_to_optional_string,
 };
 
@@ -746,45 +746,20 @@ async fn execute_qq_official_packet(
     payload: &Value,
 ) -> Result<Value> {
     if matches!(route, "group_file" | "c2c_file") {
-        let file_payload = UploadFilePayload {
-            file_type: payload
-                .get("file_type")
-                .and_then(Value::as_i64)
-                .unwrap_or(1),
-            url: payload.get("url").and_then(value_to_optional_string),
-            srv_send_msg: payload
-                .get("srv_send_msg")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            file_name: payload.get("file_name").and_then(value_to_optional_string),
-            upload_id: payload.get("upload_id").and_then(value_to_optional_string),
-        };
-        if file_payload.url.is_none() && file_payload.upload_id.is_none() {
-            return Err(QimenError::Protocol(
-                "qqbot upload media missing url or upload_id".to_string(),
-            ));
-        }
-        return match route {
-            "group_file" => {
-                let group_openid = payload
-                    .get("group_openid")
-                    .and_then(value_to_optional_string)
-                    .ok_or_else(|| {
-                        QimenError::Protocol("qqbot group_file missing group_openid".to_string())
-                    })?;
-                client.post_group_file(&group_openid, &file_payload).await
-            }
-            "c2c_file" => {
-                let openid = payload
-                    .get("openid")
-                    .and_then(value_to_optional_string)
-                    .ok_or_else(|| {
-                        QimenError::Protocol("qqbot c2c_file missing openid".to_string())
-                    })?;
-                client.post_c2c_file(&openid, &file_payload).await
-            }
+        let target_id = match route {
+            "group_file" => payload
+                .get("group_openid")
+                .and_then(value_to_optional_string)
+                .ok_or_else(|| {
+                    QimenError::Protocol("qqbot group_file missing group_openid".to_string())
+                })?,
+            "c2c_file" => payload
+                .get("openid")
+                .and_then(value_to_optional_string)
+                .ok_or_else(|| QimenError::Protocol("qqbot c2c_file missing openid".to_string()))?,
             _ => unreachable!(),
         };
+        return execute_qqbot_file_upload(client, route, &target_id, payload).await;
     }
 
     let media_upload = payload.get("media_upload").cloned();
@@ -792,7 +767,7 @@ async fn execute_qq_official_packet(
     let msg_seq = payload.get("msg_seq").and_then(Value::as_i64).or_else(|| {
         (message_id.is_some() && matches!(route, "group_message" | "c2c_message")).then_some(1)
     });
-    let mut message_payload = SendMessagePayload {
+    let message_payload = SendMessagePayload {
         msg_type: payload.get("msg_type").and_then(Value::as_i64),
         content: payload.get("content").and_then(value_to_optional_string),
         msg_id: message_id,
@@ -810,71 +785,43 @@ async fn execute_qq_official_packet(
         image: payload.get("image").and_then(value_to_optional_string),
     };
 
-    match route {
-        "channel_message" => {
-            let channel_id = payload
-                .get("channel_id")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot channel_message missing channel_id".to_string())
-                })?;
-            client
-                .post_channel_message(&channel_id, &message_payload)
-                .await
+    let target_id = match route {
+        "channel_message" => payload
+            .get("channel_id")
+            .and_then(value_to_optional_string)
+            .ok_or_else(|| {
+                QimenError::Protocol("qqbot channel_message missing channel_id".to_string())
+            })?,
+        "group_message" => payload
+            .get("group_openid")
+            .and_then(value_to_optional_string)
+            .ok_or_else(|| {
+                QimenError::Protocol("qqbot group_message missing group_openid".to_string())
+            })?,
+        "c2c_message" => payload
+            .get("openid")
+            .and_then(value_to_optional_string)
+            .ok_or_else(|| QimenError::Protocol("qqbot c2c_message missing openid".to_string()))?,
+        "dms_message" => payload
+            .get("guild_id")
+            .and_then(value_to_optional_string)
+            .ok_or_else(|| {
+                QimenError::Protocol("qqbot dms_message missing guild_id".to_string())
+            })?,
+        other => {
+            return Err(QimenError::Protocol(format!(
+                "unsupported qqbot proactive route '{other}'"
+            )));
         }
-        "group_message" => {
-            let group_openid = payload
-                .get("group_openid")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot group_message missing group_openid".to_string())
-                })?;
-            if let Some(upload) = media_upload.as_ref()
-                && message_payload.media.is_none()
-            {
-                match upload_qqbot_media(client, "group_file", &group_openid, upload).await? {
-                    QqBotMediaUploadOutcome::Media(media) => message_payload.media = Some(media),
-                    QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
-                }
-                message_payload.msg_type = Some(7);
-                message_payload.image = None;
-            }
-            client
-                .post_group_message(&group_openid, &message_payload)
-                .await
-        }
-        "c2c_message" => {
-            let openid = payload
-                .get("openid")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot c2c_message missing openid".to_string())
-                })?;
-            if let Some(upload) = media_upload.as_ref()
-                && message_payload.media.is_none()
-            {
-                match upload_qqbot_media(client, "c2c_file", &openid, upload).await? {
-                    QqBotMediaUploadOutcome::Media(media) => message_payload.media = Some(media),
-                    QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
-                }
-                message_payload.msg_type = Some(7);
-                message_payload.image = None;
-            }
-            client.post_c2c_message(&openid, &message_payload).await
-        }
-        "dms_message" => {
-            let guild_id = payload
-                .get("guild_id")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot dms_message missing guild_id".to_string())
-                })?;
-            client.post_dms_message(&guild_id, &message_payload).await
-        }
-        other => Err(QimenError::Protocol(format!(
-            "unsupported qqbot proactive route '{other}'"
-        ))),
-    }
+    };
+    send_qqbot_message(
+        client,
+        route,
+        &target_id,
+        message_payload,
+        media_upload.as_ref(),
+    )
+    .await
 }
 
 pub(crate) struct ProactiveHostContext {

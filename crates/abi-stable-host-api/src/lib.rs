@@ -14,7 +14,7 @@
 //! - **0.4** - Added the versioned host API binding and real-time proactive sends.
 //! - **0.5** - Added framework-hosted HTTP webhook descriptors and callbacks.
 //! - **0.6** - Added schema-driven plugin configuration descriptors, validation,
-//!   and live apply callbacks.
+//!   live apply callbacks, and media builder helpers without changing FFI layouts.
 
 use abi_stable::std_types::{RString, RVec};
 use std::{
@@ -171,6 +171,28 @@ pub struct ReplyBuilder {
     segments: Vec<String>,
 }
 
+fn media_segment_json(kind: &str, source: &str, file_name: Option<&str>) -> String {
+    let kind = escape_json_string(kind);
+    let source = escape_json_string(source);
+    match file_name {
+        Some(file_name) => format!(
+            r#"{{"type":"{}","data":{{"file":"{}","file_name":"{}"}}}}"#,
+            kind,
+            source,
+            escape_json_string(file_name)
+        ),
+        None => format!(r#"{{"type":"{}","data":{{"file":"{}"}}}}"#, kind, source),
+    }
+}
+
+fn base64_media_source(base64: &str) -> String {
+    if base64.starts_with("base64://") || base64.starts_with("data:") {
+        base64.to_string()
+    } else {
+        format!("base64://{base64}")
+    }
+}
+
 impl ReplyBuilder {
     pub fn new() -> Self {
         Self {
@@ -180,12 +202,7 @@ impl ReplyBuilder {
 
     /// Add a text segment.
     pub fn text(mut self, text: &str) -> Self {
-        let escaped = text
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
+        let escaped = escape_json_string(text);
         self.segments.push(format!(
             r#"{{"type":"text","data":{{"text":"{}"}}}}"#,
             escaped
@@ -216,29 +233,70 @@ impl ReplyBuilder {
 
     /// Add an image segment by URL.
     pub fn image_url(mut self, url: &str) -> Self {
-        let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"{}"}}}}"#,
-            escaped
-        ));
+        self.segments.push(media_segment_json("image", url, None));
         self
     }
 
     /// Add an image segment by base64 data.
     pub fn image_base64(mut self, base64: &str) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"base64://{}"}}}}"#,
-            base64
+        self.segments.push(media_segment_json(
+            "image",
+            &base64_media_source(base64),
+            None,
         ));
         self
     }
 
-    /// Add a record (voice) segment.
+    /// Add a record (voice) segment. Kept as the compatibility alias for `record_url`.
     pub fn record(mut self, file: &str) -> Self {
-        let escaped = file.replace('\\', "\\\\").replace('"', "\\\"");
-        self.segments.push(format!(
-            r#"{{"type":"record","data":{{"file":"{}"}}}}"#,
-            escaped
+        self.segments.push(media_segment_json("record", file, None));
+        self
+    }
+
+    /// Add a record (voice) segment by URL.
+    pub fn record_url(self, url: &str) -> Self {
+        self.record(url)
+    }
+
+    /// Add a record (voice) segment by base64-encoded SILK data.
+    pub fn record_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "record",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add an MP4 video segment by URL.
+    pub fn video_url(mut self, url: &str) -> Self {
+        self.segments.push(media_segment_json("video", url, None));
+        self
+    }
+
+    /// Add an MP4 video segment by base64 data.
+    pub fn video_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "video",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add a file segment by URL and preserve its download name.
+    pub fn file_url(mut self, url: &str, file_name: &str) -> Self {
+        self.segments
+            .push(media_segment_json("file", url, Some(file_name)));
+        self
+    }
+
+    /// Add a file segment by base64 data and preserve its download name.
+    pub fn file_base64(mut self, base64: &str, file_name: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "file",
+            &base64_media_source(base64),
+            Some(file_name),
         ));
         self
     }
@@ -1020,12 +1078,28 @@ impl ProactiveBotApi {
 }
 
 fn escape_json_string(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0c}' => escaped.push_str("\\f"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character <= '\u{1f}' => {
+                let value = character as usize;
+                escaped.push_str("\\u00");
+                escaped.push(HEX[(value >> 4) & 0x0f] as char);
+                escaped.push(HEX[value & 0x0f] as char);
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 /// Fluent builder for constructing and queuing a rich-media send to an
@@ -1162,19 +1236,65 @@ impl SendBuilder {
 
     /// Add an image segment by URL.
     pub fn image_url(mut self, url: &str) -> Self {
-        let escaped = url.replace('\\', "\\\\").replace('"', "\\\"");
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"{}"}}}}"#,
-            escaped
-        ));
+        self.segments.push(media_segment_json("image", url, None));
         self
     }
 
     /// Add an image segment by base64 data.
     pub fn image_base64(mut self, base64: &str) -> Self {
-        self.segments.push(format!(
-            r#"{{"type":"image","data":{{"file":"base64://{}"}}}}"#,
-            base64
+        self.segments.push(media_segment_json(
+            "image",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add a record (voice) segment by URL.
+    pub fn record_url(mut self, url: &str) -> Self {
+        self.segments.push(media_segment_json("record", url, None));
+        self
+    }
+
+    /// Add a record (voice) segment by base64-encoded SILK data.
+    pub fn record_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "record",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add an MP4 video segment by URL.
+    pub fn video_url(mut self, url: &str) -> Self {
+        self.segments.push(media_segment_json("video", url, None));
+        self
+    }
+
+    /// Add an MP4 video segment by base64 data.
+    pub fn video_base64(mut self, base64: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "video",
+            &base64_media_source(base64),
+            None,
+        ));
+        self
+    }
+
+    /// Add a file segment by URL and preserve its download name.
+    pub fn file_url(mut self, url: &str, file_name: &str) -> Self {
+        self.segments
+            .push(media_segment_json("file", url, Some(file_name)));
+        self
+    }
+
+    /// Add a file segment by base64 data and preserve its download name.
+    pub fn file_base64(mut self, base64: &str, file_name: &str) -> Self {
+        self.segments.push(media_segment_json(
+            "file",
+            &base64_media_source(base64),
+            Some(file_name),
         ));
         self
     }
@@ -1259,6 +1379,39 @@ mod tests {
         assert_eq!(response.status_code, 202);
         assert_eq!(response.body.as_slice(), b"accepted");
         assert!(response.headers_json.contains("text/plain"));
+    }
+
+    #[test]
+    fn media_builders_cover_url_and_base64_without_changing_ffi_layouts() {
+        let response = ReplyBuilder::new()
+            .image_base64("YWJj")
+            .record_base64("ZGVm")
+            .video_url("https://example.invalid/video.mp4")
+            .file_base64("ZmlsZQ==", "report.txt")
+            .build();
+        let segments = response.action.segments_json.as_str();
+        assert!(segments.contains(r#""type":"image""#));
+        assert!(segments.contains("base64://YWJj"));
+        assert!(segments.contains(r#""type":"record""#));
+        assert!(segments.contains("base64://ZGVm"));
+        assert!(segments.contains(r#""type":"video""#));
+        assert!(segments.contains("https://example.invalid/video.mp4"));
+        assert!(segments.contains(r#""file_name":"report.txt""#));
+
+        let send = SendBuilder::group("group-1")
+            .image_url("https://example.invalid/image.png")
+            .record_url("https://example.invalid/audio.silk")
+            .video_base64("dmlkZW8=")
+            .file_url("https://example.invalid/file.zip", "file.zip");
+        let segments = send.segments.join(",");
+        assert!(segments.contains("image.png"));
+        assert!(segments.contains("audio.silk"));
+        assert!(segments.contains("base64://dmlkZW8="));
+        assert!(segments.contains(r#""file_name":"file.zip""#));
+
+        let escaped = media_segment_json("file", "https://example.invalid/a", Some("a\0b.zip"));
+        assert!(escaped.contains(r#""file_name":"a\u0000b.zip""#));
+        assert!(!escaped.contains('\0'));
     }
 
     #[test]

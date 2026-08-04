@@ -20,6 +20,7 @@ use qimen_dynamic_plugin_derive::dynamic_plugin;
 
 static STOP_BACKGROUND: AtomicBool = AtomicBool::new(false);
 static BACKGROUND_THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+const SAMPLE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[derive(Clone)]
 struct BackgroundPushConfig {
@@ -278,6 +279,18 @@ mod example {
             nickname
         };
         CommandResponse::text(&format!("Hello, {display}!"))
+    }
+
+    /// The host uploads this in-memory image according to the active protocol.
+    #[command(
+        name = "inline-image",
+        description = "Reply with an in-memory PNG",
+        category = "example"
+    )]
+    fn inline_image(_req: &CommandRequest) -> CommandResponse {
+        CommandResponse::builder()
+            .image_base64(SAMPLE_PNG_BASE64)
+            .build()
     }
 
     /// Legacy API 0.1-0.3 compatible send; the host flushes it after this callback.

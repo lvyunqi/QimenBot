@@ -11,6 +11,13 @@
 - 插件配置保存增加 SHA-256 revision 冲突检查、每插件最多 20 份备份和管理审计；新增 `official_host.plugin_config_dir`，默认继续使用 `config/plugins`。
 - 插件商城元数据允许声明 `dynamic_api = "0.6"`，宿主兼容矩阵同步识别 API 0.6，同时继续拒绝把新插件安装到只支持旧 ABI 的宿主。
 
+### 官方 QQ Bot 本地富媒体
+
+- 宿主开始解释现有 `base64://` 图片段。QQ 群和 C2C 完整执行 `upload_prepare`、预签名分片 PUT、`upload_part_finish`、`/files(upload_id)` 和 `media.file_info` 发送，不再要求插件先搭建图床。
+- 频道和 DMS 本地图片使用 `multipart/form-data` 的 `file_image`；被动回复和 API 0.4+ 主动发送共用同一媒体执行路径。
+- 增加文件头、Base64、空数据和内存上限校验；图片、视频、语音和文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB。预签名 PUT 不携带 QQ 鉴权头，日志不记录 Base64 正文。
+- API 0.6 在不修改 FFI 结构的前提下补充语音、视频和文件的 URL/Base64 builder；已有 API 0.1 至 0.5 动态库继续兼容，使用 `image_base64()` 的旧插件无需升级 ABI。
+
 ### 示例、模板与文档
 
 - 动态插件示例升级为 API 0.6，提供覆盖主要表单控件的 Schema、UI Schema、数组密钥、插件语义校验和后台线程即时重配实现。

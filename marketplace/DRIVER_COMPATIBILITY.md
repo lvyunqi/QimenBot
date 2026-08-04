@@ -49,6 +49,8 @@ OneBot 11 不能声明 `group-at` 或 `channel-at`。这两个值专门表示官
 
 每个驱动至少声明一种事件或发送能力。`rich-message` 不能单独出现，必须同时声明 `reply` 或 `proactive`，否则用户无法判断富媒体通过哪条发送路径生效。
 
+Base64 本地媒体也属于 `rich-message`，但投稿 README 必须列出真实测试过的类型和场景。官方 QQ 的群/C2C 本地媒体使用分片预上传，频道/DMS 只支持本地图片 multipart；不同路径不能互相推断兼容。
+
 ## OneBot 11 示例
 
 ```toml

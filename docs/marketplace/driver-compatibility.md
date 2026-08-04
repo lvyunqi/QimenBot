@@ -53,6 +53,8 @@ OneBot 的 `channel`、`channel-private` 往往属于实现扩展，不是每个
 
 `rich-message` 必须和 `reply` 或 `proactive` 一起出现。富媒体能力也要逐驱动测试，例如 OneBot 可以发送某个消息段，不代表官方 QQ OpenAPI 接受相同参数。
 
+插件使用 Base64 本地媒体时，README 还应写明实际验证的类型和场景。官方 QQ 的群/C2C 本地媒体走分片预上传，频道/DMS 只支持本地图片 multipart；只测过群图片不能据此承诺频道视频或文件。
+
 每个驱动必须至少有一项 `events` 或 `outbound`。省略其中一个数组时按空数组处理。
 
 ## 只支持 OneBot 11

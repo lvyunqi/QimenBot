@@ -97,6 +97,18 @@ Message::builder()
     .build()
 ```
 
+::: warning 官方 QQ Bot 的本地媒体
+`.image("本地路径")` 是否可用取决于具体协议实现。官方 QQ Bot 宿主不会读取插件传入的本地路径；插件生成图片时应改为：
+
+```rust
+Message::builder()
+    .image(format!("base64://{png_base64}"))
+    .build()
+```
+
+群和 C2C 会自动走官方分片预上传，频道和 DMS 图片会自动使用 `file_image` multipart。图片 Base64 上限为 20 MB。视频、SILK 语音和普通文件的完整限制见[官方 QQ Bot 插件适配](/plugin/qq-official#本地媒体格式和大小)。
+:::
+
 ### 表情与互动
 
 | 方法 | 参数 | 说明 |

@@ -43,6 +43,7 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - 插件 ID 一经发布应保持稳定；配置文件名和启停状态都依赖它。
 - 跨协议 ID 一律优先按字符串处理。官方 QQ Bot 的 openid 不能强转为传统 QQ 数字。
 - 普通回复优先使用 QimenBot 通用消息模型；`OneBotActionClient` 只适用于 OneBot Action，不等同于官方 QQ OpenAPI。
+- 官方 QQ 本地媒体通过通用 Base64 消息段交给宿主处理；插件不读取 Bot 凭据、不自行实现分片上传，也不把 Base64 正文写入日志。
 - 不把 Secret、Token、用户配置、数据库或编译后的动态库提交到 QimenBot 主仓库。
 - 主框架代码必须保持插件无关；具体插件逻辑只能进入插件目录或独立插件仓库。
 - 动态插件回调是同步 FFI，不直接使用 `async fn`；跨 FFI 边界只用 Host API 提供的 ABI 稳定类型。

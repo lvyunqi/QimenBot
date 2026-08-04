@@ -150,6 +150,8 @@ Cargo workspace 发现 crate
 - 群聊、C2C、频道和 DMS 的被动回复由运行时根据来信场景路由。
 - 群内命令是否需要 @ 由平台事件和命令分发共同决定，不在插件中硬编码 XML/标签删除。
 - `ctx.onebot_actions()` 是 OneBot Action 客户端；官方平台专属 Markdown、Keyboard、Ark、Embed 和媒体应使用通用 `Message` 段，并按支持矩阵验证。
+- 官方 QQ 本地媒体使用 `base64://` 通用段：群/C2C 由宿主分片预上传，频道/DMS 图片由宿主发送 multipart；插件不持有 QQ 凭据，也不自行调用预上传接口。
+- Base64 错误按“解码、格式、大小、prepare、分片 PUT、part finish、merge、send”阶段定位；日志不得打印完整 Base64。
 - 官方原始字段从规范化事件中的 `raw_json.qqbot_payload` 读取；缺失时必须降级。
 - 回复配额、媒体上传和平台权限是宿主/开放平台约束，插件不能假设无限主动发送。
 

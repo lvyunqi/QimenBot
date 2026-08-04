@@ -409,7 +409,9 @@ let response = CommandResponse::builder()
     .face(1)                     // QQ 表情
     .image_url("https://...")    // 图片（URL）
     .image_base64("iVBOR...")    // 图片（Base64）
-    .record("https://...")       // 语音
+    .record_url("https://...")   // 语音（URL）
+    .video_base64(&mp4_base64)   // 视频（Base64）
+    .file_url("https://...", "report.zip")
     .at_all()                    // @全体成员
     .build();
 ```
@@ -422,9 +424,22 @@ let response = CommandResponse::builder()
 | `.face(id)` | `i32` | QQ 表情 |
 | `.image_url(url)` | `&str` | 图片（URL） |
 | `.image_base64(base64)` | `&str` | 图片（Base64 编码） |
-| `.record(file)` | `&str` | 语音（URL 或路径） |
+| `.record(file)` / `.record_url(url)` | `&str` | 语音 URL；`record` 是兼容别名 |
+| `.record_base64(base64)` | `&str` | SILK 语音（Base64） |
+| `.video_url(url)` | `&str` | MP4 视频（URL） |
+| `.video_base64(base64)` | `&str` | MP4 视频（Base64） |
+| `.file_url(url, file_name)` | `&str, &str` | 文件 URL 和下载文件名 |
+| `.file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 和下载文件名 |
 | `.reply(message_id)` | `&str` | 引用回复 |
 | `.build()` | — | 构建为 `CommandResponse` |
+
+::: info 依赖版本
+`image_base64()` 已存在于 crates.io `0.1.12`，旧插件重新连接新版宿主后即可获得官方 QQ 本地图片上传能力。`record_base64()`、`video_*()`、`file_*()` 等便捷方法属于当前 API 0.6 源码，需要使用官方模板固定的 API 0.6 Git revision，或等待配套 crate 正式发布。
+:::
+
+`image_base64()`、`record_base64()`、`video_base64()` 和 `file_base64()` 只构造通用消息段，不读取宿主凭据，也不改变 FFI 结构。官方 QQ Bot 宿主会解释这些段：群/C2C 走官方分片预上传，频道和 DMS 的图片走 `file_image` multipart。OneBot 仍按对应实现支持的 `base64://` 规则处理。
+
+不要在动态插件里自行请求 QQ 上传接口。插件拿不到 AppSecret 和 access token 是有意的安全边界；生成媒体后返回 Base64 段即可。Base64 适合几十 MB 以内的结果，较大文件应上传到可公开访问的 HTTPS URL。具体格式和上限见[官方 QQ Bot 插件适配](/plugin/qq-official#本地媒体格式和大小)。
 
 ::: tip 引用回复
 结合 `req.message_id` 可以实现引用回复：
@@ -863,6 +878,10 @@ SendBuilder::private("987654321")
 | `.face(id)` | `i32` | QQ 表情 |
 | `.image_url(url)` | `&str` | 图片（URL） |
 | `.image_base64(base64)` | `&str` | 图片（Base64） |
+| `.record_url(url)` / `.record_base64(base64)` | `&str` | 语音 URL / SILK Base64 |
+| `.video_url(url)` / `.video_base64(base64)` | `&str` | 视频 URL / MP4 Base64 |
+| `.file_url(url, file_name)` | `&str, &str` | 文件 URL |
+| `.file_base64(base64, file_name)` | `&str, &str` | 文件 Base64 |
 | `.send()` | — | 入队发送 |
 
 ### 完整示例

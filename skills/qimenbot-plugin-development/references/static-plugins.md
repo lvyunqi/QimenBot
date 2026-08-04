@@ -165,6 +165,8 @@ let message = Message::builder()
 
 可解析 `plain_text()`、`at_list()`、`image_urls()`、`has_reply()` 和 `reply_id()`。Markdown、Keyboard、Ark、Embed 及群/C2C 媒体存在平台限制；实现前先读官方 QQ Bot 参考与 `message_demo.rs`，不要假设 OneBot 消息段可原样发送到官方平台。
 
+静态插件生成官方 QQ 本地媒体时返回 `base64://...` 消息段，不直接读取 Bot AppSecret 或调用上传接口。群/C2C 会由宿主完成分片预上传，频道/DMS 只支持本地图片 multipart。图片、视频、语音和文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB；大文件改用 QQ 可访问的 HTTPS URL。
+
 ## 系统事件与拦截器
 
 ```rust

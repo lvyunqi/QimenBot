@@ -26,6 +26,11 @@ use crate::group_event_filter::GroupEventFilter;
 use crate::plugin_acl::PluginAclManager;
 use abi_stable::std_types::RString;
 use abi_stable_host_api::{PluginConfigRequest, SendAction};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+};
+use bytes::Bytes;
 use qimen_adapter_onebot11::OneBot11Adapter;
 use qimen_adapter_qqbot::QqBotAdapter;
 use qimen_config::{AppConfig, qq_official_intents_value};
@@ -44,14 +49,15 @@ use qimen_protocol_core::{
     NormalizedActionResponse, NormalizedEvent, ProtocolAdapter, ProtocolId, TransportMode,
 };
 use qimen_transport_qqbot::{
-    GatewayStep, QqBotGatewayClient, QqBotGatewaySession, QqBotOpenApiClient, QqBotOpenApiConfig,
-    SendMessagePayload, UploadFilePayload,
+    GatewayStep, LocalImagePayload, QqBotGatewayClient, QqBotGatewaySession, QqBotOpenApiClient,
+    QqBotOpenApiConfig, SendMessagePayload, UploadFilePayload,
 };
 use qimen_transport_ws::{
     OneBot11ForwardWsClient, OneBot11ReverseWsConnection, OneBot11WsActionSender, ReconnectPolicy,
     WsReverseConfig, WsReverseServer,
 };
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
@@ -3177,59 +3183,26 @@ impl Runtime {
         if matches!(route, "group_file" | "c2c_file") {
             return Ok(self
                 .complete_qqbot_action(bot, &action, route, async {
-                    let payload = UploadFilePayload {
-                        file_type: packet
+                    let target_id = match route {
+                        "group_file" => packet
                             .payload
-                            .get("file_type")
-                            .and_then(Value::as_i64)
-                            .unwrap_or(1),
-                        url: packet.payload.get("url").and_then(value_to_optional_string),
-                        srv_send_msg: packet
+                            .get("group_openid")
+                            .and_then(value_to_optional_string)
+                            .ok_or_else(|| {
+                                QimenError::Protocol(
+                                    "qqbot group_file missing group_openid".to_string(),
+                                )
+                            })?,
+                        "c2c_file" => packet
                             .payload
-                            .get("srv_send_msg")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        file_name: packet
-                            .payload
-                            .get("file_name")
-                            .and_then(value_to_optional_string),
-                        upload_id: packet
-                            .payload
-                            .get("upload_id")
-                            .and_then(value_to_optional_string),
-                    };
-                    if payload.url.is_none() && payload.upload_id.is_none() {
-                        return Err(QimenError::Protocol(
-                            "qqbot upload media missing url or upload_id".to_string(),
-                        ));
-                    }
-                    match route {
-                        "group_file" => {
-                            let group_openid = packet
-                                .payload
-                                .get("group_openid")
-                                .and_then(value_to_optional_string)
-                                .ok_or_else(|| {
-                                    QimenError::Protocol(
-                                        "qqbot group_file missing group_openid".to_string(),
-                                    )
-                                })?;
-                            client.post_group_file(&group_openid, &payload).await
-                        }
-                        "c2c_file" => {
-                            let openid = packet
-                                .payload
-                                .get("openid")
-                                .and_then(value_to_optional_string)
-                                .ok_or_else(|| {
-                                    QimenError::Protocol(
-                                        "qqbot c2c_file missing openid".to_string(),
-                                    )
-                                })?;
-                            client.post_c2c_file(&openid, &payload).await
-                        }
+                            .get("openid")
+                            .and_then(value_to_optional_string)
+                            .ok_or_else(|| {
+                                QimenError::Protocol("qqbot c2c_file missing openid".to_string())
+                            })?,
                         _ => unreachable!(),
-                    }
+                    };
+                    execute_qqbot_file_upload(client, route, &target_id, &packet.payload).await
                 })
                 .await);
         }
@@ -3246,7 +3219,7 @@ impl Runtime {
         Ok(self
             .complete_qqbot_action(bot, &action, route, async {
                 let media_upload = packet.payload.get("media_upload").cloned();
-                let mut payload = SendMessagePayload {
+                let payload = SendMessagePayload {
                     msg_type: packet.payload.get("msg_type").and_then(Value::as_i64),
                     content: packet
                         .payload
@@ -3273,9 +3246,9 @@ impl Runtime {
                         .and_then(value_to_optional_string),
                 };
 
-                match route {
-                    "channel_message" => {
-                        let channel_id = packet
+                let (target_id, send_route) = match route {
+                    "channel_message" => (
+                        packet
                             .payload
                             .get("channel_id")
                             .and_then(value_to_optional_string)
@@ -3283,11 +3256,11 @@ impl Runtime {
                                 QimenError::Protocol(
                                     "qqbot channel_message missing channel_id".to_string(),
                                 )
-                            })?;
-                        client.post_channel_message(&channel_id, &payload).await
-                    }
-                    "group_message" => {
-                        let group_openid = packet
+                            })?,
+                        route,
+                    ),
+                    "group_message" => (
+                        packet
                             .payload
                             .get("group_openid")
                             .and_then(value_to_optional_string)
@@ -3295,47 +3268,21 @@ impl Runtime {
                                 QimenError::Protocol(
                                     "qqbot group_message missing group_openid".to_string(),
                                 )
-                            })?;
-                        if let Some(upload) = media_upload.as_ref()
-                            && payload.media.is_none()
-                        {
-                            match upload_qqbot_media(client, "group_file", &group_openid, upload)
-                                .await?
-                            {
-                                QqBotMediaUploadOutcome::Media(media) => {
-                                    payload.media = Some(media)
-                                }
-                                QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
-                            }
-                            payload.msg_type = Some(7);
-                            payload.image = None;
-                        }
-                        client.post_group_message(&group_openid, &payload).await
-                    }
-                    "c2c_message" => {
-                        let openid = packet
+                            })?,
+                        route,
+                    ),
+                    "c2c_message" => (
+                        packet
                             .payload
                             .get("openid")
                             .and_then(value_to_optional_string)
                             .ok_or_else(|| {
                                 QimenError::Protocol("qqbot c2c_message missing openid".to_string())
-                            })?;
-                        if let Some(upload) = media_upload.as_ref()
-                            && payload.media.is_none()
-                        {
-                            match upload_qqbot_media(client, "c2c_file", &openid, upload).await? {
-                                QqBotMediaUploadOutcome::Media(media) => {
-                                    payload.media = Some(media)
-                                }
-                                QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
-                            }
-                            payload.msg_type = Some(7);
-                            payload.image = None;
-                        }
-                        client.post_c2c_message(&openid, &payload).await
-                    }
-                    "dms_message" => {
-                        let guild_id = packet
+                            })?,
+                        route,
+                    ),
+                    "dms_message" => (
+                        packet
                             .payload
                             .get("guild_id")
                             .and_then(value_to_optional_string)
@@ -3343,13 +3290,23 @@ impl Runtime {
                                 QimenError::Protocol(
                                     "qqbot dms_message missing guild_id".to_string(),
                                 )
-                            })?;
-                        client.post_dms_message(&guild_id, &payload).await
+                            })?,
+                        route,
+                    ),
+                    other => {
+                        return Err(QimenError::Protocol(format!(
+                            "unsupported qqbot action route '{other}'"
+                        )));
                     }
-                    other => Err(QimenError::Protocol(format!(
-                        "unsupported qqbot action route '{other}'"
-                    ))),
-                }
+                };
+                send_qqbot_message(
+                    client,
+                    send_route,
+                    &target_id,
+                    payload,
+                    media_upload.as_ref(),
+                )
+                .await
             })
             .await)
     }
@@ -4293,44 +4250,347 @@ fn value_to_optional_string(value: &Value) -> Option<String> {
     }
 }
 
-async fn upload_qqbot_media(
+const QQBOT_INLINE_IMAGE_LIMIT: usize = 20_000_000;
+const QQBOT_INLINE_VIDEO_LIMIT: usize = 30_000_000;
+const QQBOT_INLINE_AUDIO_LIMIT: usize = 20_000_000;
+const QQBOT_INLINE_FILE_LIMIT: usize = 32_000_000;
+
+#[derive(Debug, Clone)]
+struct DecodedQqBotMedia {
+    file_type: i64,
+    data: Bytes,
+    file_name: String,
+    content_type: String,
+}
+
+pub(crate) async fn send_qqbot_message(
+    client: &QqBotOpenApiClient,
+    route: &str,
+    target_id: &str,
+    mut payload: SendMessagePayload,
+    upload: Option<&Value>,
+) -> Result<Value> {
+    match route {
+        "channel_message" | "dms_message" => {
+            if let Some(upload) = upload {
+                if let Some(media) = decode_qqbot_inline_media(upload)? {
+                    if media.file_type != 1 {
+                        return Err(QimenError::Protocol(format!(
+                            "qqbot {route} multipart messages only support local images"
+                        )));
+                    }
+                    payload.image = None;
+                    let image = LocalImagePayload {
+                        data: media.data,
+                        file_name: media.file_name,
+                        content_type: media.content_type,
+                    };
+                    return match route {
+                        "channel_message" => {
+                            client
+                                .post_channel_message_multipart(target_id, &payload, image)
+                                .await
+                        }
+                        "dms_message" => {
+                            client
+                                .post_dms_message_multipart(target_id, &payload, image)
+                                .await
+                        }
+                        _ => unreachable!(),
+                    };
+                }
+                if payload.image.is_none()
+                    && let Some(url) = upload.get("url").and_then(value_to_optional_string)
+                {
+                    payload.image = Some(url);
+                }
+            }
+            match route {
+                "channel_message" => client.post_channel_message(target_id, &payload).await,
+                "dms_message" => client.post_dms_message(target_id, &payload).await,
+                _ => unreachable!(),
+            }
+        }
+        "group_message" | "c2c_message" => {
+            if let Some(upload) = upload
+                && payload.media.is_none()
+            {
+                let upload_route = if route == "group_message" {
+                    "group_file"
+                } else {
+                    "c2c_file"
+                };
+                match upload_qqbot_media(client, upload_route, target_id, upload).await? {
+                    QqBotMediaUploadOutcome::Media(media) => payload.media = Some(media),
+                    QqBotMediaUploadOutcome::Sent(response) => return Ok(response),
+                }
+                payload.msg_type = Some(7);
+                payload.image = None;
+            }
+            match route {
+                "group_message" => client.post_group_message(target_id, &payload).await,
+                "c2c_message" => client.post_c2c_message(target_id, &payload).await,
+                _ => unreachable!(),
+            }
+        }
+        other => Err(QimenError::Protocol(format!(
+            "unsupported qqbot message route '{other}'"
+        ))),
+    }
+}
+
+pub(crate) async fn execute_qqbot_file_upload(
     client: &QqBotOpenApiClient,
     route: &str,
     target_id: &str,
     upload: &Value,
-) -> Result<QqBotMediaUploadOutcome> {
-    let payload = UploadFilePayload {
-        file_type: upload.get("file_type").and_then(Value::as_i64).unwrap_or(1),
-        url: Some(
-            upload
-                .get("url")
-                .and_then(value_to_optional_string)
-                .ok_or_else(|| {
-                    QimenError::Protocol("qqbot media upload missing url".to_string())
-                })?,
-        ),
-        srv_send_msg: upload
-            .get("srv_send_msg")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        file_name: None,
-        upload_id: None,
-    };
+) -> Result<Value> {
+    let file_type = upload.get("file_type").and_then(Value::as_i64).unwrap_or(1);
+    let srv_send_msg = upload
+        .get("srv_send_msg")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if let Some(media) = decode_qqbot_inline_media(upload)? {
+        return match route {
+            "group_file" => {
+                client
+                    .post_group_file_bytes(
+                        target_id,
+                        media.file_type,
+                        &media.file_name,
+                        media.data,
+                        srv_send_msg,
+                    )
+                    .await
+            }
+            "c2c_file" => {
+                client
+                    .post_c2c_file_bytes(
+                        target_id,
+                        media.file_type,
+                        &media.file_name,
+                        media.data,
+                        srv_send_msg,
+                    )
+                    .await
+            }
+            other => Err(QimenError::Protocol(format!(
+                "unsupported qqbot media upload route '{other}'"
+            ))),
+        };
+    }
 
-    let response = match route {
+    let url = upload.get("url").and_then(value_to_optional_string);
+    if let Some(url) = url.as_deref()
+        && !matches!(url, value if value.starts_with("http://") || value.starts_with("https://"))
+    {
+        return Err(QimenError::Protocol(
+            "qqbot media URL must use http or https".to_string(),
+        ));
+    }
+    let payload = UploadFilePayload {
+        file_type,
+        url,
+        srv_send_msg,
+        file_name: upload.get("file_name").and_then(value_to_optional_string),
+        upload_id: upload.get("upload_id").and_then(value_to_optional_string),
+    };
+    if payload.url.is_none() && payload.upload_id.is_none() {
+        return Err(QimenError::Protocol(
+            "qqbot media upload requires url, base64, or upload_id".to_string(),
+        ));
+    }
+    match route {
         "group_file" => client.post_group_file(target_id, &payload).await,
         "c2c_file" => client.post_c2c_file(target_id, &payload).await,
         other => Err(QimenError::Protocol(format!(
             "unsupported qqbot media upload route '{other}'"
         ))),
-    }?;
+    }
+}
 
-    if payload.srv_send_msg {
+pub(crate) async fn upload_qqbot_media(
+    client: &QqBotOpenApiClient,
+    route: &str,
+    target_id: &str,
+    upload: &Value,
+) -> Result<QqBotMediaUploadOutcome> {
+    let srv_send_msg = upload
+        .get("srv_send_msg")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let response = execute_qqbot_file_upload(client, route, target_id, upload).await?;
+    if srv_send_msg {
         return Ok(QqBotMediaUploadOutcome::Sent(response));
     }
     Ok(QqBotMediaUploadOutcome::Media(
         qqbot_media_payload_from_upload_response(&response)?,
     ))
+}
+
+fn decode_qqbot_inline_media(upload: &Value) -> Result<Option<DecodedQqBotMedia>> {
+    let file_type = upload.get("file_type").and_then(Value::as_i64).unwrap_or(1);
+    if !(1..=4).contains(&file_type) {
+        return Err(QimenError::Protocol(format!(
+            "qqbot file_type must be between 1 and 4, got {file_type}"
+        )));
+    }
+    let source = upload
+        .get("base64")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let value = upload.get("url").and_then(Value::as_str)?;
+            (value.starts_with("base64://") || value.starts_with("data:")).then_some(value)
+        });
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let (encoded, data_content_type) = split_inline_base64_source(source)?;
+    let compact = if encoded
+        .chars()
+        .any(|character| character.is_ascii_whitespace())
+    {
+        Cow::Owned(
+            encoded
+                .chars()
+                .filter(|character| !character.is_ascii_whitespace())
+                .collect::<String>(),
+        )
+    } else {
+        Cow::Borrowed(encoded)
+    };
+    if compact.is_empty() {
+        return Err(QimenError::Protocol(
+            "qqbot inline media contains no base64 data".to_string(),
+        ));
+    }
+    let limit = inline_media_limit(file_type);
+    let estimated_size = compact.len().saturating_add(3) / 4 * 3;
+    if estimated_size > limit.saturating_add(2) {
+        return Err(inline_media_limit_error(file_type, limit));
+    }
+    let decoded = STANDARD
+        .decode(compact.as_bytes())
+        .or_else(|_| STANDARD_NO_PAD.decode(compact.as_bytes()))
+        .map_err(|_| {
+            QimenError::Protocol("qqbot inline media contains invalid base64 data".to_string())
+        })?;
+    if decoded.is_empty() {
+        return Err(QimenError::Protocol(
+            "qqbot inline media decoded to an empty file".to_string(),
+        ));
+    }
+    if decoded.len() > limit {
+        return Err(inline_media_limit_error(file_type, limit));
+    }
+
+    let (default_name, detected_content_type) = detect_inline_media(file_type, &decoded)?;
+    let file_name = upload
+        .get("file_name")
+        .and_then(value_to_optional_string)
+        .unwrap_or_else(|| default_name.to_string());
+    let supplied_content_type = data_content_type
+        .or_else(|| {
+            upload
+                .get("content_type")
+                .and_then(value_to_optional_string)
+        })
+        .filter(|value| value.contains('/'));
+    let content_type = if file_type == 4 {
+        supplied_content_type.unwrap_or_else(|| detected_content_type.to_string())
+    } else {
+        detected_content_type.to_string()
+    };
+
+    Ok(Some(DecodedQqBotMedia {
+        file_type,
+        data: Bytes::from(decoded),
+        file_name,
+        content_type,
+    }))
+}
+
+fn split_inline_base64_source(source: &str) -> Result<(&str, Option<String>)> {
+    if let Some(encoded) = source.strip_prefix("base64://") {
+        return Ok((encoded, None));
+    }
+    if let Some(data_uri) = source.strip_prefix("data:") {
+        let (metadata, encoded) = data_uri.split_once(',').ok_or_else(|| {
+            QimenError::Protocol("qqbot inline media data URI is missing a comma".to_string())
+        })?;
+        let content_type = metadata.strip_suffix(";base64").ok_or_else(|| {
+            QimenError::Protocol("qqbot inline media data URI must use base64".to_string())
+        })?;
+        return Ok((
+            encoded,
+            (!content_type.is_empty()).then(|| content_type.to_string()),
+        ));
+    }
+    Ok((source, None))
+}
+
+fn inline_media_limit(file_type: i64) -> usize {
+    match file_type {
+        1 => QQBOT_INLINE_IMAGE_LIMIT,
+        2 => QQBOT_INLINE_VIDEO_LIMIT,
+        3 => QQBOT_INLINE_AUDIO_LIMIT,
+        4 => QQBOT_INLINE_FILE_LIMIT,
+        _ => 0,
+    }
+}
+
+fn inline_media_limit_error(file_type: i64, limit: usize) -> QimenError {
+    QimenError::Protocol(format!(
+        "qqbot inline {} exceeds the {} MB memory limit; use an http(s) URL for larger media",
+        qqbot_media_type_name(file_type),
+        limit / 1_000_000
+    ))
+}
+
+fn qqbot_media_type_name(file_type: i64) -> &'static str {
+    match file_type {
+        1 => "image",
+        2 => "video",
+        3 => "audio",
+        4 => "file",
+        _ => "media",
+    }
+}
+
+fn detect_inline_media(file_type: i64, data: &[u8]) -> Result<(&'static str, &'static str)> {
+    match file_type {
+        1 if data.starts_with(b"\x89PNG\r\n\x1a\n") => Ok(("qimenbot-image.png", "image/png")),
+        1 if data.starts_with(&[0xff, 0xd8, 0xff]) => Ok(("qimenbot-image.jpg", "image/jpeg")),
+        1 if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") => {
+            Ok(("qimenbot-image.gif", "image/gif"))
+        }
+        1 if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" => {
+            Ok(("qimenbot-image.webp", "image/webp"))
+        }
+        1 if data.starts_with(b"BM") => Ok(("qimenbot-image.bmp", "image/bmp")),
+        1 => Err(QimenError::Protocol(
+            "qqbot inline image must be PNG, JPEG, GIF, WebP, or BMP".to_string(),
+        )),
+        2 if data.len() >= 12 && &data[4..8] == b"ftyp" => Ok(("qimenbot-video.mp4", "video/mp4")),
+        2 => Err(QimenError::Protocol(
+            "qqbot inline video must be an MP4 file".to_string(),
+        )),
+        3 if data.starts_with(b"#!SILK_V3")
+            || data
+                .get(1..)
+                .is_some_and(|data| data.starts_with(b"#!SILK_V3")) =>
+        {
+            Ok(("qimenbot-audio.silk", "audio/silk"))
+        }
+        3 => Err(QimenError::Protocol(
+            "qqbot inline audio must be a SILK file".to_string(),
+        )),
+        4 => Ok(("qimenbot-file.bin", "application/octet-stream")),
+        _ => Err(QimenError::Protocol(format!(
+            "unsupported qqbot file_type {file_type}"
+        ))),
+    }
 }
 
 pub(crate) enum QqBotMediaUploadOutcome {
@@ -4341,8 +4601,11 @@ pub(crate) enum QqBotMediaUploadOutcome {
 fn qqbot_media_payload_from_upload_response(response: &Value) -> Result<Value> {
     let file_info = response
         .get("file_info")
-        .cloned()
-        .ok_or_else(|| QimenError::Protocol("qqbot media upload missing file_info".to_string()))?;
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            QimenError::Protocol("qqbot media upload missing non-empty file_info".to_string())
+        })?;
     Ok(json!({ "file_info": file_info }))
 }
 
@@ -5048,6 +5311,64 @@ path = "/onebot/reverse"
 
         assert_eq!(media, json!({ "file_info": "file-info" }));
         assert!(qqbot_media_payload_from_upload_response(&json!({})).is_err());
+        assert!(qqbot_media_payload_from_upload_response(&json!({ "file_info": null })).is_err());
+        assert!(qqbot_media_payload_from_upload_response(&json!({ "file_info": " " })).is_err());
+    }
+
+    #[test]
+    fn qqbot_inline_png_base64_is_decoded_and_typed() {
+        let media = decode_qqbot_inline_media(&json!({
+            "file_type": 1,
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        }))
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(media.file_type, 1);
+        assert_eq!(media.file_name, "qimenbot-image.png");
+        assert_eq!(media.content_type, "image/png");
+        assert!(media.data.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn qqbot_inline_media_accepts_data_uri_and_preserves_file_name() {
+        let media = decode_qqbot_inline_media(&json!({
+            "file_type": 1,
+            "base64": "data:text/plain;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "file_name": "status.png",
+        }))
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(media.file_name, "status.png");
+        assert_eq!(media.content_type, "image/png");
+    }
+
+    #[test]
+    fn qqbot_inline_media_rejects_invalid_base64_and_mismatched_formats() {
+        let invalid_base64 = decode_qqbot_inline_media(&json!({
+            "file_type": 1,
+            "base64": "not base64!",
+        }))
+        .unwrap_err();
+        assert!(invalid_base64.to_string().contains("invalid base64"));
+
+        let wrong_format = decode_qqbot_inline_media(&json!({
+            "file_type": 1,
+            "base64": "aGVsbG8=",
+        }))
+        .unwrap_err();
+        assert!(wrong_format.to_string().contains("must be PNG"));
+    }
+
+    #[test]
+    fn qqbot_inline_media_limits_match_safe_in_memory_types() {
+        assert_eq!(inline_media_limit(1), 20_000_000);
+        assert_eq!(inline_media_limit(2), 30_000_000);
+        assert_eq!(inline_media_limit(3), 20_000_000);
+        assert_eq!(inline_media_limit(4), 32_000_000);
+        assert!(detect_inline_media(2, b"\0\0\0\x18ftypisom").is_ok());
+        assert!(detect_inline_media(3, b"#!SILK_V3payload").is_ok());
     }
 
     #[test]
