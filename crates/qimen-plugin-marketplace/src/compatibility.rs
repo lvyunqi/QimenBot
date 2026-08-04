@@ -35,7 +35,7 @@ impl HostProfile {
             environment,
             glibc: current_glibc_version(),
             dynamic_loading,
-            supported_dynamic_apis: ["0.1", "0.2", "0.3", "0.4", "0.5"]
+            supported_dynamic_apis: ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
@@ -378,6 +378,15 @@ mod tests {
         let selected = select_latest_compatible(&catalog, &host(), false).unwrap();
         assert_eq!(selected.0.version, "1.0.0");
         assert!(selected.1.installable);
+    }
+
+    #[test]
+    fn current_host_accepts_online_config_api() {
+        let mut catalog = catalog();
+        catalog.versions[0].dynamic_api = Some("0.6".into());
+        let mut host = host();
+        host.supported_dynamic_apis.push("0.6".into());
+        assert!(evaluate_version(&catalog, &catalog.versions[0], &host, false).compatible);
     }
 
     #[test]

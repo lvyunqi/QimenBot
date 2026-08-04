@@ -20,6 +20,7 @@ builtin_modules = ["command", "admin", "scheduler", "bridge"]
 plugin_modules = ["example-basic", "example-message"]
 plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
+plugin_config_dir = "config/plugins"
 
 [[bots]]
 id = "qq-official"

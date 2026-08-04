@@ -101,13 +101,16 @@ pub struct OfficialHostConfig {
     pub plugin_state_path: String,
     #[serde(default = "default_plugin_bin_dir")]
     pub plugin_bin_dir: String,
+    /// 动态插件独立 TOML 配置目录。
+    #[serde(default = "default_plugin_config_dir")]
+    pub plugin_config_dir: String,
     /// Timeout in seconds for dynamic plugin FFI calls (default: 30).
     #[serde(default = "default_dynamic_plugin_timeout_secs")]
     pub dynamic_plugin_timeout_secs: u64,
     /// Real-time proactive send queue settings for dynamic plugins.
     #[serde(default)]
     pub proactive_send: ProactiveSendConfig,
-    /// Framework-hosted HTTP webhook gateway for API 0.5 dynamic plugins.
+    /// Framework-hosted HTTP webhook gateway for API 0.5+ dynamic plugins.
     #[serde(default)]
     pub webhook: WebhookGatewayConfig,
 }
@@ -119,6 +122,7 @@ impl Default for OfficialHostConfig {
             plugin_modules: Vec::new(),
             plugin_state_path: default_plugin_state_path(),
             plugin_bin_dir: default_plugin_bin_dir(),
+            plugin_config_dir: default_plugin_config_dir(),
             dynamic_plugin_timeout_secs: default_dynamic_plugin_timeout_secs(),
             proactive_send: ProactiveSendConfig::default(),
             webhook: WebhookGatewayConfig::default(),
@@ -298,6 +302,11 @@ impl AppConfig {
         if self.official_host.proactive_send.queue_capacity == 0 {
             return Err(QimenError::Config(
                 "official_host.proactive_send.queue_capacity must be greater than zero".to_string(),
+            ));
+        }
+        if self.official_host.plugin_config_dir.trim().is_empty() {
+            return Err(QimenError::Config(
+                "official_host.plugin_config_dir cannot be empty".to_string(),
             ));
         }
 
@@ -505,6 +514,10 @@ fn default_plugin_state_path() -> String {
 
 fn default_plugin_bin_dir() -> String {
     "plugins/bin".to_string()
+}
+
+fn default_plugin_config_dir() -> String {
+    "config/plugins".to_string()
 }
 
 fn default_dynamic_plugin_timeout_secs() -> u64 {
@@ -743,6 +756,7 @@ transport = "ws-forward"
             "config/plugin-state.toml"
         );
         assert_eq!(config.official_host.plugin_bin_dir, "plugins/bin");
+        assert_eq!(config.official_host.plugin_config_dir, "config/plugins");
         assert_eq!(config.official_host.proactive_send.queue_capacity, 256);
         assert_eq!(config.official_host.proactive_send.offline_ttl_secs, 60);
         assert!(!config.official_host.webhook.enabled);

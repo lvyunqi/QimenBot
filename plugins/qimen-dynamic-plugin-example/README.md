@@ -1,12 +1,12 @@
 # QimenBot 动态插件示例
 
-本项目是一个独立构建的 Rust `cdylib`，演示 QimenBot 动态插件 API 0.5。生成物是 Linux 的 `.so`、Windows 的 `.dll` 或 macOS 的 `.dylib`，由 QimenBot 在运行时加载。
+本项目是一个独立构建的 Rust `cdylib`，演示 QimenBot 动态插件 API 0.6。生成物是 Linux 的 `.so`、Windows 的 `.dll` 或 macOS 的 `.dylib`，由 QimenBot 在运行时加载。
 
-示例同时覆盖框架托管 Webhook、实时主动推送和 API 0.1 至 0.3 的兼容发送路径。
+示例同时覆盖 JSON Schema 在线配置、插件语义校验、即时配置应用、框架托管 Webhook、实时主动推送和 API 0.1 至 0.3 的兼容发送路径。
 
 ## 在 QimenBot 仓库外开发
 
-动态插件不需要加入 QimenBot 主 workspace。下面示例使用包含稳定账号选择接口的 crates.io `0.1.12`：
+动态插件不需要加入 QimenBot 主 workspace。本示例为了验证尚未正式发布的 API 0.6，使用 QimenBot 仓库内的本地 path 依赖：
 
 ```toml
 [package]
@@ -19,15 +19,15 @@ rust-version = "1.89"
 crate-type = ["cdylib"]
 
 [dependencies]
-abi-stable-host-api = "0.1.12"
-qimen-dynamic-plugin-derive = "0.1.12"
+abi-stable-host-api = { path = "../../crates/abi-stable-host-api" }
+qimen-dynamic-plugin-derive = { path = "../../crates/qimen-dynamic-plugin-derive" }
 abi_stable = "0.11"
 serde_json = "1"
 ```
 
 仓库外项目不需要 `[workspace]`。如果把插件目录放在 QimenBot 仓库内、但不加入主 workspace，则像本示例一样增加一个空的 `[workspace]` 表。
 
-crate 发布版本与动态插件 ABI API 相互独立。`0.1.12` 支持 API 0.1 至 0.5，并为 API 0.4/0.5 插件提供按 `account_id` 选择 Bot 的 Rust 接口。API 0.5 包含实时主动发送和 Webhook，新建插件应显式声明 `api = "0.5"`。`api = "0.4"` 继续兼容只使用主动发送的已有插件；未声明 `api` 时，过程宏生成兼容旧宿主的 API 0.3 插件。
+crate 发布版本与动态插件 ABI API 相互独立。crates.io `0.1.12` 只支持 API 0.1 至 0.5，不能用于编译本示例。配套 API 0.6 crate 发布后，仓库外插件应让两个 QimenBot 专用依赖保持同一版本；发布前请继续使用 API 0.5。
 
 ## 快速开始
 
@@ -70,6 +70,10 @@ Copy-Item target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 | `#[pre_handle]` | 记录收到的消息并允许继续分发 |
 | `GroupPoke`、`PrivatePoke` | 演示动态系统事件路由 |
 | `#[init]` / `#[shutdown]` | 启动后台推送线程，并在卸载前停止和 `join` |
+| `config.schema.json` | 覆盖嵌套对象、条件必填、枚举、多选、滑杆、对象数组、密钥、动态键、组合 Schema 和元组 |
+| `config.ui.json` | 设置字段顺序、徽标、文本域、滑杆、单位、数组标题和通配字段样式 |
+| `#[validate_config]` | 拒绝重复连接名称等跨字段业务错误 |
+| `#[config_change]` | 不卸载动态库，停止旧后台线程后按新配置启动 |
 
 插件声明如下：
 
@@ -77,7 +81,15 @@ Copy-Item target/release/qimen_dynamic_plugin_example.dll ../../plugins/bin/
 use abi_stable_host_api::*;
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
-#[dynamic_plugin(id = "dynamic-example", version = "0.1.0", api = "0.5")]
+#[dynamic_plugin(
+    id = "dynamic-example",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "live"
+)]
 mod example {
     use super::*;
 
@@ -88,7 +100,17 @@ mod example {
 }
 ```
 
-过程宏会生成插件描述符、命令和事件回调、生命周期函数、Host API bind/unbind 导出，以及 API 0.5 独立的 Webhook 描述符导出。
+过程宏会生成插件描述符、命令和事件回调、生命周期函数、Host API bind/unbind、Webhook 描述符，以及 API 0.6 的独立配置描述符和配置回调导出。
+
+## 在线配置
+
+编译并加载动态库后，打开 Web 管理面板的“插件”页面，找到“动态插件示例”并点击“设置”。表单来自 `config.schema.json`，展示顺序和控件偏好来自 `config.ui.json`。
+
+保存时宿主会先执行 JSON Schema 校验，再调用 `#[validate_config]`。本示例声明 `config_apply = "live"`，因此保存后会调用 `#[config_change]`：旧后台线程先停止并 `join`，新配置验证成功后再启动新线程。回调失败时宿主恢复旧 TOML，并再次应用旧配置。
+
+示例中的连接 Token 使用 `writeOnly` 和 `x-qimen-secret` 标记。管理 API 不返回原值，对象数组排序时密钥仍会跟随原连接。不要在插件日志中打印 `PluginConfigRequest.config_json`。
+
+完整字段和安全规则见 [API 0.6 在线配置](../../docs/advanced/dynamic-config-v06.md)。
 
 ## Webhook 示例
 
@@ -138,14 +160,16 @@ curl -i \
 
 ```toml
 [background_push]
+enabled = true
+selector = "account"
 account_id = "2733944636"
 kind = "group"
 target_id = "123456"
-message = "API 0.5 background push"
+message = "API 0.6 background push"
 interval_secs = 60
 ```
 
-`account_id` 应对应 QimenBot `[[bots]]` 中配置的稳定账号标识；OneBot 通常就是 Bot QQ / `self_id`。也可以改用 `bot_id = "qq-main"` 精确选择部署实例别名，但 `bot_id` 和 `account_id` 必须二选一，不能同时填写。示例线程在 `init` 后立即尝试发送，此后按 `interval_secs` 间隔继续发送，不依赖命令、事件或 Heartbeat。
+`account_id` 应对应 QimenBot `[[bots]]` 中配置的稳定账号标识；OneBot 通常就是 Bot QQ / `self_id`。也可以把 `selector` 改成 `"instance"` 并使用 `bot_id = "qq-main"` 精确选择部署实例别名。`bot_id` 和 `account_id` 必须按 selector 二选一，不能同时填写。示例线程在 `init` 后立即尝试发送，此后按 `interval_secs` 间隔继续发送，不依赖命令、事件或 Heartbeat。
 
 `kind` 支持以下目标：
 
@@ -160,6 +184,8 @@ OneBot 频道示例：
 
 ```toml
 [background_push]
+enabled = true
+selector = "account"
 account_id = "2733944636"
 kind = "channel"
 target_id = "channel-100"
@@ -237,7 +263,7 @@ SendBuilder::private("10001")
 
 ## 后台线程和安全卸载
 
-API 0.4 和 0.5 的 Host API 在插件 `init` 前完成绑定，所以 `init` 创建的线程可以立即主动发送。插件必须在 `shutdown` 中通知线程退出并等待 `join` 完成；宿主随后才会 unbind Host API 并卸载动态库。
+API 0.4 至 0.6 的 Host API 在插件 `init` 前完成绑定，所以 `init` 创建的线程可以立即主动发送。插件必须在 `shutdown` 中通知线程退出并等待 `join` 完成；宿主随后才会 unbind Host API 并卸载动态库。
 
 本示例使用 `AtomicBool`、`thread::park_timeout` 和保存的 `JoinHandle` 实现这一顺序。不要让插件线程在 `shutdown` 返回后继续执行动态库中的代码。
 
@@ -245,5 +271,6 @@ API 0.4 和 0.5 的 Host API 在插件 `init` 前完成绑定，所以 `init` �
 
 - [动态插件开发](../../docs/plugin/dynamic.md)
 - [API 0.5 Webhook Gateway](../../docs/advanced/dynamic-webhook-v05.md)
+- [API 0.6 在线配置](../../docs/advanced/dynamic-config-v06.md)
 - [API 0.4+ 实时主动推送](../../docs/advanced/dynamic-proactive-send-v04.md)
 - [动态插件 FFI API](../../docs/api/ffi-api.md)

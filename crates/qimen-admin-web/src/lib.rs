@@ -3,6 +3,7 @@ mod audit;
 mod config_store;
 mod error;
 mod marketplace;
+mod plugin_config;
 mod types;
 
 use audit::{AuditEntry, AuditLog};
@@ -46,6 +47,7 @@ struct AdminState {
     audit: AuditLog,
     restart_required: Arc<AtomicBool>,
     marketplace_operations: Arc<tokio::sync::Mutex<()>>,
+    plugin_operations: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -73,6 +75,7 @@ impl AdminServer {
                 audit: AuditLog::open(&config.admin_web.audit_path),
                 restart_required: Arc::new(AtomicBool::new(false)),
                 marketplace_operations: Arc::new(tokio::sync::Mutex::new(())),
+                plugin_operations: Arc::new(tokio::sync::Mutex::new(())),
             },
             config: config.admin_web.clone(),
         }
@@ -99,6 +102,14 @@ impl AdminServer {
             .route("/logs/stream", get(log_stream))
             .route("/plugins", get(plugins))
             .route("/plugins/reload", post(reload_plugins))
+            .route(
+                "/plugins/{id}/config",
+                get(plugin_config::get).put(plugin_config::save),
+            )
+            .route(
+                "/plugins/{id}/config/validate",
+                post(plugin_config::validate),
+            )
             .route("/plugins/{id}", put(toggle_plugin))
             .route("/marketplace", get(marketplace::catalog))
             .route("/marketplace/refresh", post(marketplace::refresh))
@@ -503,6 +514,7 @@ async fn plugins(
 async fn reload_plugins(
     State(state): State<AdminState>,
 ) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    let _operation = state.plugin_operations.lock().await;
     let count = state.runtime.reload_dynamic_plugins().await?;
     state.audit.record(
         "plugin.reload",
@@ -522,6 +534,7 @@ async fn toggle_plugin(
     Path(plugin_id): Path<String>,
     Json(request): Json<PluginToggleRequest>,
 ) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    let _operation = state.plugin_operations.lock().await;
     let stored = state.config_store.read().await?;
     let dynamic = scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)?
         .into_iter()
@@ -743,6 +756,10 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             failures: 0,
             last_error: None,
             live_toggle: false,
+            configurable: false,
+            config_apply_mode: None,
+            config_version: None,
+            config_file_exists: false,
         });
     }
 
@@ -770,6 +787,10 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             failures: 0,
             last_error: Some("当前二进制未发现该内置模块".to_string()),
             live_toggle: false,
+            configurable: false,
+            config_apply_mode: None,
+            config_version: None,
+            config_file_exists: false,
         });
     }
     for id in &stored.config.official_host.plugin_modules {
@@ -796,6 +817,10 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             failures: 0,
             last_error: Some("当前二进制未发现该静态插件".to_string()),
             live_toggle: false,
+            configurable: false,
+            config_apply_mode: None,
+            config_version: None,
+            config_file_exists: false,
         });
     }
     for plugin in scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)? {
@@ -842,6 +867,15 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             failures: health.map(|entry| entry.failures).unwrap_or_default(),
             last_error: health.and_then(|entry| entry.last_error.clone()),
             live_toggle: true,
+            configurable: plugin.config.is_some(),
+            config_apply_mode: plugin
+                .config
+                .as_ref()
+                .map(|config| config.apply_mode.clone()),
+            config_version: plugin.config.as_ref().map(|config| config.config_version),
+            config_file_exists: FsPath::new(&stored.config.official_host.plugin_config_dir)
+                .join(format!("{}.toml", plugin.plugin_id))
+                .is_file(),
         });
     }
     views.sort_by(|left, right| left.kind.cmp(&right.kind).then(left.id.cmp(&right.id)));

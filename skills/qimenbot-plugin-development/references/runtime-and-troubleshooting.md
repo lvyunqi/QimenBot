@@ -26,6 +26,7 @@ builtin_modules = ["command", "admin"]
 plugin_modules = ["my-static-plugin"]
 plugin_state_path = "config/plugin-state.toml"
 plugin_bin_dir = "plugins/bin"
+plugin_config_dir = "config/plugins"
 dynamic_plugin_timeout_secs = 30
 
 [official_host.webhook]
@@ -51,9 +52,12 @@ enabled = true
 - `plugin_state_path`：静态和动态插件共同使用的启停状态。
 - `[[bots]].id`：部署实例别名，可能随部署改变。
 - `[[bots]].account_id`：主动发送的稳定账号选择器。
-- `official_host.webhook`：API 0.5 动态 Webhook 的统一网关，不是单个插件配置。
+- `official_host.webhook`：API 0.5/0.6 动态 Webhook 的统一网关，不是单个插件配置。
 
-动态插件自身配置位于 `config/plugins/<plugin_id>.toml`，只在 init 和热重载时传入。配置文件名必须与动态描述符 ID 完全一致。
+动态插件自身配置位于 `official_host.plugin_config_dir/<plugin_id>.toml`，默认就是
+`config/plugins/<plugin_id>.toml`。配置文件名必须与动态描述符 ID 完全一致。宿主会
+在 init、reload 和 API 0.6 的即时应用前把 TOML 转为 JSON；目录不存在时会按需创建。
+不要把这个目录和 `plugin_state_path` 混用：前者保存插件业务配置，后者只保存启停状态。
 
 ## 原始消息日志
 
@@ -85,13 +89,45 @@ Cargo workspace 发现 crate
   -> dlopen 动态库
   -> 读取插件描述符和 API 版本
   -> plugin-state 过滤
-  -> API 0.4/0.5 绑定 Host API
-  -> 读取 config/plugins/<id>.toml
+  -> API 0.4/0.5/0.6 绑定 Host API
+  -> API 0.6 读取并校验独立 Schema 描述符
+  -> 读取 official_host.plugin_config_dir/<id>.toml
   -> 调用 init
   -> 注册命令、事件、拦截器和 Webhook
 ```
 
 `/plugins reload` 只重扫动态插件；修改静态插件必须重新编译并重启 `qimenbotd`。
+
+## API 0.6 配置入口
+
+只有导出独立配置描述符的 API 0.6 动态插件才会在管理面板显示配置入口。Schema
+负责类型、必填项、范围和条件约束，UI Schema 只负责控件、顺序和中文提示；宿主仍会
+在服务端使用 JSON Schema Draft 2020-12 再校验一次，不能只相信浏览器。
+
+管理 API：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| `GET` | `/api/v1/plugins/<id>/config` | 返回 Schema、UI Schema、当前值、密钥占位信息和 revision |
+| `POST` | `/api/v1/plugins/<id>/config/validate` | 只校验草稿，不写文件、不触发生效 |
+| `PUT` | `/api/v1/plugins/<id>/config` | 校验、备份、原子写入并按插件声明应用 |
+
+保存时必须原样带回读取到的 `revision`。revision 不一致会返回 `409`，重新读取后
+合并自己的修改再保存。`writeOnly`、`x-qimen-secret` 和 `format = "password"`
+字段永远不会在 GET 中返回明文；保留旧密钥、替换密钥和清除密钥分别走专用字段，
+不要试图把空字符串塞进普通 `values` 绕过保护。
+
+生效模式的行为固定如下：
+
+| 模式 | 保存后的动作 | 插件开发要求 |
+|---|---|---|
+| `live` | 调用 `#[config_change]`，失败则恢复文件和插件内存状态 | 回调必须可逆、快速、线程安全 |
+| `reload` | 停止旧实例并重新执行 `shutdown`/`init` | `init` 必须支持重复调用，后台线程要先停止并 join |
+| `restart` | 写入文件并标记宿主需要重启 | 不要在回调中假装已经生效 |
+
+宿主最多保留每个插件 20 份备份，可从面板回滚。回滚同样经过 Schema、业务校验和
+对应生效流程；失败时不应留下半写入文件。Schema 只能使用本地 `$ref`，根节点必须
+明确声明 `type: "object"`，单个 Schema/UI Schema 最大 256 KiB。
 
 ## 管理命令
 
@@ -132,12 +168,13 @@ Cargo workspace 发现 crate
 
 动态插件依次检查：
 
-1. 文件是否真的位于当前 `plugin_bin_dir`，不是安装根目录。
+1. 文件是否真的位于当前 `plugin_bin_dir`，不是安装根目录；配置文件是否位于当前 `plugin_config_dir`。
 2. 扩展名、CPU、操作系统和 GNU/musl 是否匹配。
 3. `/dynamic-errors` 和启动日志中的第一条加载错误。
-4. 描述符 `id`、`api` 与两个 crates.io 依赖版本。
+4. 描述符 `id`、`api`、API 0.6 配置描述符和两个配套 crate 的真实发布版本。
 5. `plugin-state.toml` 是否禁用。
 6. Linux 执行 `file`、`ldd`、`readelf --version-info`。
+7. API 0.6 插件再检查 Schema 是否是合法 JSON、根节点是否为 object，以及是否误用了远程 `$ref`。
 
 ### 插件出现但命令不触发
 
@@ -184,11 +221,16 @@ Get-Item .\plugins\bin\qimen_dynamic_plugin_myplugin.dll | Select-Object Name,Le
 
 Docker：先用 `docker image inspect` 确认 `Architecture`，再按 `linux/amd64 -> x86_64-unknown-linux-gnu`、`linux/arm64 -> aarch64-unknown-linux-gnu` 构建插件。插件目录必须映射到容器内的 `/data/plugins/bin` 或当前配置指定位置。
 
+若启用在线配置，还要把 `official_host.plugin_config_dir` 映射出来，例如 Docker 中
+使用 `/data/config/plugins`，这样容器更新或重建不会丢失插件配置和备份。
+
 ## 安全与仓库清洁
 
 - Webhook Token、QQ Bot Secret、数据库口令只通过环境变量或用户本地配置提供。
 - Webhook 对外开放时必须有 TLS、Bearer token、第三方签名校验和重放保护。
 - 动态回调设置超时，后台队列有界，失败重试必须退避。
+- API 0.6 配置文件和备份目录只授予宿主运行用户读写权限；不要把包含密钥的 TOML
+  映射到公共静态目录或提交到 Git。
 - 不提交 `config/plugins/*.toml`、`plugins/bin/`、`*.db`、日志和运行时资源。
 - 框架测试、注释和示例使用通用插件 ID 与命令，不能写入私有插件名称或业务资产。
 

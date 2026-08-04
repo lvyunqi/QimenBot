@@ -13,6 +13,8 @@
 //!   Added `PluginInitConfig` / `PluginInitResult` lifecycle hooks.
 //! - **0.4** - Added the versioned host API binding and real-time proactive sends.
 //! - **0.5** - Added framework-hosted HTTP webhook descriptors and callbacks.
+//! - **0.6** - Added schema-driven plugin configuration descriptors, validation,
+//!   and live apply callbacks.
 
 use abi_stable::std_types::{RString, RVec};
 use std::{
@@ -23,12 +25,12 @@ use std::{
 /// Current plugin API version. Dynamic plugins must declare the same version
 /// to be loaded by the host.
 pub fn expected_api_version() -> RString {
-    RString::from("0.5")
+    RString::from("0.6")
 }
 
-/// Also accept legacy 0.1-0.4 plugins for backward compatibility.
+/// Also accept legacy 0.1-0.5 plugins for backward compatibility.
 pub fn is_compatible_api_version(version: &str) -> bool {
-    matches!(version, "0.1" | "0.2" | "0.3" | "0.4" | "0.5")
+    matches!(version, "0.1" | "0.2" | "0.3" | "0.4" | "0.5" | "0.6")
 }
 
 // ─── Action constants ───────────────────────────────────────────────────
@@ -381,7 +383,7 @@ pub struct RouteDescriptorEntry {
 // appended to PluginDescriptor. Keeping PluginDescriptor's layout unchanged is
 // required so hosts can continue loading API 0.1-0.4 dynamic libraries.
 
-/// Describes one exact HTTP webhook route exported by an API 0.5 plugin.
+/// Describes one exact HTTP webhook route exported by an API 0.5+ plugin.
 #[repr(C)]
 #[derive(Clone)]
 pub struct WebhookDescriptorEntry {
@@ -393,7 +395,7 @@ pub struct WebhookDescriptorEntry {
     pub callback_symbol: RString,
 }
 
-/// Host-owned HTTP request passed to an API 0.5 webhook callback.
+/// Host-owned HTTP request passed to an API 0.5+ webhook callback.
 #[repr(C)]
 pub struct WebhookRequest {
     pub method: RString,
@@ -407,7 +409,7 @@ pub struct WebhookRequest {
     pub remote_addr: RString,
 }
 
-/// HTTP response returned by an API 0.5 webhook callback.
+/// HTTP response returned by an API 0.5+ webhook callback.
 #[repr(C)]
 pub struct WebhookResponse {
     pub status_code: u16,
@@ -439,6 +441,88 @@ impl WebhookResponse {
     pub fn with_headers_json(mut self, headers_json: &str) -> Self {
         self.headers_json = RString::from(headers_json);
         self
+    }
+}
+
+// 配置描述符使用独立导出符号，不能追加到 PluginDescriptor，否则旧动态库的
+// C 布局会发生变化。后续扩展通过新的 descriptor ABI 版本继续演进。
+
+/// `qimen_plugin_config_descriptor_v1` 使用的描述符 ABI 版本。
+pub const PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION: u32 = 1;
+
+/// 配置保存后由插件即时应用。
+pub const CONFIG_APPLY_LIVE: &str = "live";
+/// 配置保存后重新加载动态插件。
+pub const CONFIG_APPLY_RELOAD: &str = "reload";
+/// 配置保存后等待宿主重启。
+pub const CONFIG_APPLY_RESTART: &str = "restart";
+
+/// API 0.6 插件导出的配置表单契约。
+#[repr(C)]
+#[derive(Clone)]
+pub struct PluginConfigDescriptorV1 {
+    /// 描述符自身的 ABI 版本，当前必须为 1。
+    pub abi_version: u32,
+    /// 插件配置结构版本，用于后续迁移提示。
+    pub config_version: u32,
+    /// `live`、`reload` 或 `restart`。
+    pub apply_mode: RString,
+    /// JSON Schema Draft 2020-12 文本。
+    pub schema_json: RString,
+    /// 可选的 QimenBot UI Schema；空字符串表示完全按 JSON Schema 渲染。
+    pub ui_schema_json: RString,
+}
+
+impl PluginConfigDescriptorV1 {
+    /// 创建配置描述符；Schema 文本通常通过 `include_str!` 编译进动态库。
+    pub fn new(
+        config_version: u32,
+        apply_mode: &str,
+        schema_json: &str,
+        ui_schema_json: &str,
+    ) -> Self {
+        Self {
+            abi_version: PLUGIN_CONFIG_DESCRIPTOR_ABI_VERSION,
+            config_version,
+            apply_mode: RString::from(apply_mode),
+            schema_json: RString::from(schema_json),
+            ui_schema_json: RString::from(ui_schema_json),
+        }
+    }
+}
+
+/// 宿主传给配置校验或即时应用回调的完整配置快照。
+#[repr(C)]
+#[derive(Clone)]
+pub struct PluginConfigRequest {
+    pub plugin_id: RString,
+    /// 已合并保留密钥后的新配置 JSON。
+    pub config_json: RString,
+    /// 保存前的配置 JSON；首次配置时为空字符串。
+    pub previous_config_json: RString,
+}
+
+/// 配置校验或即时应用回调的 ABI 稳定结果。
+#[repr(C)]
+pub struct PluginConfigResult {
+    /// 0 表示成功，非 0 表示拒绝配置或应用失败。
+    pub code: i32,
+    pub error_message: RString,
+}
+
+impl PluginConfigResult {
+    pub fn ok() -> Self {
+        Self {
+            code: 0,
+            error_message: RString::new(),
+        }
+    }
+
+    pub fn err(message: &str) -> Self {
+        Self {
+            code: 1,
+            error_message: RString::from(message),
+        }
     }
 }
 
@@ -1147,12 +1231,26 @@ mod tests {
     }
 
     #[test]
-    fn api_05_is_current_and_legacy_versions_remain_compatible() {
-        assert_eq!(expected_api_version().as_str(), "0.5");
-        for version in ["0.1", "0.2", "0.3", "0.4", "0.5"] {
+    fn api_06_is_current_and_legacy_versions_remain_compatible() {
+        assert_eq!(expected_api_version().as_str(), "0.6");
+        for version in ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"] {
             assert!(is_compatible_api_version(version));
         }
-        assert!(!is_compatible_api_version("0.6"));
+        assert!(!is_compatible_api_version("0.7"));
+    }
+
+    #[test]
+    fn plugin_config_descriptor_owns_schema_and_apply_metadata() {
+        let descriptor = PluginConfigDescriptorV1::new(
+            2,
+            CONFIG_APPLY_LIVE,
+            r#"{"type":"object"}"#,
+            r#"{"/token":{"widget":"password"}}"#,
+        );
+        assert_eq!(descriptor.abi_version, 1);
+        assert_eq!(descriptor.config_version, 2);
+        assert_eq!(descriptor.apply_mode.as_str(), "live");
+        assert!(descriptor.schema_json.contains("object"));
     }
 
     #[test]

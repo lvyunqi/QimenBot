@@ -24,7 +24,8 @@ use self::webhook_gateway::WebhookGateway;
 use crate::dedup::MessageDedup;
 use crate::group_event_filter::GroupEventFilter;
 use crate::plugin_acl::PluginAclManager;
-use abi_stable_host_api::SendAction;
+use abi_stable::std_types::RString;
+use abi_stable_host_api::{PluginConfigRequest, SendAction};
 use qimen_adapter_onebot11::OneBot11Adapter;
 use qimen_adapter_qqbot::QqBotAdapter;
 use qimen_config::{AppConfig, qq_official_intents_value};
@@ -570,6 +571,7 @@ pub struct Runtime {
     host_plugin_report: std::sync::RwLock<Option<HostPluginReport>>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
+    plugin_config_dir: Option<String>,
     dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
     dynamic_reload_lock: tokio::sync::Mutex<()>,
     /// Timeout for dynamic plugin FFI calls.
@@ -602,6 +604,7 @@ impl Default for Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_state_path: None,
             plugin_bin_dir: None,
+            plugin_config_dir: None,
             dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
             dynamic_reload_lock: tokio::sync::Mutex::new(()),
             dynamic_plugin_timeout: Duration::from_secs(30),
@@ -783,6 +786,7 @@ impl Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
+            plugin_config_dir: Some(config.official_host.plugin_config_dir.clone()),
             dynamic_runtime,
             dynamic_reload_lock: tokio::sync::Mutex::new(()),
             dynamic_plugin_timeout: Duration::from_secs(
@@ -990,6 +994,92 @@ impl Runtime {
 
     pub fn active_plugin_state_path(&self) -> Option<&str> {
         self.plugin_state_path.as_deref()
+    }
+
+    /// 返回当前运行时实际读取的动态插件配置目录。
+    pub fn active_plugin_config_dir(&self) -> Option<&str> {
+        self.plugin_config_dir.as_deref()
+    }
+
+    /// 在保存前调用插件的可选语义校验回调。
+    pub async fn validate_dynamic_plugin_config(
+        &self,
+        library_path: &str,
+        plugin_id: &str,
+        config_json: &str,
+        previous_config_json: &str,
+    ) -> Result<()> {
+        self.execute_dynamic_plugin_config_callback(
+            library_path,
+            plugin_id,
+            config_json,
+            previous_config_json,
+            false,
+        )
+        .await
+    }
+
+    /// 对已加载插件独占执行即时配置应用回调。
+    pub async fn apply_dynamic_plugin_config(
+        &self,
+        library_path: &str,
+        plugin_id: &str,
+        config_json: &str,
+        previous_config_json: &str,
+    ) -> Result<()> {
+        self.execute_dynamic_plugin_config_callback(
+            library_path,
+            plugin_id,
+            config_json,
+            previous_config_json,
+            true,
+        )
+        .await
+    }
+
+    async fn execute_dynamic_plugin_config_callback(
+        &self,
+        library_path: &str,
+        plugin_id: &str,
+        config_json: &str,
+        previous_config_json: &str,
+        apply: bool,
+    ) -> Result<()> {
+        let handle = {
+            let mut runtime = self
+                .dynamic_runtime
+                .lock()
+                .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
+            runtime.get_library(library_path)?
+        };
+        let request = PluginConfigRequest {
+            plugin_id: RString::from(plugin_id),
+            config_json: RString::from(config_json),
+            previous_config_json: RString::from(previous_config_json),
+        };
+        let path = library_path.to_string();
+        let path_for_timeout = path.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            if apply {
+                DynamicPluginRuntime::execute_config_apply_on_handle(&handle, &path, request)
+            } else {
+                DynamicPluginRuntime::execute_config_validation_on_handle(&handle, &path, request)
+            }
+        });
+        match tokio::time::timeout(self.dynamic_plugin_timeout, task).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(QimenError::Runtime(format!(
+                "dynamic plugin config callback task panicked: {error}"
+            ))),
+            Err(_) => {
+                if let Ok(mut runtime) = self.dynamic_runtime.lock() {
+                    runtime.record_timeout(&path_for_timeout);
+                }
+                Err(QimenError::Runtime(format!(
+                    "dynamic plugin config callback timed out for '{path_for_timeout}'"
+                )))
+            }
+        }
     }
 
     /// Quiesce dynamic plugins, mutate files, and restore the previous files if loading fails.
@@ -1419,22 +1509,27 @@ impl Runtime {
     }
 
     async fn initialize_dynamic_plugin(&self, entry: &DynamicPluginReportEntry) -> Result<bool> {
-        let config_path = format!("config/plugins/{}.toml", entry.plugin_id);
-        let config_json = if let Ok(toml_str) = std::fs::read_to_string(&config_path) {
-            match toml_str.parse::<toml::Value>() {
-                Ok(toml_val) => serde_json::to_string(&toml_to_json(&toml_val)).unwrap_or_default(),
-                Err(err) => {
-                    tracing::warn!(
-                        plugin = %entry.plugin_id,
-                        path = %config_path,
-                        error = %err,
-                        "failed to parse plugin config TOML"
-                    );
-                    String::new()
-                }
+        if !dynamic_runtime::is_safe_plugin_config_id(&entry.plugin_id) {
+            tracing::error!(plugin = %entry.plugin_id, "dynamic plugin id cannot be mapped to a config file");
+            return Ok(false);
+        }
+        let config_dir = self
+            .plugin_config_dir
+            .as_deref()
+            .unwrap_or("config/plugins");
+        let config_path =
+            std::path::Path::new(config_dir).join(format!("{}.toml", entry.plugin_id));
+        let config_json = match read_plugin_config_json(&config_path) {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::error!(
+                    plugin = %entry.plugin_id,
+                    path = %config_path.display(),
+                    error = %error,
+                    "failed to load plugin config"
+                );
+                return Ok(false);
             }
-        } else {
-            String::new()
         };
         let plugin_dir = std::path::Path::new(&entry.path)
             .parent()
@@ -1458,7 +1553,7 @@ impl Runtime {
                     return Ok(false);
                 }
             };
-            if matches!(entry.api_version.as_str(), "0.4" | "0.5")
+            if matches!(entry.api_version.as_str(), "0.4" | "0.5" | "0.6")
                 && let Err(err) =
                     runtime.bind_host_api_v1(&handle, &entry.path, self.proactive_send_hub.clone())
             {
@@ -4699,6 +4794,26 @@ fn render_plugin_section(entries: &[&command_dispatch::PluginStatusEntry]) -> Ve
 }
 
 /// Convert a TOML value to a serde_json::Value.
+fn read_plugin_config_json(path: &std::path::Path) -> Result<String> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let value = raw.parse::<toml::Value>().map_err(|error| {
+        QimenError::Config(format!(
+            "plugin config '{}' is invalid TOML: {error}",
+            path.display()
+        ))
+    })?;
+    serde_json::to_string(&toml_to_json(&value)).map_err(|error| {
+        QimenError::Config(format!(
+            "plugin config '{}' cannot be converted to JSON: {error}",
+            path.display()
+        ))
+    })
+}
+
 fn toml_to_json(val: &toml::Value) -> serde_json::Value {
     match val {
         toml::Value::String(s) => serde_json::Value::String(s.clone()),

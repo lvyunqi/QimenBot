@@ -37,8 +37,10 @@ pub struct DynamicPluginReportEntry {
     pub routes: Vec<DynamicRouteEntry>,
     /// Interceptor entries registered by this plugin.
     pub interceptors: Vec<DynamicInterceptorEntry>,
-    /// API 0.5 exact HTTP webhook routes exported by this plugin.
+    /// API 0.5+ exact HTTP webhook routes exported by this plugin.
     pub webhooks: Vec<DynamicWebhookEntry>,
+    /// API 0.6 可选的在线配置表单契约。
+    pub config: Option<DynamicPluginConfigEntry>,
 
     // ── v0.1 legacy fields (kept for backward compatibility) ──
     pub command_name: String,
@@ -81,7 +83,18 @@ pub struct DynamicInterceptorEntry {
     pub after_completion_symbol: String,
 }
 
-/// A framework-hosted HTTP webhook exported by an API 0.5 dynamic plugin.
+/// 动态插件导出的配置 Schema 与回调能力。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicPluginConfigEntry {
+    pub config_version: u32,
+    pub apply_mode: String,
+    pub schema_json: String,
+    pub ui_schema_json: String,
+    pub validates_config: bool,
+    pub applies_live: bool,
+}
+
+/// A framework-hosted HTTP webhook exported by an API 0.5+ dynamic plugin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DynamicWebhookEntry {
     pub method: String,

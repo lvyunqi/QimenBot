@@ -454,6 +454,7 @@ mod tests {
                 path: path.to_string(),
                 callback_symbol: "handle_webhook".to_string(),
             }],
+            config: None,
             command_name: String::new(),
             command_description: String::new(),
             callback_symbol: String::new(),

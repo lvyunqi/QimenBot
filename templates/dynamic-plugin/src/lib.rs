@@ -1,4 +1,4 @@
-//! QimenBot 动态插件 API 0.5 模板。
+//! QimenBot 动态插件 API 0.6 模板。
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,8 +6,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use abi_stable_host_api::{
-    BotApi, CommandRequest, CommandResponse, PluginInitConfig, PluginInitResult, SendEnqueueStatus,
-    WebhookRequest, WebhookResponse,
+    BotApi, CommandRequest, CommandResponse, PluginConfigRequest, PluginConfigResult,
+    PluginInitConfig, PluginInitResult, SendEnqueueStatus, WebhookRequest, WebhookResponse,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
@@ -31,7 +31,50 @@ impl BotSelector {
     }
 }
 
-#[dynamic_plugin(id = "{{name}}", version = "0.1.0", api = "0.5")]
+fn parse_config(config_json: &str) -> Result<serde_json::Value, String> {
+    if config_json.trim().is_empty() {
+        Ok(serde_json::json!({}))
+    } else {
+        serde_json::from_str(config_json).map_err(|error| format!("配置 JSON 无效：{error}"))
+    }
+}
+
+fn validate_config(root: &serde_json::Value) -> Result<(), String> {
+    let Some(push) = root.get("background_push") else {
+        return Ok(());
+    };
+    if !push
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    let bot_id = push
+        .get("bot_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let account_id = push
+        .get("account_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if !matches!((bot_id, account_id), (Some(_), None) | (None, Some(_))) {
+        return Err("background_push 必须且只能配置 bot_id 或 account_id 其中一个".to_string());
+    }
+    Ok(())
+}
+
+#[dynamic_plugin(
+    id = "{{name}}",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "reload"
+)]
 mod plugin {
     use super::*;
 
@@ -39,13 +82,23 @@ mod plugin {
     /// background_push = { account_id = "2733944636", group_id = "123", interval_secs = 60 }
     #[init]
     fn init(config: PluginInitConfig) -> PluginInitResult {
-        let Ok(root) = serde_json::from_str::<serde_json::Value>(config.config_json.as_str())
-        else {
-            return PluginInitResult::ok();
+        let root = match parse_config(config.config_json.as_str()) {
+            Ok(root) => root,
+            Err(error) => return PluginInitResult::err(&error),
         };
+        if let Err(error) = validate_config(&root) {
+            return PluginInitResult::err(&error);
+        }
         let Some(push) = root.get("background_push") else {
             return PluginInitResult::ok();
         };
+        if !push
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return PluginInitResult::ok();
+        }
 
         let bot_id = push
             .get("bot_id")
@@ -108,6 +161,17 @@ mod plugin {
                 let _ = handle.join();
                 PluginInitResult::err("后台线程锁已损坏")
             }
+        }
+    }
+
+    #[validate_config]
+    fn validate_online_config(request: &PluginConfigRequest) -> PluginConfigResult {
+        match parse_config(request.config_json.as_str()).and_then(|root| {
+            validate_config(&root)?;
+            Ok(root)
+        }) {
+            Ok(_) => PluginConfigResult::ok(),
+            Err(error) => PluginConfigResult::err(&error),
         }
     }
 

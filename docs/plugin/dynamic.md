@@ -10,7 +10,8 @@
 | API 访问 | 完整（async、OneBotActionClient 等） | FFI 接口（同步、C ABI） |
 | 消息构建 | `Message` + `MessageBuilder` | `ReplyBuilder` / `SendBuilder` / JSON 段 |
 | 主动发送 | `OneBotActionClient::send_*` | `BotApi::send_*` / `SendBuilder`（队列模式） |
-| HTTP Webhook | 由静态模块自行启动服务 | API 0.5 `#[webhook]`，由框架 Gateway 统一托管 |
+| HTTP Webhook | 由静态模块自行启动服务 | API 0.5+ `#[webhook]`，由框架 Gateway 统一托管 |
+| 在线配置 | 自行实现配置入口 | API 0.6 JSON Schema，由管理面板生成表单 |
 | 拦截器 | `MessageEventInterceptor` trait（async） | `#[pre_handle]` / `#[after_completion]`（同步 FFI） |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 生命周期 | `on_load` / `on_unload` | `#[init]` / `#[shutdown]` |
@@ -36,6 +37,10 @@ QimenBot 提供的两个专用依赖已经发布到 crates.io：
 
 ::: info 两套版本不要混淆
 crates.io 发布版本 `0.1.12` 支持动态插件 API `0.1` 至 `0.5`。API `0.5` 包含 API `0.4` 的实时主动发送能力和 Webhook Gateway，新建插件应显式声明 `api = "0.5"`。`api = "0.4"` 继续兼容只使用主动发送的已有插件；未声明 `api` 时，过程宏生成 API `0.3` 插件，以兼容旧宿主。
+:::
+
+::: warning API 0.6 尚未发布到 crates.io
+仓库源码已经包含 API 0.6 的在线配置能力，但不能用 `0.1.12` 依赖编译 `api = "0.6"` 插件。仓库内可用本地 path 依赖测试；仓库外请等配套 crate 发布后再升级。Schema、UI Schema、密钥和生效方式见 [API 0.6 在线配置](/advanced/dynamic-config-v06)。
 :::
 
 ::: info v0.1.12 稳定账号接口
@@ -487,7 +492,7 @@ fn on_poke(req: &NoticeRequest) -> NoticeResponse {
 
 ## 插件配置 {#config}
 
-动态插件可以拥有独立的配置文件。在 `config/plugins/` 目录下创建以插件 ID 命名的 TOML 文件：
+动态插件可以拥有独立配置。默认目录是 `config/plugins/`，文件名必须与插件 ID 完全一致：
 
 ```toml
 # config/plugins/my-plugin.toml
@@ -514,6 +519,27 @@ fn on_init(config: PluginInitConfig) -> PluginInitResult {
     PluginInitResult::ok()
 }
 ```
+
+没有配置文件时 `config_json` 是空字符串，不能直接 `unwrap()` 当作 JSON。插件应把空字符串当作空对象，并为缺失字段提供默认值。手工编辑 TOML 后，执行 `/plugins reload` 才会重新调用动态插件的 `init`。
+
+API 0.6 插件可以把 JSON Schema 编进动态库，让 Web 管理面板生成在线表单：
+
+```rust
+#[dynamic_plugin(
+    id = "my-plugin",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "reload"
+)]
+mod plugin {
+    // ...
+}
+```
+
+在线保存仍然写入同一个 TOML 文件。宿主会检查 revision、合并只写密钥、执行 Draft 2020-12 校验，并按插件声明即时应用、重载插件或等待宿主重启。完整教程见 [动态插件 API 0.6 在线配置](/advanced/dynamic-config-v06)。
 
 ## 完整示例 {#full-example}
 

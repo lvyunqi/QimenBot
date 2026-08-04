@@ -135,6 +135,7 @@ export function generalToMutation(
     plugin_modules: general.plugin_modules,
     plugin_state_path: general.plugin_state_path,
     plugin_bin_dir: general.plugin_bin_dir,
+    plugin_config_dir: general.plugin_config_dir,
     dynamic_plugin_timeout_secs: general.dynamic_plugin_timeout_secs,
     proactive_queue_capacity: general.proactive_queue_capacity,
     proactive_offline_ttl_secs: general.proactive_offline_ttl_secs,

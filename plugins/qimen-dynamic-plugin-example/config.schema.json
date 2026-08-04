@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "动态示例插件配置",
+  "description": "该 Schema 用于验证 QimenBot 在线配置表单的主要控件与嵌套结构。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["display", "background_push", "delivery", "advanced"],
+  "properties": {
+    "display": {
+      "title": "显示与行为",
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "required": ["enabled", "display_name", "severity", "accent", "scenes"],
+      "properties": {
+        "enabled": {
+          "title": "启用示例功能",
+          "description": "关闭后命令仍会注册，但示例业务功能可以据此停止处理。",
+          "type": "boolean",
+          "default": true
+        },
+        "display_name": {
+          "title": "显示名称",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "default": "动态插件示例"
+        },
+        "severity": {
+          "title": "通知级别",
+          "type": "string",
+          "enum": ["info", "warning", "critical"],
+          "x-enumNames": ["普通", "重要", "紧急"],
+          "default": "info"
+        },
+        "accent": {
+          "title": "强调色",
+          "type": "string",
+          "format": "color",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "default": "#7656d8"
+        },
+        "scenes": {
+          "title": "消息场景",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["private", "group", "channel", "channel-private"]
+          },
+          "default": ["private", "group"]
+        }
+      }
+    },
+    "background_push": {
+      "title": "后台主动推送",
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "required": ["enabled", "selector", "kind", "target_id", "message", "interval_secs"],
+      "properties": {
+        "enabled": {
+          "title": "启用后台推送",
+          "type": "boolean",
+          "default": false
+        },
+        "selector": {
+          "title": "机器人选择方式",
+          "type": "string",
+          "enum": ["account", "instance"],
+          "x-enumNames": ["稳定账号", "实例 ID"],
+          "default": "account"
+        },
+        "account_id": {
+          "title": "稳定账号标识",
+          "type": "string",
+          "minLength": 1
+        },
+        "bot_id": {
+          "title": "机器人实例 ID",
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "title": "目标类型",
+          "type": "string",
+          "enum": ["private", "group", "channel", "channel_private"],
+          "x-enumNames": ["私聊", "群聊", "频道", "频道私信"],
+          "default": "group"
+        },
+        "target_id": {
+          "title": "目标 ID",
+          "type": "string",
+          "minLength": 1,
+          "default": "replace-me"
+        },
+        "guild_id": {
+          "title": "频道服务器 ID",
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "title": "推送正文",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "default": "API 0.6 background push"
+        },
+        "interval_secs": {
+          "title": "发送间隔",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 86400,
+          "multipleOf": 5,
+          "default": 60
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true }, "selector": { "const": "account" } },
+            "required": ["enabled", "selector"]
+          },
+          "then": { "required": ["account_id"] }
+        },
+        {
+          "if": {
+            "properties": { "enabled": { "const": true }, "selector": { "const": "instance" } },
+            "required": ["enabled", "selector"]
+          },
+          "then": { "required": ["bot_id"] }
+        },
+        {
+          "if": {
+            "properties": { "enabled": { "const": true }, "kind": { "enum": ["channel", "channel_private"] } },
+            "required": ["enabled", "kind"]
+          },
+          "then": { "required": ["guild_id"] }
+        }
+      ]
+    },
+    "connections": {
+      "title": "外部连接",
+      "type": "array",
+      "maxItems": 12,
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "endpoint", "timeout_secs"],
+        "properties": {
+          "name": {
+            "title": "连接名称",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "endpoint": {
+            "title": "服务地址",
+            "type": "string",
+            "format": "uri"
+          },
+          "token": {
+            "title": "访问令牌",
+            "type": "string",
+            "minLength": 8,
+            "writeOnly": true,
+            "x-qimen-secret": true
+          },
+          "timeout_secs": {
+            "title": "请求超时",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120,
+            "default": 10
+          },
+          "headers": {
+            "title": "附加请求头",
+            "type": "object",
+            "default": {},
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "delivery": {
+      "title": "处理方式",
+      "default": { "mode": "immediate", "batch": false },
+      "oneOf": [
+        {
+          "title": "立即处理",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "batch"],
+          "properties": {
+            "mode": { "const": "immediate" },
+            "batch": { "title": "合并同批事件", "type": "boolean", "default": false }
+          }
+        },
+        {
+          "title": "按计划处理",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "cron", "timezone"],
+          "properties": {
+            "mode": { "const": "scheduled" },
+            "cron": { "title": "Cron 表达式", "type": "string", "format": "cron", "default": "0 */5 * * * *" },
+            "timezone": {
+              "title": "时区",
+              "type": "string",
+              "enum": ["Asia/Shanghai", "UTC"],
+              "default": "Asia/Shanghai"
+            }
+          }
+        }
+      ]
+    },
+    "advanced": {
+      "title": "高级参数",
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "required": ["retry_limit", "sampling_ratio", "coordinates", "generated_id"],
+      "properties": {
+        "retry_limit": {
+          "title": "重试次数",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 3
+        },
+        "sampling_ratio": {
+          "title": "采样比例",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "multipleOf": 0.05,
+          "default": 1
+        },
+        "nullable_note": {
+          "title": "可空备注",
+          "type": ["string", "null"],
+          "maxLength": 200,
+          "default": null
+        },
+        "coordinates": {
+          "title": "二维坐标",
+          "type": "array",
+          "prefixItems": [
+            { "title": "X", "type": "number", "default": 0 },
+            { "title": "Y", "type": "number", "default": 0 }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2,
+          "default": [0, 0]
+        },
+        "generated_id": {
+          "title": "插件标识",
+          "type": "string",
+          "readOnly": true,
+          "default": "dynamic-example"
+        }
+      }
+    },
+    "metadata": {
+      "title": "自定义元数据",
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"]
+      }
+    }
+  }
+}

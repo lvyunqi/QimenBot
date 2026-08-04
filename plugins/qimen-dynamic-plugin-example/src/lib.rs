@@ -1,9 +1,10 @@
-//! QimenBot dynamic plugin example using API 0.5.
+//! QimenBot dynamic plugin example using API 0.6.
 //!
 //! This independent cdylib demonstrates commands, lifecycle hooks, interceptors,
-//! system-event routes, HTTP webhooks, the legacy callback-flush send path, and
-//! real-time sends from a background thread.
+//! system-event routes, HTTP webhooks, schema-driven online configuration, the
+//! legacy callback-flush send path, and real-time sends from a background thread.
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -11,8 +12,9 @@ use std::time::Duration;
 
 use abi_stable_host_api::{
     BotApi, CommandRequest, CommandResponse, DynamicActionResponse, InterceptorRequest,
-    InterceptorResponse, NoticeRequest, NoticeResponse, PluginInitConfig, PluginInitResult,
-    SendBuilder, SendEnqueueStatus, WebhookRequest, WebhookResponse,
+    InterceptorResponse, NoticeRequest, NoticeResponse, PluginConfigRequest, PluginConfigResult,
+    PluginInitConfig, PluginInitResult, SendBuilder, SendEnqueueStatus, WebhookRequest,
+    WebhookResponse,
 };
 use qimen_dynamic_plugin_derive::dynamic_plugin;
 
@@ -35,31 +37,38 @@ enum BotSelector {
     Account(String),
 }
 
-fn parse_background_push(config_json: &str) -> Option<BackgroundPushConfig> {
-    let root: serde_json::Value = serde_json::from_str(config_json).ok()?;
-    let push = root.get("background_push")?;
-    let bot_id = push
-        .get("bot_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let account_id = push
-        .get("account_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let bot = match (bot_id, account_id) {
-        (Some(bot_id), None) => BotSelector::Id(bot_id.to_string()),
-        (None, Some(account_id)) => BotSelector::Account(account_id.to_string()),
-        _ => return None,
-    };
-    let kind = push.get("kind")?.as_str()?.trim().to_string();
-    let target_id = push.get("target_id")?.as_str()?.trim().to_string();
-    if target_id.is_empty() {
-        return None;
+fn parse_config(config_json: &str) -> Result<serde_json::Value, String> {
+    if config_json.trim().is_empty() {
+        Ok(serde_json::json!({}))
+    } else {
+        serde_json::from_str(config_json).map_err(|error| format!("配置 JSON 无效：{error}"))
     }
+}
 
-    Some(BackgroundPushConfig {
+fn parse_background_push(root: &serde_json::Value) -> Result<Option<BackgroundPushConfig>, String> {
+    let Some(push) = root.get("background_push") else {
+        return Ok(None);
+    };
+    if !push
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    let selector = push
+        .get("selector")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("account");
+    let bot = match selector {
+        "account" => BotSelector::Account(required_string(push, "account_id")?),
+        "instance" => BotSelector::Id(required_string(push, "bot_id")?),
+        _ => return Err("background_push.selector 必须是 account 或 instance".to_string()),
+    };
+    let kind = required_string(push, "kind")?;
+    let target_id = required_string(push, "target_id")?;
+
+    Ok(Some(BackgroundPushConfig {
         bot,
         kind,
         target_id,
@@ -72,7 +81,7 @@ fn parse_background_push(config_json: &str) -> Option<BackgroundPushConfig> {
         message: push
             .get("message")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or("API 0.5 background push")
+            .unwrap_or("API 0.6 background push")
             .to_string(),
         interval: Duration::from_secs(
             push.get("interval_secs")
@@ -80,7 +89,81 @@ fn parse_background_push(config_json: &str) -> Option<BackgroundPushConfig> {
                 .unwrap_or(60)
                 .max(1),
         ),
-    })
+    }))
+}
+
+fn required_string(value: &serde_json::Value, key: &str) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("background_push.{key} 不能为空"))
+}
+
+fn validate_config(config_json: &str) -> Result<serde_json::Value, String> {
+    let root = parse_config(config_json)?;
+    let _ = parse_background_push(&root)?;
+    let mut names = BTreeSet::new();
+    for connection in root
+        .get("connections")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = connection.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !names.insert(name) {
+            return Err(format!("连接名称 '{name}' 不能重复"));
+        }
+    }
+    Ok(root)
+}
+
+fn stop_background_worker() -> Result<(), String> {
+    STOP_BACKGROUND.store(true, Ordering::Release);
+    let handle = BACKGROUND_THREAD
+        .lock()
+        .map_err(|_| "background worker lock is poisoned".to_string())?
+        .take();
+    if let Some(handle) = handle {
+        handle.thread().unpark();
+        handle
+            .join()
+            .map_err(|_| "background worker panicked while stopping".to_string())?;
+    }
+    Ok(())
+}
+
+fn apply_background_config(config_json: &str) -> Result<(), String> {
+    let root = validate_config(config_json)?;
+    let push = parse_background_push(&root)?;
+    stop_background_worker()?;
+    let Some(push) = push else {
+        return Ok(());
+    };
+
+    let mut slot = BACKGROUND_THREAD
+        .lock()
+        .map_err(|_| "background worker lock is poisoned".to_string())?;
+    STOP_BACKGROUND.store(false, Ordering::Release);
+    let handle = thread::spawn(move || {
+        while !STOP_BACKGROUND.load(Ordering::Acquire) {
+            let status = try_send_target(
+                &push.bot,
+                &push.kind,
+                &push.target_id,
+                push.guild_id.as_deref(),
+                &push.message,
+            );
+            eprintln!("[dynamic-example] proactive enqueue status: {status:?}");
+            thread::park_timeout(push.interval);
+        }
+    });
+    *slot = Some(handle);
+    Ok(())
 }
 
 fn try_send_target(
@@ -138,57 +221,47 @@ fn parse_command_bot_selector(value: &str) -> Option<BotSelector> {
     }
 }
 
-#[dynamic_plugin(id = "dynamic-example", version = "0.1.0", api = "0.5")]
+#[dynamic_plugin(
+    id = "dynamic-example",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "live"
+)]
 mod example {
     use super::*;
 
     /// Load optional background_push configuration and start a real-time worker.
     #[init]
     fn on_init(config: PluginInitConfig) -> PluginInitResult {
-        STOP_BACKGROUND.store(false, Ordering::Release);
-        let Some(push) = parse_background_push(config.config_json.as_str()) else {
-            eprintln!("[dynamic-example] background push is not configured");
-            return PluginInitResult::ok();
-        };
+        match apply_background_config(config.config_json.as_str()) {
+            Ok(()) => PluginInitResult::ok(),
+            Err(error) => PluginInitResult::err(&error),
+        }
+    }
 
-        let handle = thread::spawn(move || {
-            while !STOP_BACKGROUND.load(Ordering::Acquire) {
-                let status = try_send_target(
-                    &push.bot,
-                    &push.kind,
-                    &push.target_id,
-                    push.guild_id.as_deref(),
-                    &push.message,
-                );
-                eprintln!("[dynamic-example] proactive enqueue status: {status:?}");
-                thread::park_timeout(push.interval);
-            }
-        });
+    #[validate_config]
+    fn on_validate_config(request: &PluginConfigRequest) -> PluginConfigResult {
+        match validate_config(request.config_json.as_str()) {
+            Ok(_) => PluginConfigResult::ok(),
+            Err(error) => PluginConfigResult::err(&error),
+        }
+    }
 
-        match BACKGROUND_THREAD.lock() {
-            Ok(mut slot) => {
-                *slot = Some(handle);
-                PluginInitResult::ok()
-            }
-            Err(_) => {
-                STOP_BACKGROUND.store(true, Ordering::Release);
-                handle.thread().unpark();
-                let _ = handle.join();
-                PluginInitResult::err("background worker lock is poisoned")
-            }
+    #[config_change]
+    fn on_config_change(request: &PluginConfigRequest) -> PluginConfigResult {
+        match apply_background_config(request.config_json.as_str()) {
+            Ok(()) => PluginConfigResult::ok(),
+            Err(error) => PluginConfigResult::err(&error),
         }
     }
 
     /// Stop and join the plugin worker before Host API unbind and library unload.
     #[shutdown]
     fn on_shutdown() {
-        STOP_BACKGROUND.store(true, Ordering::Release);
-        if let Ok(mut slot) = BACKGROUND_THREAD.lock()
-            && let Some(handle) = slot.take()
-        {
-            handle.thread().unpark();
-            let _ = handle.join();
-        }
+        let _ = stop_background_worker();
     }
 
     #[command(
@@ -230,7 +303,7 @@ mod example {
     /// Real-time send with an explicit bot and protocol-neutral target.
     #[command(
         name = "proactive-send",
-        description = "Send immediately through API 0.5",
+        description = "Send immediately through API 0.6",
         category = "example",
         role = "admin"
     )]

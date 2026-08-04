@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "{{name}} 插件配置",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "background_push": {
+      "title": "后台群消息",
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "required": ["enabled", "group_id", "message", "interval_secs"],
+      "properties": {
+        "enabled": {
+          "title": "启用后台推送",
+          "type": "boolean",
+          "default": false
+        },
+        "account_id": {
+          "title": "稳定账号标识",
+          "description": "对应宿主 [[bots]].account_id。",
+          "type": "string",
+          "minLength": 1
+        },
+        "bot_id": {
+          "title": "机器人实例 ID",
+          "description": "对应宿主 [[bots]].id。",
+          "type": "string",
+          "minLength": 1
+        },
+        "group_id": {
+          "title": "目标群 ID",
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "title": "消息正文",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "default": "来自动态插件后台线程的消息"
+        },
+        "interval_secs": {
+          "title": "发送间隔",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 86400,
+          "multipleOf": 5,
+          "default": 60
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "then": {
+            "oneOf": [
+              { "required": ["account_id"], "not": { "required": ["bot_id"] } },
+              { "required": ["bot_id"], "not": { "required": ["account_id"] } }
+            ]
+          }
+        }
+      ]
+    },
+    "webhook_secret": {
+      "title": "Webhook 签名密钥",
+      "description": "留空时不启用插件侧签名校验。",
+      "type": "string",
+      "minLength": 16,
+      "writeOnly": true,
+      "x-qimen-secret": true
+    }
+  }
+}

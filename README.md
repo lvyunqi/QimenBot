@@ -30,7 +30,7 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 - **命令系统** — 别名、示例、分类、权限等级、消息过滤器，自动生成 `/help`
 - **系统事件路由** — 群通知、好友请求和 Meta 事件通过注解路由分发
 - **运行时保护** — 令牌桶限流、消息去重、群事件过滤、插件 ACL
-- **动态插件** — `#[dynamic_plugin]` 宏声明式开发，`dlopen` 热重载，ABI 稳定
+- **动态插件** — `#[dynamic_plugin]` 宏声明式开发，`dlopen` 热重载，ABI 稳定，API 0.6 支持 Schema 在线配置
 - **GitHub 插件商城** — 静态目录、SemVer 兼容选择、SHA256 安装锁、热更新失败回滚
 - **请求自动化** — 好友/群邀请的自动审批，基于白名单、黑名单、关键词过滤
 - **完善的 OneBot 11 API** — 消息、群管理、文件、频道、表情回应等 40+ 操作封装
@@ -215,6 +215,9 @@ plugin_state_path = "config/plugin-state.toml"
 
 # 动态插件（.so/.dll/.dylib）的扫描目录
 plugin_bin_dir = "plugins/bin"
+
+# 动态插件独立 TOML 配置目录
+plugin_config_dir = "config/plugins"
 ```
 
 ### `[[bots]]` — Bot 实例配置
@@ -538,7 +541,8 @@ impl MyPlugin { /* ... */ }
 | API 访问 | 完整（async、OneBotActionClient 等） | 同步 FFI（宏自动生成导出代码） |
 | 消息构建 | `MessageBuilder` 链式 | `CommandResponse::builder()` / `SendBuilder` |
 | 拦截器 | `MessageEventInterceptor` trait | `#[pre_handle]` / `#[after_completion]` |
-| HTTP Webhook | 由应用自行挂载 HTTP 服务 | API 0.5 `#[webhook]`，由框架统一提供网关 |
+| HTTP Webhook | 由应用自行挂载 HTTP 服务 | API 0.5+ `#[webhook]`，由框架统一提供网关 |
+| 在线配置 | 自行开发配置入口 | API 0.6 JSON Schema，由 Web 面板生成表单 |
 | 生命周期 | 随框架启停 | `#[init]` / `#[shutdown]` 钩子 |
 | 热重载 | 需要重启进程 | `/plugins reload` 即可 |
 | 适用场景 | 核心功能、需要异步 API | 第三方扩展、快速迭代 |
@@ -564,6 +568,8 @@ abi_stable = "0.11"
 ```
 
 [`abi-stable-host-api`](https://crates.io/crates/abi-stable-host-api) 和 [`qimen-dynamic-plugin-derive`](https://crates.io/crates/qimen-dynamic-plugin-derive) `0.1.12` 支持动态插件 API `0.1` 至 `0.5`，并提供 `BotApi::for_account` 与 `SendBuilder::bot_account`。crate 发布版本与插件描述符中的 ABI API 相互独立。API `0.5` 包含 API `0.4` 的实时主动发送能力和 Webhook Gateway，新建插件应显式声明 `api = "0.5"`。`api = "0.4"` 用于兼容不需要 Webhook 的已有插件；未声明 `api` 时，过程宏生成兼容旧宿主的 API `0.3` 插件。
+
+> API 0.6 在线配置已经进入仓库源码，但 crates.io `0.1.12` 不包含它。仓库内可用 path 依赖验证；仓库外插件应等配套 crate 发布后再把 `api` 改成 `0.6`，不要把旧依赖和新 ABI 混用。
 
 仓库外的插件不需要 `[workspace]`。只有把独立插件放在 QimenBot 仓库目录内、但不加入主 workspace 时，才需要在插件 `Cargo.toml` 中添加空的 `[workspace]` 表。
 
@@ -666,6 +672,27 @@ access_token = ""
 ```
 
 网关默认关闭且只监听回环地址。生产部署建议配置 Bearer token、在反向代理处启用 TLS，并由插件按第三方协议验证 HMAC 签名和时间戳。Webhook 回调中如需主动发送消息，必须通过 `BotApi::for_account(...)` / `BotApi::for_bot(...)` 或 `.bot_account(...)` / `.bot(...).try_send()` 明确选择 Bot。完整配置、状态码、热重载和安全边界见 [API 0.5 动态插件 Webhook Gateway](docs/advanced/dynamic-webhook-v05.md)。
+
+### API 0.6 在线配置
+
+API 0.6 插件可以把 JSON Schema 和可选 UI Schema 编进动态库。管理面板按 Schema 生成表单，统一处理密钥脱敏、校验、revision 冲突、配置备份和失败回滚：
+
+```rust
+#[dynamic_plugin(
+    id = "config-example",
+    version = "0.1.0",
+    api = "0.6",
+    config_schema = "../config.schema.json",
+    config_ui = "../config.ui.json",
+    config_version = 1,
+    config_apply = "reload"
+)]
+mod config_example {
+    // 命令、init 和可选 #[validate_config]
+}
+```
+
+`config_apply` 支持即时应用、动态重载和等待宿主重启。密钥不会通过 GET 接口返回浏览器，对象数组调整顺序时也会保留密钥与原业务项的对应关系。完整字段映射、回调和发布规则见 [动态插件 API 0.6 在线配置](docs/advanced/dynamic-config-v06.md)。
 
 ### 构建 & 部署
 
