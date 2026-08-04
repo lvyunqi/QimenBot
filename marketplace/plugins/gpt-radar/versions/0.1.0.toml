@@ -1,0 +1,67 @@
+schema_version = 1
+version = "0.1.0"
+released_at = "2026-08-04T15:33:44Z"
+release_tag = "v0.1.0"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "首次发布：支持 CodexRadar 多模型 IQ 报告、单模型查询、排行、推荐、实时动态、多序列趋势、亮暗主题、API 0.6 管理员在线配置，以及 OneBot 11/官方 QQ Bot 自适应富媒体回复。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at", "channel-at", "channel-private"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-x86_64-pc-windows-msvc.dll"
+sha256 = "4de990d1df3b84e3f976eacaaabae72bff515646334f40d0934ec69e7048ebcf"
+size_bytes = 3897856
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-aarch64-pc-windows-msvc.dll"
+sha256 = "a520258b058d383768e9acf8f7fe5a4f6eb52f743ea6477c4e5208e1d74276e8"
+size_bytes = 3319808
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-unknown-linux-gnu.so"
+sha256 = "5a2c5feffb886608c8255fb2d31d1b4053eea1218b49f644108c606547938e99"
+size_bytes = 3847976
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-unknown-linux-gnu.so"
+sha256 = "3a73ae555be7bd0bf0399be4ed8b21fd7ab5f1642bf98a813758fa1e6fcd6837"
+size_bytes = 3364600
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-apple-darwin.dylib"
+sha256 = "6f8fa48b00952023957d968bd5efd0fcdc9bff9f7ec468d270436758e4c8c925"
+size_bytes = 3418952
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-apple-darwin.dylib"
+sha256 = "41743c1bbba777f50ef74a92b2ec5d2b3b495c5c2f65887305588252150e67ae"
+size_bytes = 3173152
+github_attestation = true

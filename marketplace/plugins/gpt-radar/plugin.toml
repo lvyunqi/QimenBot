@@ -1,0 +1,14 @@
+schema_version = 1
+id = "gpt-radar"
+name = "GPT 智商雷达"
+summary = "查询 CodexRadar 的多模型 IQ、档位趋势和实时对比报告。"
+description = "面向 QimenBot 的 CodexRadar 动态插件。通过公开雷达 API 提供默认多模型对比、单模型查询、IQ 趋势、模型排行、推荐和最新实测；支持管理员 Web 表单实时编辑 1-6 个默认模型与亮暗主题，官方 QQ Bot 和 OneBot 11 自适应富媒体/PNG 回复。插件只访问 CodexRadar API，不写数据库、不启动后台线程、不提供 Webhook。"
+type = "dynamic"
+repository = "lvyunqi/gpt-radar-bot"
+repository_id = 1322041106
+license = "Apache-2.0"
+authors = ["lvyunqi"]
+categories = ["ai", "monitoring"]
+keywords = ["gpt", "iq", "codexradar", "model-ranking", "onebot11", "qq-official"]
+homepage = "https://github.com/lvyunqi/gpt-radar-bot"
+trust = "community"
