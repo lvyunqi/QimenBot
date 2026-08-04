@@ -2025,46 +2025,42 @@ impl Runtime {
                 .register_onebot11_executor(bot, client.action_sender())
                 .await;
 
-            loop {
-                let session_result = self
-                    .run_onebot11_session(
-                        bot,
-                        &adapter,
-                        &system_dispatcher,
-                        &command_dispatcher,
-                        &mut client,
-                        &reconnect_policy,
-                        limiter,
-                    )
-                    .await;
+            let session_result = self
+                .run_onebot11_session(
+                    bot,
+                    &adapter,
+                    &system_dispatcher,
+                    &command_dispatcher,
+                    &mut client,
+                    &reconnect_policy,
+                    limiter,
+                )
+                .await;
 
-                match session_result {
-                    Ok(SessionEnd::Shutdown) => {
-                        if let Some(registration_id) = proactive_registration {
-                            self.proactive_send_hub
-                                .unregister_executor(&bot.id, registration_id)
-                                .await;
-                        }
-                        return Ok(());
+            match session_result {
+                Ok(SessionEnd::Shutdown) => {
+                    if let Some(registration_id) = proactive_registration {
+                        self.proactive_send_hub
+                            .unregister_executor(&bot.id, registration_id)
+                            .await;
                     }
-                    Ok(SessionEnd::Reconnect(reason)) => {
-                        self.set_bot_connection_state(
-                            &bot.id,
-                            BotConnectionState::Reconnecting,
-                            Some(reason.clone()),
-                        );
-                        tracing::warn!(bot_id = %bot.id, peer = %peer, reason = %reason, "ws-reverse session ended, waiting for reconnect");
-                        break;
-                    }
-                    Err(err) => {
-                        self.set_bot_connection_state(
-                            &bot.id,
-                            BotConnectionState::Reconnecting,
-                            Some(err.to_string()),
-                        );
-                        tracing::warn!(bot_id = %bot.id, peer = %peer, error = %err, "ws-reverse session failed, waiting for reconnect");
-                        break;
-                    }
+                    return Ok(());
+                }
+                Ok(SessionEnd::Reconnect(reason)) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(reason.clone()),
+                    );
+                    tracing::warn!(bot_id = %bot.id, peer = %peer, reason = %reason, "ws-reverse session ended, waiting for reconnect");
+                }
+                Err(err) => {
+                    self.set_bot_connection_state(
+                        &bot.id,
+                        BotConnectionState::Reconnecting,
+                        Some(err.to_string()),
+                    );
+                    tracing::warn!(bot_id = %bot.id, peer = %peer, error = %err, "ws-reverse session failed, waiting for reconnect");
                 }
             }
 
