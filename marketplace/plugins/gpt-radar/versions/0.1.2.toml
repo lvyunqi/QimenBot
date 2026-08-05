@@ -1,0 +1,67 @@
+schema_version = 1
+version = "0.1.2"
+released_at = "2026-08-05T11:06:13Z"
+release_tag = "v0.1.2"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "新增模型卡片提供商图标：自动识别 OpenAI 和 DeepSeek，支持通用徽标、管理员在线图标覆盖和亮暗主题适配；新增 Lobe Icons 静态素材许可声明，保持旧配置兼容。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at", "channel-at", "channel-private"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-x86_64-pc-windows-msvc.dll"
+sha256 = "b65252887fa81570fc6c5b12a680c4000401926e6d9e89fc7e9c51b08fff74cc"
+size_bytes = 4705792
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-aarch64-pc-windows-msvc.dll"
+sha256 = "122c53be1f075bbbdec9f58070b699b94d9f59dcbc997a8b60b89ffb411d1d0c"
+size_bytes = 4052992
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-unknown-linux-gnu.so"
+sha256 = "0eb0b238daadac8e995cca3c287db80f7101eb6a0f1c21cb90c833fd362dfcf6"
+size_bytes = 4654936
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-unknown-linux-gnu.so"
+sha256 = "0bdcc1e92563c9887e1a73b19b25ac3ec157de2fbe1df6db9bd661bbb629a6dd"
+size_bytes = 4110112
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-apple-darwin.dylib"
+sha256 = "d4393c930893c885a0e4d5925e62f8cfaa15b83b23de832650e7b3471d978514"
+size_bytes = 4194216
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-apple-darwin.dylib"
+sha256 = "7fd0da09fb55fb9215874748dadbb7a5aaf48299523bb79fd867caf65ac12e96"
+size_bytes = 3900752
+github_attestation = true
