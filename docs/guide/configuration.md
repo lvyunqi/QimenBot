@@ -500,7 +500,7 @@ offline_ttl_secs = 60
 
 queue_capacity 是每个启用 Bot 的独立队列容量，必须大于 0。offline_ttl_secs 是离线请求等待对应 Bot 上线的时间；设置为 0 会在离线时立即丢弃。详见 [API 0.4+ 实时主动推送](/advanced/dynamic-proactive-send-v04)。
 
-每个 `[[bots]]` 可选配置 `account_id`。`id` 是部署实例别名，`account_id` 是插件主动发送时可长期引用的稳定外部账号；OneBot 通常填写 Bot QQ，也就是事件中的 `self_id`。旧配置无需增加该字段，按 `bot_id` 发送仍然兼容。多个启用 Bot 不能使用相同的 `account_id`，但禁用的备用传输实例可以与当前启用实例填写同一账号。
+每个 `[[bots]]` 可选配置 `account_id`。`id` 是部署实例别名，`account_id` 是插件主动发送时可长期引用的稳定外部账号；OneBot 通常填写 Bot QQ，也就是事件中的 `self_id`，官方 QQ 可以填写稳定的应用 AppID。旧配置无需增加该字段，按 `bot_id` 发送仍然兼容。多个启用 Bot 不能使用相同的 `account_id`，但禁用的备用传输实例可以与当前启用实例填写同一账号。运行时还会把管理员配置的该值原样写入插件事件 JSON 的 `qimen_context.account_id`，让有状态动态插件按当前 Bot 隔离数据；因此部署者若选择 AppID 作为 `account_id`，插件将能看到该 AppID。宿主不会自动复制独立的 `appid`、`secret` 或 access token 字段；未配置 `account_id` 时该上下文字段不会出现。
 
 ## 动态插件 Webhook Gateway
 

@@ -112,11 +112,11 @@ pub struct CommandRequest {
     pub args: RString,
     /// The command name that was matched.
     pub command_name: RString,
-    /// Sender user ID.
+    /// Protocol-provided sender ID (an OpenID on QQ Official).
     pub sender_id: RString,
-    /// Group ID (empty if private chat).
+    /// Group or conversation ID (empty if private chat).
     pub group_id: RString,
-    /// Raw OneBot event JSON (for advanced use).
+    /// Normalized raw event JSON, including host-owned `qimen_context` metadata.
     pub raw_event_json: RString,
 
     // ── v0.3 fields ──
@@ -338,13 +338,13 @@ impl Default for ReplyBuilder {
 pub struct InterceptorRequest {
     /// Bot instance ID.
     pub bot_id: RString,
-    /// Sender user ID.
+    /// Protocol-provided sender ID (an OpenID on QQ Official).
     pub sender_id: RString,
-    /// Group ID (empty if private chat).
+    /// Group or conversation ID (empty if private chat).
     pub group_id: RString,
     /// Message plain text.
     pub message_text: RString,
-    /// Full event JSON.
+    /// Normalized raw event JSON, including host-owned `qimen_context` metadata.
     pub raw_event_json: RString,
     /// Sender display name / nickname.
     pub sender_nickname: RString,
@@ -390,7 +390,7 @@ pub struct InterceptorDescriptorEntry {
 pub struct NoticeRequest {
     /// Route name, e.g. "GroupPoke", "Friend", "Heartbeat".
     pub route: RString,
-    /// Raw OneBot event JSON.
+    /// Normalized raw event JSON, including host-owned `qimen_context` metadata.
     pub raw_event_json: RString,
 }
 
