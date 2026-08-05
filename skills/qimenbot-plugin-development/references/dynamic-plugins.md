@@ -17,6 +17,7 @@
 - API 0.4+ 主动发送：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-proactive-send-v04.html>
 - API 0.5 Webhook：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-webhook-v05.html>
 - API 0.6 在线配置：<https://lvyunqi.github.io/QimenBot/advanced/dynamic-config-v06.html>
+- 官方 QQ Bot Markdown：<https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html>
 - crates.io Host API：<https://crates.io/crates/abi-stable-host-api>
 - crates.io 过程宏：<https://crates.io/crates/qimen-dynamic-plugin-derive>
 - 独立完整示例：<https://github.com/lvyunqi/QimenBot/tree/main/plugins/qimen-dynamic-plugin-example>
@@ -192,7 +193,7 @@ CommandResponse::builder()
 - 图片、视频、语音、文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB；更大媒体使用 QQ 可访问的 HTTPS URL。
 - 消息段中的 Windows/Linux 本地路径和 `file://` 不会由宿主读取。插件应读取文件并编码为 Base64，且不能把 Base64 正文写入日志。
 
-富消息在不同协议上的支持不同。官方 QQ Bot 的 ID、媒体上传、消息格式和回复额度由宿主约束；插件应优先返回通用段并检查真实平台测试结果。
+富消息在不同协议上的支持不同。官方 QQ Bot 的 Markdown 是平台扩展语法，具体支持范围和示例以[官方 Markdown 文档](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html)为准，当前页面列出标题、文字样式、链接、图片、列表、引用、分隔线和换行。`<br>`、`<font>` 等原生 HTML 标签不能按浏览器行为推断，必须在群、C2C、频道或 DMS 目标场景分别验证。官方 QQ Bot 的 ID、媒体上传、消息格式和回复额度由宿主约束；插件应优先返回通用段并检查真实平台测试结果。
 
 ## 配置与生命周期
 
