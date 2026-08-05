@@ -1,0 +1,67 @@
+schema_version = 1
+version = "0.1.1"
+released_at = "2026-08-05T09:02:38Z"
+release_tag = "v0.1.1"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "将 PNG 主题扩展为六套，新增独立 rounded 亮色圆角、编辑纸白、石墨琥珀和极光珊瑚；使用内嵌 Inter 抗锯齿字体替代像素字，保持 light/dark 配置兼容。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at", "channel-at", "channel-private"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-x86_64-pc-windows-msvc.dll"
+sha256 = "a78a445478eca3da7cd721c208aad7ad1ef8ab168825191ae29fff1850726e15"
+size_bytes = 4452864
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-aarch64-pc-windows-msvc.dll"
+sha256 = "6870d3cc43f7cb6ea2a6a46513dbb8a4d870e0341b7ff231276504c313821998"
+size_bytes = 3843584
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-unknown-linux-gnu.so"
+sha256 = "3b7ea4c72a4e25cbf385de06a2f1b0e507ae136d889fe704eabed899727ba363"
+size_bytes = 4405040
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-unknown-linux-gnu.so"
+sha256 = "c0e08ac4302dc4d61fca18604e308d5c94c87b68e4edb7d6711ec21b0b4c1d0c"
+size_bytes = 3901176
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-apple-darwin.dylib"
+sha256 = "10b9aec0a0cace638fbab3480a12801c3c012264c65b9539c8e796d6dbc0b61d"
+size_bytes = 3964128
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-apple-darwin.dylib"
+sha256 = "9fecdc2a9bc308e906a8504c7db09f3ef0c53b8647aa852147e8a7eb0d0259ff"
+size_bytes = 3701904
+github_attestation = true
