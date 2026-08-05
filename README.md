@@ -229,6 +229,7 @@ registry_enabled = true       # /registry：查看命令冲突和优先顺序
 dynamic_errors_enabled = true # /dynamic-errors：查看或清理动态插件错误
 prefixes = ["/"]              # 可配置多个；空数组表示关闭前缀入口
 private_bare_enabled = true   # 私聊可直接输入命令
+group_bare_enabled = true     # 群聊可直接输入命令，不要求前缀或 @
 mention_enabled = true        # 支持 @机器人 命令
 reply_enabled = true          # 支持回复机器人后输入命令
 ```

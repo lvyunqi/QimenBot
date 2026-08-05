@@ -296,6 +296,8 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
     document["official_host"]["commands"]["prefixes"] = string_array(&update.command_prefixes);
     document["official_host"]["commands"]["private_bare_enabled"] =
         value(update.command_private_bare_enabled);
+    document["official_host"]["commands"]["group_bare_enabled"] =
+        value(update.command_group_bare_enabled);
     document["official_host"]["commands"]["mention_enabled"] =
         value(update.command_mention_enabled);
     document["official_host"]["commands"]["reply_enabled"] = value(update.command_reply_enabled);
@@ -560,6 +562,7 @@ mod tests {
             command_dynamic_errors_enabled: false,
             command_prefixes: vec!["!".to_string(), "::".to_string()],
             command_private_bare_enabled: false,
+            command_group_bare_enabled: false,
             command_mention_enabled: true,
             command_reply_enabled: false,
             proactive_queue_capacity: view.proactive_queue_capacity,
@@ -587,6 +590,7 @@ mod tests {
             vec!["!", "::"]
         );
         assert!(!saved.config.official_host.commands.private_bare_enabled);
+        assert!(!saved.config.official_host.commands.group_bare_enabled);
         assert!(saved.config.official_host.commands.mention_enabled);
         assert!(!saved.config.official_host.commands.reply_enabled);
 

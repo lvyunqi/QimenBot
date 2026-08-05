@@ -85,6 +85,7 @@ export interface GeneralConfigView {
   command_dynamic_errors_enabled: boolean
   command_prefixes: string[]
   command_private_bare_enabled: boolean
+  command_group_bare_enabled: boolean
   command_mention_enabled: boolean
   command_reply_enabled: boolean
   proactive_queue_capacity: number
@@ -462,6 +463,7 @@ function normalizeConfigView(config: ConfigView): ConfigView {
       command_dynamic_errors_enabled: general.command_dynamic_errors_enabled ?? true,
       command_prefixes: Array.isArray(general.command_prefixes) ? general.command_prefixes : ["/"],
       command_private_bare_enabled: general.command_private_bare_enabled ?? true,
+      command_group_bare_enabled: general.command_group_bare_enabled ?? true,
       command_mention_enabled: general.command_mention_enabled ?? true,
       command_reply_enabled: general.command_reply_enabled ?? true,
     },
@@ -621,6 +623,7 @@ export interface GeneralMutation {
   command_dynamic_errors_enabled: boolean
   command_prefixes: string[]
   command_private_bare_enabled: boolean
+  command_group_bare_enabled: boolean
   command_mention_enabled: boolean
   command_reply_enabled: boolean
   proactive_queue_capacity: number
