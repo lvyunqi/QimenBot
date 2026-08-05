@@ -1,0 +1,67 @@
+schema_version = 1
+version = "0.1.10"
+released_at = "2026-08-05T13:20:41Z"
+release_tag = "newapi-status-bot-v0.1.10"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 2
+rollback_safe = true
+changelog = "新增 API 0.6 在线配置，支持管理面板保存后实时应用；查询与后台采集解耦，新增 1m、5m、10m 查询窗口，并优化紧凑状态报告和官方 QQ Markdown 回复。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message", "meta"]
+outbound = ["reply", "proactive"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at", "channel-at", "channel-private"]
+events = ["message"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_newapi_status_bot-x86_64-pc-windows-msvc.dll"
+sha256 = "e7336e928dfb8d0f6279a63688cd6d6db542bb5cbc5a0588a26878d3f00037a1"
+size_bytes = 7514112
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_newapi_status_bot-aarch64-pc-windows-msvc.dll"
+sha256 = "a2241a4f4510b2315d2d7bbf663f2db091096994f572c09b3c364e2499de10fb"
+size_bytes = 6569472
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-x86_64-unknown-linux-gnu.so"
+sha256 = "5c7d9f1bcd6f97b82c355eba7d787063661f045570be9fa660baa403f2e4646b"
+size_bytes = 9703304
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-aarch64-unknown-linux-gnu.so"
+sha256 = "f6ca7bcc68e8d2e2d4c52b9570f1151b93cff3ab5bd46e3f8fbac9fb57085080"
+size_bytes = 9587864
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-x86_64-apple-darwin.dylib"
+sha256 = "7c65b8e5742164899f8b1c7ca4eb1de7b402e8207711b7625863093d07e3045a"
+size_bytes = 8449636
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_newapi_status_bot-aarch64-apple-darwin.dylib"
+sha256 = "6a167ff08f1d20acedd2880d14943698b88f56e65d64d5c22518cbff5b13c252"
+size_bytes = 8126832
+github_attestation = true
