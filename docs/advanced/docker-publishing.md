@@ -33,10 +33,10 @@ DOCKERHUB_IMAGE=mryunqi/qimenbot
 
 ## Tag 规则
 
-推送 `v0.1.18` 后会生成：
+推送 `v0.1.19` 后会生成：
 
 ```text
-mryunqi/qimenbot:0.1.18
+mryunqi/qimenbot:0.1.19
 mryunqi/qimenbot:0.1
 mryunqi/qimenbot:latest
 mryunqi/qimenbot:sha-<提交摘要>
@@ -47,9 +47,9 @@ mryunqi/qimenbot:sha-<提交摘要>
 ## 发布后检查
 
 ```bash
-docker buildx imagetools inspect mryunqi/qimenbot:0.1.18
-docker pull mryunqi/qimenbot:0.1.18
-docker image inspect mryunqi/qimenbot:0.1.18 --format '{{.Architecture}} {{.Os}}'
+docker buildx imagetools inspect mryunqi/qimenbot:0.1.19
+docker pull mryunqi/qimenbot:0.1.19
+docker image inspect mryunqi/qimenbot:0.1.19 --format '{{.Architecture}} {{.Os}}'
 ```
 
 登录阶段出现 `unauthorized` 时，确认 Secret 中存放的是 Docker Hub Token、用户名属于镜像 Namespace，且令牌状态为 Active。一个架构构建失败时，多架构 manifest 不会完整发布，应先查看失败平台的日志。

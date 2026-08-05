@@ -1050,8 +1050,10 @@ mod tests {
             Some(CommandDispatchSignal::Help { page: 2 })
         ));
 
-        let mut disabled = CommandConfig::default();
-        disabled.help_enabled = false;
+        let disabled = CommandConfig {
+            help_enabled: false,
+            ..CommandConfig::default()
+        };
         let dispatcher = CommandDispatcher::new(disabled);
         assert!(
             dispatcher
