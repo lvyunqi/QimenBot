@@ -408,7 +408,7 @@ API 0.6 没有修改旧 `PluginDescriptor` 布局。配置描述符和回调使�
 ### 插件卡片没有“配置”按钮
 
 - 动态库必须声明 `api = "0.6"` 和 `config_schema`。
-- 检查启动日志或 `/dynamic-errors` 中的第一条描述符错误。
+- 检查 Web 插件页的健康状态和实时日志中的第一条描述符错误。
 - Schema 根节点必须明确是 `type: "object"`，JSON 文件不能超过 256 KiB。
 - `config_schema` 路径相对 `src/lib.rs`，不是相对 QimenBot 启动目录。
 

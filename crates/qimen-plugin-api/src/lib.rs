@@ -1412,6 +1412,11 @@ pub struct CommandInvocation {
     pub source_text: String,
 }
 
+/// Host-provided command actions for plugin management and diagnostics.
+///
+/// These actions are emitted only for enabled host commands that win command
+/// registry precedence. Static and dynamic plugins can still override the same
+/// names through the normal priority rules.
 #[derive(Debug, Clone)]
 pub enum BuiltinCommandAction {
     Help,

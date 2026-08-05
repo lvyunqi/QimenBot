@@ -204,17 +204,11 @@ Event received
   → Interceptor chain after_completion
 ```
 
-## Built-in Commands
+## Command Entry
 
-| Command | Description |
-|---------|-------------|
-| `ping` / `/ping` | Returns pong |
-| `echo <text>` / `/echo <text>` | Echoes text |
-| `status` / `/status` | Runtime status |
-| `help` / `/help` | Auto-generated help |
-| `plugins` / `/plugins` | Loaded plugin list |
+The runtime does not register business commands such as `ping`, `echo`, or `status`. It keeps three administrator-only host commands by default: `/plugins`, `/registry`, and `/dynamic-errors`. Each can be disabled independently, and all three use normal registry precedence at priority `10`, so static (`30`) and dynamic (`20`) plugins override the same names by default. The optional host help fallback supports `/help [page]`; a plugin that registers `help` or `h` takes precedence.
 
-Trigger methods: direct message, `/prefix`, `@bot mention`, reply-based.
+Prefixes, bare private commands, `@bot` mentions, reply-based triggers, help availability, help page size, and the three host command switches are configured under `[official_host.commands]` or on the Web panel's **Configuration → Command Entry** page.
 
 ## Project Structure
 

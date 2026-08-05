@@ -29,6 +29,17 @@ plugin_bin_dir = "plugins/bin"
 plugin_config_dir = "config/plugins"
 dynamic_plugin_timeout_secs = 30
 
+[official_host.commands]
+help_enabled = true
+help_page_size = 6
+plugins_enabled = true
+registry_enabled = true
+dynamic_errors_enabled = true
+prefixes = ["/"]
+private_bare_enabled = true
+mention_enabled = true
+reply_enabled = true
+
 [official_host.webhook]
 enabled = false
 bind = "127.0.0.1:8088"
@@ -53,6 +64,7 @@ enabled = true
 - `[[bots]].id`：部署实例别名，可能随部署改变。
 - `[[bots]].account_id`：主动发送的稳定账号选择器。
 - `official_host.webhook`：API 0.5/0.6 动态 Webhook 的统一网关，不是单个插件配置。
+- `official_host.commands`：宿主统一命令入口、分页 help 兜底和三个管理员管理命令开关；不定义插件业务命令。
 
 动态插件自身配置位于 `official_host.plugin_config_dir/<plugin_id>.toml`，默认就是
 `config/plugins/<plugin_id>.toml`。配置文件名必须与动态描述符 ID 完全一致。宿主会
@@ -96,7 +108,7 @@ Cargo workspace 发现 crate
   -> 注册命令、事件、拦截器和 Webhook
 ```
 
-`/plugins reload` 只重扫动态插件；修改静态插件必须重新编译并重启 `qimenbotd`。
+Web 插件页的“重新扫描”或 `POST /api/v1/plugins/reload` 只重扫动态插件；修改静态插件必须重新编译并重启 `qimenbotd`。
 
 ## API 0.6 配置入口
 
@@ -129,20 +141,18 @@ Cargo workspace 发现 crate
 对应生效流程；失败时不应留下半写入文件。Schema 只能使用本地 `$ref`，根节点必须
 明确声明 `type: "object"`，单个 Schema/UI Schema 最大 256 KiB。
 
-## 管理命令
+## 管理入口与插件命令边界
 
-| 命令 | 用途 |
-|---|---|
-| `/plugins` | 查看插件、启停状态和来源 |
-| `/plugins reload` | 重新扫描并热重载动态插件 |
-| `/plugins enable <id>` | 启用并持久化 |
-| `/plugins disable <id>` | 禁用并持久化 |
-| `/dynamic-errors` | 查看动态插件错误、超时和隔离状态 |
-| `/dynamic-errors clear` | 清除动态错误计数 |
-| `/registry-report` | 查看命令注册报告 |
-| `/registry-conflicts` | 查看命令冲突 |
+插件状态、热重载、在线配置、健康信息和命令优先级可以使用 Web 管理面板或带管理 Token 的 API：
 
-命令不可用时确认 `command`、`admin` 等内置模块是否启用，以及执行者是否有 Owner/Admin 权限。
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/v1/plugins` | 查看来源、启停、命令、配置能力和健康状态 |
+| `PUT` | `/api/v1/plugins/<id>` | 启用或停用并持久化 |
+| `POST` | `/api/v1/plugins/reload` | 重新扫描并热重载动态插件 |
+| `PUT` | `/api/v1/plugins/<id>/priority` | 调整同名命令优先级 |
+
+聊天内默认还提供 `/plugins`、`/registry` 和 `/dynamic-errors`，均要求管理员或所有者权限。三者固定以优先级 `10` 进入普通命令注册表，可以在 Web“配置 → 命令入口”逐项关闭；关闭后宿主不保留对应命令名和别名。静态插件默认优先级 `30`、动态插件默认 `20`，所以插件声明同名命令时通常会接管。`ping`、`echo`、`status` 始终完全由插件提供。宿主只在插件未接管时提供可关闭的分页 `help`；插件声明 `help` 或 `h` 后插件优先。
 
 ## 官方 QQ Bot 兼容规则
 
@@ -172,7 +182,7 @@ Cargo workspace 发现 crate
 
 1. 文件是否真的位于当前 `plugin_bin_dir`，不是安装根目录；配置文件是否位于当前 `plugin_config_dir`。
 2. 扩展名、CPU、操作系统和 GNU/musl 是否匹配。
-3. `/dynamic-errors` 和启动日志中的第一条加载错误。
+3. Web 插件页健康状态和实时日志中的第一条加载错误。
 4. 描述符 `id`、`api`、API 0.6 配置描述符和两个配套 crate 的真实发布版本。
 5. `plugin-state.toml` 是否禁用。
 6. Linux 执行 `file`、`ldd`、`readelf --version-info`。
@@ -180,11 +190,12 @@ Cargo workspace 发现 crate
 
 ### 插件出现但命令不触发
 
-1. 用 `/registry-report` 确认命令名和别名。
-2. 用 `/registry-conflicts` 检查优先级冲突。
+1. 在 Web 插件页确认命令名、别名来源和插件实际加载状态。
+2. 检查同名命令优先级；数值相同时再核对插件声明优先级和插件 ID。
 3. 检查 `role`、`scope`、Bot 启用模块和消息是否属于群/私聊。
-4. 官方 QQ 群检查所订阅 Intent、全量消息权限和 @ 事件类型。
-5. 确认参数语法：静态 aliases 是数组，动态 aliases 是逗号分隔字符串。
+4. 检查 `[official_host.commands]` 是否启用了当前前缀、私聊裸命令、@ 或回复入口。
+5. 官方 QQ 群检查所订阅 Intent、全量消息权限和 @ 事件类型。
+6. 确认参数语法：静态 aliases 是数组，动态 aliases 是逗号分隔字符串。
 
 ### 能触发但不回复
 

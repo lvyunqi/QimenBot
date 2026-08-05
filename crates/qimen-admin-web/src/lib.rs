@@ -308,21 +308,58 @@ async fn update_general(
     State(state): State<AdminState>,
     Json(request): Json<GeneralUpdateRequest>,
 ) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    let before = state.config_store.read().await?;
+    let before_general = general_view(&before.config);
     let saved = state
         .config_store
         .update_general(&request.revision, &request.general)
         .await?;
-    state.restart_required.store(true, Ordering::Relaxed);
-    state.audit.record(
-        "config.update",
-        "general",
-        "success",
-        "general host settings updated; restart required",
-    )?;
+    let saved_general = general_view(&saved.config);
+    let command_changed =
+        before.config.official_host.commands != saved.config.official_host.commands;
+
+    let mut comparable_before = before_general;
+    comparable_before.command_help_enabled = saved_general.command_help_enabled;
+    comparable_before.command_help_page_size = saved_general.command_help_page_size;
+    comparable_before.command_plugins_enabled = saved_general.command_plugins_enabled;
+    comparable_before.command_registry_enabled = saved_general.command_registry_enabled;
+    comparable_before.command_dynamic_errors_enabled = saved_general.command_dynamic_errors_enabled;
+    comparable_before.command_prefixes = saved_general.command_prefixes.clone();
+    comparable_before.command_private_bare_enabled = saved_general.command_private_bare_enabled;
+    comparable_before.command_mention_enabled = saved_general.command_mention_enabled;
+    comparable_before.command_reply_enabled = saved_general.command_reply_enabled;
+    let other_settings_changed = comparable_before != saved_general;
+
+    if command_changed {
+        state
+            .runtime
+            .set_command_config(saved.config.official_host.commands.clone())?;
+    }
+    let restart_required = state.restart_required.load(Ordering::Relaxed) || other_settings_changed;
+    state
+        .restart_required
+        .store(restart_required, Ordering::Relaxed);
+    let detail = match (command_changed, other_settings_changed) {
+        (true, false) => "command settings updated live; bot reconnect requested",
+        (true, true) => "command settings updated live; other host settings require restart",
+        (false, true) => "general host settings updated; restart required",
+        (false, false) => "general host settings saved without effective changes",
+    };
+    state
+        .audit
+        .record("config.update", "general", "success", detail)?;
+    let message = match (command_changed, other_settings_changed, restart_required) {
+        (true, false, false) => "命令配置已保存，Bot 正在重连并应用新入口".to_string(),
+        (true, true, _) => "命令入口已动态应用；其余待处理配置仍需重启宿主".to_string(),
+        (true, false, true) => "命令入口已动态应用；此前的修改仍在等待重启".to_string(),
+        (false, true, _) => "配置已保存，重启宿主后全部生效".to_string(),
+        (false, false, true) => "配置没有变化；此前的修改仍在等待重启".to_string(),
+        (false, false, false) => "配置没有变化".to_string(),
+    };
     Ok(Json(ApiEnvelope::new(MutationResult {
         revision: Some(saved.revision),
-        restart_required: true,
-        message: "配置已保存，重启宿主后全部生效".to_string(),
+        restart_required,
+        message,
     })))
 }
 

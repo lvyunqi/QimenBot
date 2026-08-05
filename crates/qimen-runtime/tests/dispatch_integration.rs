@@ -1,3 +1,4 @@
+use qimen_config::CommandConfig;
 use qimen_error::{QimenError, Result};
 use qimen_message::Message;
 use qimen_plugin_api::{OwnedTaskFuture, RuntimeBotContext, TaskHandle};
@@ -91,8 +92,8 @@ fn sample_private_event(text: &str) -> NormalizedEvent {
 }
 
 #[tokio::test]
-async fn builtin_command_dispatcher_does_not_claim_plugin_ping() {
-    let dispatcher = CommandDispatcher::with_default_handlers();
+async fn runtime_does_not_claim_plugin_ping() {
+    let dispatcher = CommandDispatcher::new(CommandConfig::default());
     let event = sample_private_event("ping");
 
     let result = dispatcher

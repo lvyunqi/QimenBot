@@ -145,8 +145,8 @@ plugin_config_dir = "config/plugins"
 
 | 模块 ID | 说明 |
 |---------|------|
-| `command` | 命令系统 — `/echo`、`/help`、`/status` 等基础命令 |
-| `admin` | 管理模块 — 权限管理、插件管理（`/plugins`） |
+| `command` | 命令解析、触发识别与插件路由；不注册业务命令 |
+| `admin` | 权限解析和宿主管理基础能力；操作入口在 Web 面板 |
 | `scheduler` | 定时任务 — 基于 Cron 表达式的定时任务调度器 |
 | `bridge` | 消息桥接 — 跨群 / 跨 Bot 消息转发（预留） |
 
@@ -168,11 +168,13 @@ plugin_modules = ["example-plugin", "my-plugin"]
 
 | 来源 | 默认值 | 能否在面板修改 |
 | --- | ---: | --- |
+| 宿主管理命令 | `10` | 不能修改数值，可逐项关闭 |
 | 静态插件 | `30` | 可以 |
 | 动态插件 | `20` | 可以 |
-| 内置命令 | `10` | 不可以 |
 
-优先级相同时，先比较插件声明的次级顺序：静态插件使用 `CommandPlugin::priority()`，该值较小的排在前面；动态插件使用兼容默认值 `200`。仍然相同则按插件 ID 排序，保证每次启动的结果一致。`help`、`plugins`、`registry` 和 `dynamic-errors` 是宿主管理命令，不允许第三方插件覆盖。
+优先级相同时，先比较插件声明的次级顺序：静态插件使用 `CommandPlugin::priority()`，该值较小的排在前面；动态插件使用兼容默认值 `200`。仍然相同则按插件 ID 排序，保证每次启动的结果一致。
+
+Runtime 不注册 `ping`、`echo`、`status` 等业务命令。宿主默认注册 `/plugins`、`/registry` 和 `/dynamic-errors` 三个管理命令，均要求管理员或所有者权限，并以优先级 `10` 参加普通注册表排序。静态、动态插件的默认优先级分别是 `30`、`20`，所以插件声明同名命令时默认由插件接管；关闭某个宿主命令后，其命令名和别名都不再保留。`help`/`h` 在插件匹配失败后兜底，插件注册同名命令时直接接管。
 
 设置后会写入 `plugin_state_path` 指向的文件：
 
@@ -186,6 +188,20 @@ plugin_modules = ["example-plugin", "my-plugin"]
 
 面板保存后会让已启用的 Bot 重连一次并重建命令路由，不需要重启宿主。该文件由宿主自动维护，运行期间不要同时手工编辑。完整排序过程见[运行时详解](/advanced/runtime#命令优先级)。
 
+### 命令入口和帮助分页
+
+前缀、私聊裸命令、@ 提及和回复是四种独立入口。群聊普通文本不会直接进入命令路由；要么带 `prefixes` 中的前缀，要么明确 @/回复机器人。`prefixes` 可以配置 `/`、`!` 等多个值，最长匹配优先。
+
+宿主帮助按当前有效注册表生成，不维护另一份固定清单，因此停用插件后不会残留旧的 `ping` 或其他业务命令；已开启且未被插件覆盖的三个宿主管理命令会正常进入目录。默认每页 6 条：
+
+```text
+/help      # 第 1 页
+/help 2    # 第 2 页
+/h 3       # 使用别名查看第 3 页
+```
+
+页码超过总页数时会定位到最后一页。隐藏命令不会进入目录；每页回复会显示当前页、总页数和上一页/下一页命令。
+
 ### 动态插件目录
 
 `plugin_bin_dir` 指定动态库文件的扫描目录。框架启动时会自动扫描该目录下的 `.so` / `.dll` / `.dylib` 文件：
@@ -198,6 +214,21 @@ plugin_bin_dir = "plugins/bin"
 
 ```toml
 plugin_config_dir = "config/plugins"
+```
+
+命令入口另有独立子表，Web 面板对应“配置 → 命令入口”：
+
+```toml
+[official_host.commands]
+help_enabled = true          # 插件未接管 help/h 时提供分页目录
+help_page_size = 6           # /help 2 查看第 2 页，范围 1-20
+plugins_enabled = true       # /plugins：插件状态、启停和动态重扫
+registry_enabled = true      # /registry：命令冲突和优先顺序
+dynamic_errors_enabled = true # /dynamic-errors：动态插件错误状态
+prefixes = ["/"]             # 支持多个前缀；空数组关闭前缀入口
+private_bare_enabled = true  # 私聊可不带前缀
+mention_enabled = true       # @机器人 后可直接输入命令
+reply_enabled = true         # 回复机器人后可直接输入命令
 ```
 
 文件名固定为 `<plugin_id>.toml`。API 0.6 插件可以在 Web 管理面板中生成表单并在线保存；手工编辑仍然支持。Docker 部署应把该目录放在持久化卷中，二进制部署应和 `plugin-state.toml` 一起备份。完整在线配置规则见 [动态插件 API 0.6 在线配置](/advanced/dynamic-config-v06)。

@@ -3,9 +3,16 @@ import type React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 import {
   AlertTriangle,
+  Activity,
+  AtSign,
+  BookOpenText,
   Check,
+  Command,
+  CornerUpLeft,
   Gauge,
   History,
+  Keyboard,
+  ListTree,
   PanelTop,
   Plus,
   Puzzle,
@@ -27,10 +34,11 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 
-type ConfigTab = "runtime" | "panel" | "plugins" | "marketplace" | "webhook" | "history"
+type ConfigTab = "runtime" | "commands" | "panel" | "plugins" | "marketplace" | "webhook" | "history"
 
 const tabs = [
   { id: "runtime", label: "运行时", icon: Gauge },
+  { id: "commands", label: "命令入口", icon: Command },
   { id: "panel", label: "面板安全", icon: PanelTop },
   { id: "plugins", label: "插件", icon: Puzzle },
   { id: "marketplace", label: "插件商城", icon: Store },
@@ -237,6 +245,9 @@ export function ConfigPage({ onRefreshSnapshot }: { onRefreshSnapshot: () => voi
               <TabsPrimitive.Content value="runtime" className="config-tabpanel">
                 <RuntimeSection general={general} patch={patch} />
               </TabsPrimitive.Content>
+              <TabsPrimitive.Content value="commands" className="config-tabpanel">
+                <CommandSection general={general} patch={patch} />
+              </TabsPrimitive.Content>
               <TabsPrimitive.Content value="panel" className="config-tabpanel">
                 <PanelSection
                   general={general}
@@ -354,6 +365,261 @@ function RuntimeSection({
         />
       </div>
     </ConfigSection>
+  )
+}
+
+function CommandSection({
+  general,
+  patch,
+}: {
+  general: GeneralConfigView
+  patch: (next: Partial<GeneralConfigView>) => void
+}) {
+  const triggerCount = [
+    general.command_prefixes.length > 0,
+    general.command_private_bare_enabled,
+    general.command_mention_enabled,
+    general.command_reply_enabled,
+  ].filter(Boolean).length
+  const hostCommandCount = [
+    general.command_plugins_enabled,
+    general.command_registry_enabled,
+    general.command_dynamic_errors_enabled,
+  ].filter(Boolean).length
+
+  return (
+    <ConfigSection
+      title="命令入口"
+      description="命令本身由插件注册；这里仅控制消息如何进入命令路由，以及是否启用宿主帮助兜底。"
+      badge={<Badge variant="default">{triggerCount} 个入口 · {hostCommandCount} 条管理</Badge>}
+    >
+      <div className="config-form-grid">
+        <ToggleSetting
+          label="宿主帮助兜底"
+          description="插件没有注册 help 时提供分页目录；关闭后 help 名称完全交给插件。"
+          checked={general.command_help_enabled}
+          onChange={(command_help_enabled) => patch({ command_help_enabled })}
+        />
+        <NumberField
+          label="帮助每页命令数"
+          hint="支持 /help 2 翻页；建议保持 4 到 8 条，避免单条消息过长。"
+          value={general.command_help_page_size}
+          unit="条"
+          min={1}
+          max={20}
+          onChange={(command_help_page_size) => patch({ command_help_page_size })}
+        />
+        <Field
+          label="宿主管理命令"
+          hint="仅保留插件管理与故障诊断。关闭某项后，插件仍可注册同名命令。"
+          wide
+          controlGroup
+        >
+          <HostCommandPicker general={general} patch={patch} />
+        </Field>
+        <Field label="消息触发方式" hint="每种入口独立生效。群聊普通文本不会被当作命令。" wide controlGroup>
+          <CommandTriggerPicker general={general} patch={patch} />
+        </Field>
+        <Field label="命令前缀" hint="可同时启用多个前缀；全部取消后，群聊只能通过 @ 或回复触发。" wide controlGroup>
+          <CommandPrefixPicker
+            values={general.command_prefixes}
+            onChange={(command_prefixes) => patch({ command_prefixes })}
+          />
+        </Field>
+      </div>
+      <div className="security-note command-ownership-note">
+        <BookOpenText />
+        <div>
+          <strong>宿主只保留可关闭的管理命令</strong>
+          <span>plugins、registry 和 dynamic-errors 负责插件管理与故障诊断，并参与正常优先级竞争；ping、echo 和 status 仍完全交给插件。</span>
+        </div>
+      </div>
+    </ConfigSection>
+  )
+}
+
+function HostCommandPicker({
+  general,
+  patch,
+}: {
+  general: GeneralConfigView
+  patch: (next: Partial<GeneralConfigView>) => void
+}) {
+  const options = [
+    {
+      key: "command_plugins_enabled" as const,
+      icon: Puzzle,
+      label: "插件管理",
+      code: "/plugins",
+      description: "查看、启停和重扫插件。",
+    },
+    {
+      key: "command_registry_enabled" as const,
+      icon: ListTree,
+      label: "命令注册表",
+      code: "/registry",
+      description: "查看冲突与最终优先顺序。",
+    },
+    {
+      key: "command_dynamic_errors_enabled" as const,
+      icon: Activity,
+      label: "动态错误",
+      code: "/dynamic-errors",
+      description: "查看或清理运行时错误状态。",
+    },
+  ]
+
+  return (
+    <div className="command-option-grid" role="group" aria-label="宿主管理命令">
+      {options.map((option) => {
+        const selected = general[option.key]
+        const Icon = option.icon
+        return (
+          <button
+            type="button"
+            key={option.key}
+            className={cn(selected && "is-selected")}
+            aria-pressed={selected}
+            onClick={() => patch({ [option.key]: !selected })}
+          >
+            <span className="command-option-icon"><Icon /></span>
+            <span className="command-option-copy">
+              <span><strong>{option.label}</strong><Badge variant={selected ? "success" : "neutral"}>{selected ? "已启用" : "已关闭"}</Badge></span>
+              <code>{option.code}</code>
+              <small>{option.description}</small>
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function CommandTriggerPicker({
+  general,
+  patch,
+}: {
+  general: GeneralConfigView
+  patch: (next: Partial<GeneralConfigView>) => void
+}) {
+  const options = [
+    {
+      key: "command_private_bare_enabled" as const,
+      icon: Keyboard,
+      label: "私聊直接输入",
+      code: "help",
+      description: "仅私聊允许不带前缀。",
+    },
+    {
+      key: "command_mention_enabled" as const,
+      icon: AtSign,
+      label: "@ 机器人",
+      code: "@Bot help",
+      description: "适合未开放全量消息的群聊。",
+    },
+    {
+      key: "command_reply_enabled" as const,
+      icon: CornerUpLeft,
+      label: "回复机器人",
+      code: "回复 + help",
+      description: "回复消息后直接输入命令。",
+    },
+  ]
+
+  return (
+    <div className="command-option-grid" role="group" aria-label="命令消息触发方式">
+      {options.map((option) => {
+        const selected = general[option.key]
+        const Icon = option.icon
+        return (
+          <button
+            type="button"
+            key={option.key}
+            className={cn(selected && "is-selected")}
+            aria-pressed={selected}
+            onClick={() => patch({ [option.key]: !selected })}
+          >
+            <span className="command-option-icon"><Icon /></span>
+            <span className="command-option-copy">
+              <span><strong>{option.label}</strong><Badge variant={selected ? "success" : "neutral"}>{selected ? "已启用" : "已关闭"}</Badge></span>
+              <code>{option.code}</code>
+              <small>{option.description}</small>
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+const commonCommandPrefixes = ["/", "!", "#", "."]
+
+function CommandPrefixPicker({
+  values,
+  onChange,
+}: {
+  values: string[]
+  onChange: (values: string[]) => void
+}) {
+  const [draft, setDraft] = useState("")
+  const options = [...commonCommandPrefixes, ...values.filter((value) => !commonCommandPrefixes.includes(value))]
+  const candidate = draft.trim()
+  const validCandidate = candidate.length > 0 && Array.from(candidate).length <= 8 && !/\s/.test(candidate) && !values.includes(candidate)
+  const toggle = (prefix: string) => onChange(
+    values.includes(prefix) ? values.filter((value) => value !== prefix) : [...values, prefix],
+  )
+  const add = () => {
+    if (!validCandidate) return
+    onChange([...values, candidate])
+    setDraft("")
+  }
+
+  return (
+    <div className="command-prefix-picker">
+      <div className="command-prefix-summary">
+        <span><Command /><strong>{values.length}</strong> 个前缀</span>
+        <Badge variant={values.length > 0 ? "success" : "neutral"}>{values.length > 0 ? "已启用" : "已关闭"}</Badge>
+      </div>
+      <div className="command-prefix-options" role="group" aria-label="命令前缀">
+        {options.map((prefix) => {
+          const selected = values.includes(prefix)
+          return (
+            <button
+              type="button"
+              key={prefix}
+              className={cn(selected && "is-selected")}
+              aria-pressed={selected}
+              title={selected ? `关闭 ${prefix} 前缀` : `启用 ${prefix} 前缀`}
+              onClick={() => toggle(prefix)}
+            >
+              <code>{prefix}</code>
+              {selected && <Check />}
+            </button>
+          )
+        })}
+      </div>
+      <div className="command-prefix-custom">
+        <span><strong>自定义前缀</strong><small>1 到 8 个非空白字符。</small></span>
+        <div>
+          <Input
+            value={draft}
+            maxLength={8}
+            aria-label="自定义命令前缀"
+            placeholder="例如：::"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                add()
+              }
+            }}
+          />
+          <Button type="button" variant="outline" size="icon" onClick={add} disabled={!validCandidate} aria-label="添加自定义前缀">
+            <Plus />
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -738,18 +1004,22 @@ function NumberField({
   hint,
   value,
   unit,
+  min = 0,
+  max,
   onChange,
 }: {
   label: string
   hint: string
   value: number
   unit: string
+  min?: number
+  max?: number
   onChange: (value: number) => void
 }) {
   return (
     <Field label={label} hint={hint}>
       <div className="number-input">
-        <Input type="number" min={0} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+        <Input type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
         <span>{unit}</span>
       </div>
     </Field>
