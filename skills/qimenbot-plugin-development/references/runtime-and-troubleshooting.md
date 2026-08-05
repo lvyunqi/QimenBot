@@ -14,6 +14,7 @@
 | 静态示例 | `plugins/qimen-plugin-example/` | <https://github.com/lvyunqi/QimenBot/tree/main/plugins/qimen-plugin-example> |
 | 动态示例 | `plugins/qimen-dynamic-plugin-example/` | <https://github.com/lvyunqi/QimenBot/tree/main/plugins/qimen-dynamic-plugin-example> |
 | 独立模板 | `templates/dynamic-plugin/` | <https://github.com/lvyunqi/QimenBot/tree/main/templates/dynamic-plugin> |
+| 官方 QQ Markdown | - | <https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html> |
 | 发行包 | - | <https://github.com/lvyunqi/QimenBot/releases> |
 
 仓库内源码可能领先 crates.io。API 0.6 外部动态插件应同时使用已发布的 `abi-stable-host-api 0.1.13` 与 `qimen-dynamic-plugin-derive 0.1.13`，不依赖浮动分支或作者电脑上的本地 path。
@@ -160,6 +161,7 @@ Web 插件页的“重新扫描”或 `POST /api/v1/plugins/reload` 只重扫动
 - 群聊、C2C、频道和 DMS 的被动回复由运行时根据来信场景路由。
 - 群内命令是否需要 @ 由平台事件和命令分发共同决定，不在插件中硬编码 XML/标签删除。
 - `ctx.onebot_actions()` 是 OneBot Action 客户端；官方平台专属 Markdown、Keyboard、Ark、Embed 和媒体应使用通用 `Message` 段，并按支持矩阵验证。
+- 官方 QQ Markdown 不是浏览器 HTML 的完整替代品；按[官方 Markdown 文档](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html)使用标题、文字样式、链接、图片、列表、引用、分隔线和换行等平台扩展。原生 HTML 标签是否渲染取决于客户端和消息场景，`<br>`、`<font>` 等写法必须实测。
 - 官方 QQ 本地媒体使用 `base64://` 通用段：群/C2C 由宿主分片预上传，频道/DMS 图片由宿主发送 multipart；插件不持有 QQ 凭据，也不自行调用预上传接口。
 - Base64 错误按“解码、格式、大小、prepare、分片 PUT、part finish、merge、send”阶段定位；日志不得打印完整 Base64。
 - 官方原始字段从规范化事件中的 `raw_json.qqbot_payload` 读取；缺失时必须降级。

@@ -12,6 +12,7 @@
 - 事件：<https://lvyunqi.github.io/QimenBot/plugin/events.html>
 - 拦截器：<https://lvyunqi.github.io/QimenBot/plugin/interceptors.html>
 - 官方 QQ Bot：<https://lvyunqi.github.io/QimenBot/plugin/qq-official.html>
+- 官方 QQ Bot Markdown：<https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html>
 - 仓库示例：`plugins/qimen-plugin-example/`
 
 ## 创建与链接
@@ -163,7 +164,7 @@ let message = Message::builder()
     .build();
 ```
 
-可解析 `plain_text()`、`at_list()`、`image_urls()`、`has_reply()` 和 `reply_id()`。Markdown、Keyboard、Ark、Embed 及群/C2C 媒体存在平台限制；实现前先读官方 QQ Bot 参考与 `message_demo.rs`，不要假设 OneBot 消息段可原样发送到官方平台。
+可解析 `plain_text()`、`at_list()`、`image_urls()`、`has_reply()` 和 `reply_id()`。Markdown、Keyboard、Ark、Embed 及群/C2C 媒体存在平台限制；实现前先读 [官方 QQ Bot Markdown 文档](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html)、官方 QQ Bot 参考与 `message_demo.rs`。官方 Markdown 页面列出的标题、文字样式、链接、图片、列表、引用、分隔线和换行属于平台支持范围；`<br>`、`<font>` 等 HTML 标签是否生效要按实际场景验证，不要把 OneBot 消息段或浏览器 HTML 原样假定为官方支持。
 
 静态插件生成官方 QQ 本地媒体时返回 `base64://...` 消息段，不直接读取 Bot AppSecret 或调用上传接口。群/C2C 会由宿主完成分片预上传，频道/DMS 只支持本地图片 multipart。图片、视频、语音和文件的内联上限分别为 20 MB、30 MB、20 MB、32 MB；大文件改用 QQ 可访问的 HTTPS URL。
 
