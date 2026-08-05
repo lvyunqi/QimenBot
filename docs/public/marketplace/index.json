@@ -1,4 +1,336 @@
 {
   "schema_version": 1,
-  "plugins": []
+  "plugins": [
+    {
+      "schema_version": 1,
+      "id": "gpt-radar",
+      "name": "GPT 智商雷达",
+      "summary": "查询 CodexRadar 的多模型 IQ、档位趋势和实时对比报告。",
+      "description": "面向 QimenBot 的 CodexRadar 动态插件。通过公开雷达 API 提供默认多模型对比、单模型查询、IQ 趋势、模型排行、推荐和最新实测；支持管理员 Web 表单实时编辑 1-6 个默认模型与亮暗主题，官方 QQ Bot 和 OneBot 11 自适应富媒体/PNG 回复。插件只访问 CodexRadar API，不写数据库、不启动后台线程、不提供 Webhook。",
+      "type": "dynamic",
+      "repository": "lvyunqi/gpt-radar-bot",
+      "repository_id": 1322041106,
+      "license": "Apache-2.0",
+      "authors": [
+        "lvyunqi"
+      ],
+      "categories": [
+        "ai",
+        "monitoring"
+      ],
+      "keywords": [
+        "gpt",
+        "iq",
+        "codexradar",
+        "model-ranking",
+        "onebot11",
+        "qq-official"
+      ],
+      "homepage": "https://github.com/lvyunqi/gpt-radar-bot",
+      "trust": "community",
+      "versions": [
+        {
+          "schema_version": 1,
+          "version": "0.1.0",
+          "released_at": "2026-08-04T15:33:44Z",
+          "release_tag": "v0.1.0",
+          "channel": "stable",
+          "qimenbot": ">=0.1.18, <0.2.0",
+          "dynamic_api": "0.6",
+          "yanked": false,
+          "data_schema_version": 1,
+          "rollback_safe": true,
+          "changelog": "首次发布：支持 CodexRadar 多模型 IQ 报告、单模型查询、排行、推荐、实时动态、多序列趋势、亮暗主题、API 0.6 管理员在线配置，以及 OneBot 11/官方 QQ Bot 自适应富媒体回复。",
+          "drivers": [
+            {
+              "driver": "onebot11",
+              "scenes": [
+                "private",
+                "group"
+              ],
+              "events": [
+                "message"
+              ],
+              "outbound": [
+                "reply",
+                "rich-message"
+              ]
+            },
+            {
+              "driver": "qq-official",
+              "scenes": [
+                "private",
+                "group-at",
+                "channel-at",
+                "channel-private"
+              ],
+              "events": [
+                "message"
+              ],
+              "outbound": [
+                "reply",
+                "rich-message"
+              ]
+            }
+          ],
+          "assets": [
+            {
+              "target": "x86_64-pc-windows-msvc",
+              "asset_name": "qimen_dynamic_plugin_gpt_radar-x86_64-pc-windows-msvc.dll",
+              "sha256": "4de990d1df3b84e3f976eacaaabae72bff515646334f40d0934ec69e7048ebcf",
+              "size_bytes": 3897856,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-pc-windows-msvc",
+              "asset_name": "qimen_dynamic_plugin_gpt_radar-aarch64-pc-windows-msvc.dll",
+              "sha256": "a520258b058d383768e9acf8f7fe5a4f6eb52f743ea6477c4e5208e1d74276e8",
+              "size_bytes": 3319808,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "x86_64-unknown-linux-gnu",
+              "asset_name": "libqimen_dynamic_plugin_gpt_radar-x86_64-unknown-linux-gnu.so",
+              "sha256": "5a2c5feffb886608c8255fb2d31d1b4053eea1218b49f644108c606547938e99",
+              "size_bytes": 3847976,
+              "min_glibc": "2.31",
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-unknown-linux-gnu",
+              "asset_name": "libqimen_dynamic_plugin_gpt_radar-aarch64-unknown-linux-gnu.so",
+              "sha256": "3a73ae555be7bd0bf0399be4ed8b21fd7ab5f1642bf98a813758fa1e6fcd6837",
+              "size_bytes": 3364600,
+              "min_glibc": "2.31",
+              "github_attestation": true
+            },
+            {
+              "target": "x86_64-apple-darwin",
+              "asset_name": "libqimen_dynamic_plugin_gpt_radar-x86_64-apple-darwin.dylib",
+              "sha256": "6f8fa48b00952023957d968bd5efd0fcdc9bff9f7ec468d270436758e4c8c925",
+              "size_bytes": 3418952,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-apple-darwin",
+              "asset_name": "libqimen_dynamic_plugin_gpt_radar-aarch64-apple-darwin.dylib",
+              "sha256": "41743c1bbba777f50ef74a92b2ec5d2b3b495c5c2f65887305588252150e67ae",
+              "size_bytes": 3173152,
+              "min_glibc": null,
+              "github_attestation": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "newapi-status-bot",
+      "name": "New API 模型状态监控",
+      "summary": "采集 New API 管理日志，提供模型可用率、延迟和异常状态查询与推送。",
+      "description": "面向 New API 运维场景的动态插件。插件按模型白名单轮询管理日志，使用本地 SQLite 聚合请求结果、TTFT 和总耗时，并向 OneBot 11 私聊或群聊返回紧凑状态报告；可按周期、状态变化或异常主动推送。",
+      "type": "dynamic",
+      "repository": "lvyunqi/newapi-status-bot",
+      "repository_id": 1297583488,
+      "license": "Apache-2.0",
+      "authors": [
+        "lvyunqi"
+      ],
+      "categories": [
+        "operations",
+        "monitoring"
+      ],
+      "keywords": [
+        "newapi",
+        "status",
+        "metrics",
+        "latency",
+        "onebot11"
+      ],
+      "homepage": "https://github.com/lvyunqi/newapi-status-bot",
+      "trust": "community",
+      "versions": [
+        {
+          "schema_version": 1,
+          "version": "0.1.9",
+          "released_at": "2026-08-03T16:08:09Z",
+          "release_tag": "newapi-status-bot-v0.1.9",
+          "channel": "stable",
+          "qimenbot": ">=0.1.16, <0.2.0",
+          "dynamic_api": "0.4",
+          "yanked": false,
+          "data_schema_version": 2,
+          "rollback_safe": true,
+          "changelog": "正式增加官方 QQ Bot 兼容声明，支持 C2C、群 @、频道 @、频道私信以及富消息回复和主动推送；QimenBot 最低版本提升至 0.1.16。",
+          "drivers": [
+            {
+              "driver": "onebot11",
+              "scenes": [
+                "private",
+                "group"
+              ],
+              "events": [
+                "message",
+                "meta"
+              ],
+              "outbound": [
+                "reply",
+                "proactive"
+              ]
+            },
+            {
+              "driver": "qq-official",
+              "scenes": [
+                "private",
+                "group-at",
+                "channel-at",
+                "channel-private"
+              ],
+              "events": [
+                "message"
+              ],
+              "outbound": [
+                "reply",
+                "proactive",
+                "rich-message"
+              ]
+            }
+          ],
+          "assets": [
+            {
+              "target": "x86_64-pc-windows-msvc",
+              "asset_name": "qimen_dynamic_plugin_newapi_status_bot-x86_64-pc-windows-msvc.dll",
+              "sha256": "109e87684eea8e45c4dd8793c3c0d23d7a4b5afb229f96987dc7ff108b90bdf7",
+              "size_bytes": 7435264,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-pc-windows-msvc",
+              "asset_name": "qimen_dynamic_plugin_newapi_status_bot-aarch64-pc-windows-msvc.dll",
+              "sha256": "134be10b4d5d8e8a6b2aa46b2239cee769dfe792d105d2b515a603088ed3b0b7",
+              "size_bytes": 6506496,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "x86_64-unknown-linux-gnu",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-x86_64-unknown-linux-gnu.so",
+              "sha256": "7004be6fd66d4a2a14dcde9c5cdc3a5f1726ce24a726e2e6e8f02d6748aa57e2",
+              "size_bytes": 9627696,
+              "min_glibc": "2.31",
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-unknown-linux-gnu",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-aarch64-unknown-linux-gnu.so",
+              "sha256": "8098e48a82fc6012b102a8d4057a9fa6133f4d44c1e4e505b97c6a4873918c33",
+              "size_bytes": 9512832,
+              "min_glibc": "2.31",
+              "github_attestation": true
+            },
+            {
+              "target": "x86_64-apple-darwin",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-x86_64-apple-darwin.dylib",
+              "sha256": "50781fc16f7c5452d213236a306bf65c0fd44c103f173792033027a320f6640f",
+              "size_bytes": 8378908,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-apple-darwin",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-aarch64-apple-darwin.dylib",
+              "sha256": "cf8cefcb8cf371b02daecea321ecbe38c90741ec986a87e16a68fc360b93c5f1",
+              "size_bytes": 8069504,
+              "min_glibc": null,
+              "github_attestation": true
+            }
+          ]
+        },
+        {
+          "schema_version": 1,
+          "version": "0.1.8",
+          "released_at": "2026-08-03T15:00:42Z",
+          "release_tag": "newapi-status-bot-v0.1.8",
+          "channel": "stable",
+          "qimenbot": ">=0.1.12, <0.2.0",
+          "dynamic_api": "0.4",
+          "yanked": false,
+          "data_schema_version": 2,
+          "rollback_safe": true,
+          "changelog": "首次商城收录。支持 New API 白名单模型状态查询、SQLite 历史聚合、健康检查、手动刷新和主动推送；提供六个平台的可验证构建资产。",
+          "drivers": [
+            {
+              "driver": "onebot11",
+              "scenes": [
+                "private",
+                "group"
+              ],
+              "events": [
+                "message",
+                "meta"
+              ],
+              "outbound": [
+                "reply",
+                "proactive"
+              ]
+            }
+          ],
+          "assets": [
+            {
+              "target": "x86_64-pc-windows-msvc",
+              "asset_name": "qimen_dynamic_plugin_newapi_status_bot-x86_64-pc-windows-msvc.dll",
+              "sha256": "e489aa5856bba15c74650d8920cbdcded9e79a65467db64767146bfaf7294989",
+              "size_bytes": 7438336,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-pc-windows-msvc",
+              "asset_name": "qimen_dynamic_plugin_newapi_status_bot-aarch64-pc-windows-msvc.dll",
+              "sha256": "99e89cec8b9cf6dc0cf89ed17c6ae7ece4d0bd387a78cf35250637774750a5d8",
+              "size_bytes": 6506496,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "x86_64-unknown-linux-gnu",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-x86_64-unknown-linux-gnu.so",
+              "sha256": "4182aedffe98f48c90d449215974fc075f615b8b5738c9fbd0c44bfda878c84c",
+              "size_bytes": 9627864,
+              "min_glibc": "2.31",
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-unknown-linux-gnu",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-aarch64-unknown-linux-gnu.so",
+              "sha256": "537c82d9ffeb0012d849c2b0204bb5314a8e3158147d87465a0f092574143a46",
+              "size_bytes": 9512920,
+              "min_glibc": "2.31",
+              "github_attestation": true
+            },
+            {
+              "target": "x86_64-apple-darwin",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-x86_64-apple-darwin.dylib",
+              "sha256": "f30cf67ea9af757a296e3259ff90b15e5a84e6c322334a6a6ec123f74823294b",
+              "size_bytes": 8378900,
+              "min_glibc": null,
+              "github_attestation": true
+            },
+            {
+              "target": "aarch64-apple-darwin",
+              "asset_name": "libqimen_dynamic_plugin_newapi_status_bot-aarch64-apple-darwin.dylib",
+              "sha256": "16a05a3ebdd5d950683c4b26f51d59b7a2061333ec1ceb73ca9305504e90b962",
+              "size_bytes": 8069520,
+              "min_glibc": null,
+              "github_attestation": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }

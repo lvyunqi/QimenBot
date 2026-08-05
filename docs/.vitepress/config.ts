@@ -24,15 +24,16 @@ export default defineConfig({
       { text: '指南', link: '/guide/introduction', activeMatch: '/guide/' },
       { text: '官方 QQ Bot', link: '/guide/qq-official-quickstart', activeMatch: '/guide/qq-official-quickstart' },
       { text: '插件开发', link: '/plugin/overview', activeMatch: '/plugin/' },
-      { text: '商城规范', link: '/marketplace/', activeMatch: '/marketplace/' },
+      { text: '插件库', link: '/marketplace/plugins', activeMatch: '/marketplace/plugins' },
+      { text: '商城规范', link: '/marketplace/', activeMatch: '/marketplace/(?!plugins)' },
       { text: 'API 参考', link: '/api/plugin-api', activeMatch: '/api/' },
       { text: '进阶', link: '/advanced/runtime', activeMatch: '/advanced/' },
-      { text: 'QQ群', link: qqGroupLink },
       {
         text: '相关链接',
         items: [
           { text: 'GitHub', link: 'https://github.com/lvyunqi/QimenBot' },
           { text: 'OneBot 11 协议', link: 'https://github.com/botuniverse/onebot-11' },
+          { text: 'QQ 群', link: qqGroupLink },
           { text: '更新日志', link: '/changelog' },
         ]
       }
@@ -119,6 +120,7 @@ export default defineConfig({
         {
           text: '商城规范',
           items: [
+            { text: '插件库', link: '/marketplace/plugins' },
             { text: '规范总览', link: '/marketplace/' },
             { text: '开源仓库规范', link: '/marketplace/repository-rules' },
             { text: '驱动兼容声明', link: '/marketplace/driver-compatibility' },
