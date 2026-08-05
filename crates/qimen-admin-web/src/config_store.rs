@@ -287,6 +287,12 @@ fn apply_general(document: &mut DocumentMut, update: &GeneralMutation) {
     document["official_host"]["commands"]["help_enabled"] = value(update.command_help_enabled);
     document["official_host"]["commands"]["help_page_size"] =
         value(update.command_help_page_size as i64);
+    document["official_host"]["commands"]["plugins_enabled"] =
+        value(update.command_plugins_enabled);
+    document["official_host"]["commands"]["registry_enabled"] =
+        value(update.command_registry_enabled);
+    document["official_host"]["commands"]["dynamic_errors_enabled"] =
+        value(update.command_dynamic_errors_enabled);
     document["official_host"]["commands"]["prefixes"] = string_array(&update.command_prefixes);
     document["official_host"]["commands"]["private_bare_enabled"] =
         value(update.command_private_bare_enabled);
@@ -549,6 +555,9 @@ mod tests {
             dynamic_plugin_timeout_secs: view.dynamic_plugin_timeout_secs,
             command_help_enabled: false,
             command_help_page_size: 4,
+            command_plugins_enabled: false,
+            command_registry_enabled: true,
+            command_dynamic_errors_enabled: false,
             command_prefixes: vec!["!".to_string(), "::".to_string()],
             command_private_bare_enabled: false,
             command_mention_enabled: true,
@@ -570,6 +579,9 @@ mod tests {
             .unwrap();
         assert!(!saved.config.official_host.commands.help_enabled);
         assert_eq!(saved.config.official_host.commands.help_page_size, 4);
+        assert!(!saved.config.official_host.commands.plugins_enabled);
+        assert!(saved.config.official_host.commands.registry_enabled);
+        assert!(!saved.config.official_host.commands.dynamic_errors_enabled);
         assert_eq!(
             saved.config.official_host.commands.prefixes,
             vec!["!", "::"]

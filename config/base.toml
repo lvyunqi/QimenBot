@@ -93,6 +93,10 @@ dynamic_plugin_timeout_secs = 30
 help_enabled = true
 # 每页展示的插件命令数，有效范围 1-20
 help_page_size = 6
+# 宿主核心管理命令；关闭后插件仍可注册同名命令
+plugins_enabled = true
+registry_enabled = true
+dynamic_errors_enabled = true
 # 可同时配置多个前缀；设为空数组可关闭前缀触发
 prefixes = ["/"]
 # 私聊可直接输入命令，不要求前缀

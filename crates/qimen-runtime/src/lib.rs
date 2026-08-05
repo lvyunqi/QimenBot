@@ -41,8 +41,8 @@ use qimen_host_types::{
 };
 use qimen_message::Message;
 use qimen_plugin_api::{
-    CommandPlugin, OwnedTaskFuture, PluginBundle, RateLimiterConfig, RuntimeBotContext,
-    SystemPlugin, TaskHandle,
+    BuiltinCommandAction, CommandPlugin, OwnedTaskFuture, PluginBundle, RateLimiterConfig,
+    RuntimeBotContext, SystemPlugin, TaskHandle,
 };
 use qimen_protocol_core::{
     ActionMeta, ActionStatus, CapabilitySet, EventKind, IncomingPacket, NormalizedActionRequest,
@@ -2570,9 +2570,10 @@ impl Runtime {
         let outcome = self
             .handle_command_signal(&event, command_dispatcher, command_result, runtime_ctx)
             .await?;
-        let reply = match outcome {
-            NormalizedCommandOutcome::Reply(reply) => Some(reply),
-            NormalizedCommandOutcome::None => None,
+        let (reply, reconnect_after_completion) = match outcome {
+            NormalizedCommandOutcome::Reply(reply) => (Some(reply), false),
+            NormalizedCommandOutcome::ReplyAndReconnect(reply) => (Some(reply), true),
+            NormalizedCommandOutcome::None => (None, false),
         };
 
         if let Some(reply) = reply {
@@ -2593,6 +2594,10 @@ impl Runtime {
             }
         }
 
+        if reconnect_after_completion {
+            self.reconnect_all_bots();
+        }
+
         Ok(SessionSignal::EventHandled)
     }
 
@@ -2604,6 +2609,58 @@ impl Runtime {
         runtime_ctx: &dyn NormalizedActionExecutor,
     ) -> Result<NormalizedCommandOutcome> {
         Ok(match command_result {
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsShow)) => {
+                NormalizedCommandOutcome::Reply(Message::text(self.render_plugin_status_text()?))
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryReport)) => {
+                NormalizedCommandOutcome::Reply(Message::text(render_registry_report(
+                    command_dispatcher,
+                )))
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::RegistryConflicts)) => {
+                NormalizedCommandOutcome::Reply(Message::text(render_registry_conflicts_report(
+                    command_dispatcher,
+                )))
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::DynamicErrors)) => {
+                NormalizedCommandOutcome::Reply(Message::text(render_dynamic_errors_report(
+                    &self.dynamic_plugin_health(),
+                )))
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::DynamicErrorsClear)) => {
+                self.dynamic_runtime
+                    .lock()
+                    .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?
+                    .clear_errors();
+                NormalizedCommandOutcome::Reply(Message::text(
+                    "dynamic runtime error state cleared",
+                ))
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsEnable {
+                plugin_id,
+            })) => {
+                let update = self.update_plugin_state(plugin_id, true)?;
+                self.apply_plugin_state_update(update).await
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsDisable {
+                plugin_id,
+            })) => {
+                let update = self.update_plugin_state(plugin_id, false)?;
+                self.apply_plugin_state_update(update).await
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsReload)) => {
+                match self.rescan_dynamic_plugins().await {
+                    Ok(count) => NormalizedCommandOutcome::ReplyAndReconnect(Message::text(
+                        format!("dynamic plugins reloaded: {count} plugin(s); bots will reconnect"),
+                    )),
+                    Err(error) => NormalizedCommandOutcome::Reply(Message::text(format!(
+                        "plugin reload failed: {error}"
+                    ))),
+                }
+            }
+            Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::Help)) => {
+                NormalizedCommandOutcome::None
+            }
             Some(CommandDispatchSignal::Help { page }) => {
                 NormalizedCommandOutcome::Reply(Message::text(command_dispatcher.render_help(page)))
             }
@@ -3579,6 +3636,177 @@ impl Runtime {
         Ok(())
     }
 
+    fn update_plugin_state(&self, plugin_id: String, enabled: bool) -> Result<PluginStateUpdate> {
+        let plugin_id = plugin_id.trim().to_string();
+        if plugin_id.is_empty() {
+            return Ok(PluginStateUpdate {
+                message: "plugin id is required: /plugins enable <id> or /plugins disable <id>"
+                    .to_string(),
+                reload_dynamic: false,
+            });
+        }
+
+        let static_plugin = self
+            .host_plugin_report()
+            .is_some_and(|report| report.configured_plugins.iter().any(|id| id == &plugin_id));
+        let dynamic_plugin = self
+            .plugin_bin_dir
+            .as_deref()
+            .map(dynamic_runtime::scan_dynamic_plugins)
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .any(|plugin| plugin.plugin_id == plugin_id);
+        if !static_plugin && !dynamic_plugin {
+            return Ok(PluginStateUpdate {
+                message: format!("plugin '{plugin_id}' was not found"),
+                reload_dynamic: false,
+            });
+        }
+
+        let path = self.plugin_state_path.as_deref().ok_or_else(|| {
+            QimenError::Runtime("plugin state path is not configured".to_string())
+        })?;
+        let mut state = load_plugin_state(path)?;
+        if state.is_enabled(&plugin_id) == enabled {
+            return Ok(PluginStateUpdate {
+                message: format!(
+                    "plugin '{plugin_id}' is already {}",
+                    if enabled { "enabled" } else { "disabled" }
+                ),
+                reload_dynamic: false,
+            });
+        }
+
+        state.set_enabled(plugin_id.clone(), enabled);
+        state.save_to_path(path)?;
+        Ok(PluginStateUpdate {
+            message: if dynamic_plugin {
+                format!(
+                    "dynamic plugin '{plugin_id}' {}",
+                    if enabled { "enabled" } else { "disabled" }
+                )
+            } else {
+                format!(
+                    "static plugin '{plugin_id}' {} in {path}; restart the host to apply",
+                    if enabled { "enabled" } else { "disabled" }
+                )
+            },
+            reload_dynamic: dynamic_plugin,
+        })
+    }
+
+    async fn apply_plugin_state_update(
+        &self,
+        update: PluginStateUpdate,
+    ) -> NormalizedCommandOutcome {
+        if !update.reload_dynamic {
+            return NormalizedCommandOutcome::Reply(Message::text(update.message));
+        }
+
+        match self.rescan_dynamic_plugins().await {
+            Ok(count) => NormalizedCommandOutcome::ReplyAndReconnect(Message::text(format!(
+                "{}; {count} dynamic plugin(s) loaded; bots will reconnect",
+                update.message
+            ))),
+            Err(error) => NormalizedCommandOutcome::Reply(Message::text(format!(
+                "{} in plugin state, but dynamic reload failed: {error}",
+                update.message
+            ))),
+        }
+    }
+
+    fn render_plugin_status_text(&self) -> Result<String> {
+        let path = self.plugin_state_path.as_deref().ok_or_else(|| {
+            QimenError::Runtime("plugin state path is not configured".to_string())
+        })?;
+        let state = load_plugin_state(path)?;
+        let report = self
+            .host_plugin_report()
+            .unwrap_or_else(|| HostPluginReport {
+                builtin_modules: Vec::new(),
+                configured_plugins: Vec::new(),
+                available_modules: Vec::new(),
+                persisted_states: BTreeMap::new(),
+                dynamic_plugins: Vec::new(),
+            });
+        let health = self.dynamic_plugin_health();
+        let mut lines = vec!["[plugins]".to_string(), "[static]".to_string()];
+
+        let mut static_count = 0usize;
+        for plugin in report.available_modules.iter().filter(|entry| {
+            entry.kind == "static" && report.configured_plugins.iter().any(|id| id == &entry.id)
+        }) {
+            static_count += 1;
+            lines.push(format!(
+                "  - {} | {} | commands={}",
+                plugin.id,
+                if state.is_enabled(&plugin.id) {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                if plugin.commands.is_empty() {
+                    "-".to_string()
+                } else {
+                    plugin.commands.join(",")
+                }
+            ));
+        }
+        if static_count == 0 {
+            lines.push("  - none".to_string());
+        }
+
+        lines.push("[dynamic]".to_string());
+        match self
+            .plugin_bin_dir
+            .as_deref()
+            .map(dynamic_runtime::scan_dynamic_plugins)
+            .transpose()
+        {
+            Ok(Some(plugins)) if !plugins.is_empty() => {
+                for plugin in plugins {
+                    let loaded = report
+                        .dynamic_plugins
+                        .iter()
+                        .any(|entry| entry.plugin_id == plugin.plugin_id);
+                    let runtime_health = health.iter().find(|entry| entry.path == plugin.path);
+                    lines.push(format!(
+                        "  - {} | {} | loaded={} | failures={} | commands={}",
+                        plugin.plugin_id,
+                        if state.is_enabled(&plugin.plugin_id) {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
+                        if loaded { "yes" } else { "no" },
+                        runtime_health
+                            .map(|entry| entry.failures)
+                            .unwrap_or_default(),
+                        if plugin.commands.is_empty() {
+                            "-".to_string()
+                        } else {
+                            plugin
+                                .commands
+                                .iter()
+                                .map(|command| command.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        }
+                    ));
+                    if let Some(error) =
+                        runtime_health.and_then(|entry| entry.last_error.as_deref())
+                    {
+                        lines.push(format!("    last_error={error}"));
+                    }
+                }
+            }
+            Ok(_) => lines.push("  - none".to_string()),
+            Err(error) => lines.push(format!("  - scan failed: {error}")),
+        }
+        Ok(lines.join("\n"))
+    }
+
     async fn execute_dynamic_system_route(
         &self,
         report: &HostPluginReport,
@@ -3816,7 +4044,13 @@ enum SessionSignal {
 
 enum NormalizedCommandOutcome {
     Reply(Message),
+    ReplyAndReconnect(Message),
     None,
+}
+
+struct PluginStateUpdate {
+    message: String,
+    reload_dynamic: bool,
 }
 
 fn is_inbound_message_payload(payload: &Value) -> bool {
@@ -4690,6 +4924,103 @@ fn value_to_string(value: &Value) -> String {
         Value::Null => String::new(),
         other => other.to_string(),
     }
+}
+
+fn render_registry_report(command_dispatcher: &CommandDispatcher) -> String {
+    let diagnostics = command_dispatcher.registry().diagnostics();
+    let precedence = command_dispatcher.registry().precedence_report();
+    let mut lines = vec!["[registry report]".to_string()];
+
+    lines.push(format!("[conflicts: {}]", diagnostics.len()));
+    if diagnostics.is_empty() {
+        lines.push("  - none".to_string());
+    } else {
+        lines.extend(diagnostics.iter().map(|item| {
+            format!(
+                "  - {} | incoming={} | existing={}",
+                item.key,
+                item.incoming_source,
+                item.existing_sources.join(",")
+            )
+        }));
+    }
+
+    lines.push("[effective commands]".to_string());
+    for (definition, source) in command_dispatcher.describe_commands() {
+        lines.push(format!(
+            "  - {} | source={} | category={} | role={}",
+            definition.name,
+            source,
+            definition.category,
+            match definition.required_role {
+                qimen_plugin_api::CommandRole::Anyone => "anyone",
+                qimen_plugin_api::CommandRole::Admin => "admin",
+                qimen_plugin_api::CommandRole::Owner => "owner",
+            }
+        ));
+    }
+
+    lines.push("[precedence]".to_string());
+    for (key, entries) in precedence {
+        let summary = entries
+            .iter()
+            .map(|(source, priority)| format!("{source}(p={priority})"))
+            .collect::<Vec<_>>()
+            .join(" > ");
+        lines.push(format!("  - {key} => {summary}"));
+    }
+    lines.join("\n")
+}
+
+fn render_registry_conflicts_report(command_dispatcher: &CommandDispatcher) -> String {
+    let diagnostics = command_dispatcher.registry().diagnostics();
+    let mut lines = vec!["[registry conflicts]".to_string()];
+    if diagnostics.is_empty() {
+        lines.push("  - none".to_string());
+        return lines.join("\n");
+    }
+
+    for item in diagnostics {
+        lines.push(format!(
+            "  - {}\n    incoming={}\n    existing={}",
+            item.key,
+            item.incoming_source,
+            item.existing_sources.join(",")
+        ));
+    }
+    lines.join("\n")
+}
+
+fn render_dynamic_errors_report(health: &[qimen_host_types::DynamicRuntimeHealthEntry]) -> String {
+    let mut lines = vec!["[dynamic errors]".to_string()];
+    let failures = health
+        .iter()
+        .filter(|entry| entry.failures > 0 || entry.last_error.is_some())
+        .collect::<Vec<_>>();
+    if failures.is_empty() {
+        lines.push("  - none".to_string());
+        return lines.join("\n");
+    }
+
+    for entry in failures {
+        lines.push(format!(
+            "  - path={}\n    failures={}\n    isolated_until={}\n    last_error={}",
+            entry.path,
+            entry.failures,
+            entry
+                .isolated_until_epoch_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            entry.last_error.as_deref().unwrap_or("-")
+        ));
+        if !entry.recent_errors.is_empty() {
+            lines.push(format!(
+                "    recent_errors={}",
+                entry.recent_errors.join(" | ")
+            ));
+        }
+    }
+    lines.join("\n")
 }
 
 /// Convert a TOML value to a serde_json::Value.

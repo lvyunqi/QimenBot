@@ -223,6 +223,10 @@ plugin_config_dir = "config/plugins"
 # 插件未注册 help/h 时提供分页目录；关闭后 help 完全由插件接管
 help_enabled = true
 help_page_size = 6            # /help 2 查看第 2 页，范围 1-20
+# 三个宿主管理命令可分别关闭；关闭后插件仍可使用同名命令
+plugins_enabled = true        # /plugins：查看、启停和重扫插件
+registry_enabled = true       # /registry：查看命令冲突和优先顺序
+dynamic_errors_enabled = true # /dynamic-errors：查看或清理动态插件错误
 prefixes = ["/"]              # 可配置多个；空数组表示关闭前缀入口
 private_bare_enabled = true   # 私聊可直接输入命令
 mention_enabled = true        # 支持 @机器人 命令
@@ -231,7 +235,7 @@ reply_enabled = true          # 支持回复机器人后输入命令
 
 多个插件注册同名命令时，可以在 Web 管理面板的“插件”页面设置 `0-1000` 的命令优先级。数值越大越先匹配，默认顺序是静态插件 `30`、动态插件 `20`；数值相同才使用插件声明顺序和插件 ID 决定结果。修改会写入 `plugin-state.toml`，并让已启用的 Bot 重连以刷新命令路由。
 
-Runtime 不注册 `ping`、`echo`、`status` 等业务命令，也不再提供聊天内的插件管理命令。只有插件实际注册的命令才会进入路由和帮助目录。宿主的 `help` 是低侵入兜底：插件注册 `help` 或 `h` 后插件优先；也可以在 Web“配置 → 命令入口”中关闭。
+Runtime 不注册 `ping`、`echo`、`status` 等业务命令。宿主只保留需要管理员或所有者权限的 `/plugins`、`/registry` 和 `/dynamic-errors`，三项都能在 Web“配置 → 命令入口”中单独关闭。它们以优先级 `10` 进入普通命令注册表；静态插件默认 `30`、动态插件默认 `20`，因此插件声明同名命令时默认由插件接管。宿主的 `help` 是可关闭、可被插件接管的分页兜底。
 
 ### `[[bots]]` — Bot 实例配置
 
@@ -785,7 +789,7 @@ let status = SendBuilder::channel(channel_id)
 
 ### 运行时管理
 
-插件启用、停用、重新扫描、在线配置和健康状态都在 Web 管理面板的“插件”页操作。管理动作走带 Token 鉴权的 `/api/v1/plugins` 接口，不占用聊天命令名，也不会与第三方插件冲突。静态插件开关需要重启；动态插件可在面板中重新扫描并热加载。
+插件启用、停用、重新扫描、在线配置和健康状态都可以在 Web 管理面板的“插件”页操作，管理动作走带 Token 鉴权的 `/api/v1/plugins` 接口。聊天内也默认提供仅管理员可用的 `/plugins`、`/registry` 和 `/dynamic-errors`；不需要时可逐项关闭，插件也能通过更高的命令优先级接管同名命令。静态插件开关需要重启；动态插件可在面板或聊天命令中重新扫描并热加载。
 
 ### 熔断器机制
 
@@ -800,7 +804,7 @@ let status = SendBuilder::channel(channel_id)
 
 ## 命令入口
 
-框架本身不附带业务命令，`ping`、`echo`、`status` 等名称都由插件决定。默认只启用分页帮助兜底：`/help` 查看第一页，`/help 2` 查看第二页；插件注册 `help` 后会直接接管，也可从 Web 面板关闭兜底。
+框架本身不附带业务命令，`ping`、`echo`、`status` 等名称都由插件决定。默认提供分页帮助兜底，以及仅管理员可用的 `/plugins`、`/registry`、`/dynamic-errors` 三个宿主管理命令；四项都可在 Web 面板关闭，插件注册同名命令且优先级更高时会直接接管。
 
 命令入口支持前缀、私聊直发、`@bot` 提及和回复触发。前缀可配置多个，四类入口都能在“配置 → 命令入口”中独立调整，保存后 Bot 自动重连生效。
 

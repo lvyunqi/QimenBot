@@ -321,6 +321,9 @@ async fn update_general(
     let mut comparable_before = before_general;
     comparable_before.command_help_enabled = saved_general.command_help_enabled;
     comparable_before.command_help_page_size = saved_general.command_help_page_size;
+    comparable_before.command_plugins_enabled = saved_general.command_plugins_enabled;
+    comparable_before.command_registry_enabled = saved_general.command_registry_enabled;
+    comparable_before.command_dynamic_errors_enabled = saved_general.command_dynamic_errors_enabled;
     comparable_before.command_prefixes = saved_general.command_prefixes.clone();
     comparable_before.command_private_bare_enabled = saved_general.command_private_bare_enabled;
     comparable_before.command_mention_enabled = saved_general.command_mention_enabled;

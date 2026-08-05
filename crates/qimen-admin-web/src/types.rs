@@ -133,6 +133,12 @@ pub struct GeneralConfigView {
     pub dynamic_plugin_timeout_secs: u64,
     pub command_help_enabled: bool,
     pub command_help_page_size: usize,
+    #[serde(default = "enabled_by_default")]
+    pub command_plugins_enabled: bool,
+    #[serde(default = "enabled_by_default")]
+    pub command_registry_enabled: bool,
+    #[serde(default = "enabled_by_default")]
+    pub command_dynamic_errors_enabled: bool,
     pub command_prefixes: Vec<String>,
     pub command_private_bare_enabled: bool,
     pub command_mention_enabled: bool,
@@ -180,6 +186,12 @@ pub struct GeneralMutation {
     pub dynamic_plugin_timeout_secs: u64,
     pub command_help_enabled: bool,
     pub command_help_page_size: usize,
+    #[serde(default = "enabled_by_default")]
+    pub command_plugins_enabled: bool,
+    #[serde(default = "enabled_by_default")]
+    pub command_registry_enabled: bool,
+    #[serde(default = "enabled_by_default")]
+    pub command_dynamic_errors_enabled: bool,
     pub command_prefixes: Vec<String>,
     pub command_private_bare_enabled: bool,
     pub command_mention_enabled: bool,
@@ -193,6 +205,10 @@ pub struct GeneralMutation {
     pub webhook_request_timeout_ms: u64,
     pub webhook_max_in_flight: usize,
     pub webhook_access_token: Option<String>,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -349,6 +365,9 @@ pub fn general_view(config: &AppConfig) -> GeneralConfigView {
         dynamic_plugin_timeout_secs: config.official_host.dynamic_plugin_timeout_secs,
         command_help_enabled: config.official_host.commands.help_enabled,
         command_help_page_size: config.official_host.commands.help_page_size,
+        command_plugins_enabled: config.official_host.commands.plugins_enabled,
+        command_registry_enabled: config.official_host.commands.registry_enabled,
+        command_dynamic_errors_enabled: config.official_host.commands.dynamic_errors_enabled,
         command_prefixes: config.official_host.commands.prefixes.clone(),
         command_private_bare_enabled: config.official_host.commands.private_bare_enabled,
         command_mention_enabled: config.official_host.commands.mention_enabled,

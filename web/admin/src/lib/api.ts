@@ -80,6 +80,9 @@ export interface GeneralConfigView {
   dynamic_plugin_timeout_secs: number
   command_help_enabled: boolean
   command_help_page_size: number
+  command_plugins_enabled: boolean
+  command_registry_enabled: boolean
+  command_dynamic_errors_enabled: boolean
   command_prefixes: string[]
   command_private_bare_enabled: boolean
   command_mention_enabled: boolean
@@ -454,6 +457,9 @@ function normalizeConfigView(config: ConfigView): ConfigView {
       ...general,
       command_help_enabled: general.command_help_enabled ?? true,
       command_help_page_size: general.command_help_page_size ?? 6,
+      command_plugins_enabled: general.command_plugins_enabled ?? true,
+      command_registry_enabled: general.command_registry_enabled ?? true,
+      command_dynamic_errors_enabled: general.command_dynamic_errors_enabled ?? true,
       command_prefixes: Array.isArray(general.command_prefixes) ? general.command_prefixes : ["/"],
       command_private_bare_enabled: general.command_private_bare_enabled ?? true,
       command_mention_enabled: general.command_mention_enabled ?? true,
@@ -610,6 +616,9 @@ export interface GeneralMutation {
   dynamic_plugin_timeout_secs: number
   command_help_enabled: boolean
   command_help_page_size: number
+  command_plugins_enabled: boolean
+  command_registry_enabled: boolean
+  command_dynamic_errors_enabled: boolean
   command_prefixes: string[]
   command_private_bare_enabled: boolean
   command_mention_enabled: boolean

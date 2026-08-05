@@ -6,8 +6,8 @@ use qimen_mod_command::{
     CommandTrigger, CommandTriggerPolicy, match_command_input, strip_command_name_and_args,
 };
 use qimen_plugin_api::{
-    CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext, CommandPluginSignal,
-    CommandRole, CommandScope, RuntimeBotContext,
+    BuiltinCommandAction, CommandDefinition, CommandInvocation, CommandPlugin,
+    CommandPluginContext, CommandPluginSignal, CommandRole, CommandScope, RuntimeBotContext,
 };
 use qimen_protocol_core::NormalizedEvent;
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +18,7 @@ use crate::plugin_acl::PluginAclManager;
 #[derive(Debug, Clone)]
 pub enum CommandDispatchSignal {
     Reply(Message),
+    Builtin(BuiltinCommandAction),
     Help {
         page: usize,
     },
@@ -131,6 +132,9 @@ impl CommandDispatcher {
 
     fn rebuild_registry(&mut self) {
         let mut registry = CommandRegistry::with_plugin_priorities(self.plugin_priorities.clone());
+        for definition in builtin_command_definitions(&self.command_config) {
+            registry.add_builtin(definition);
+        }
         let mut sorted_plugins: Vec<_> = self.plugins.iter().collect();
         sorted_plugins.sort_by_key(|plugin| plugin.priority());
         for plugin in sorted_plugins {
@@ -278,6 +282,10 @@ impl<'a> CommandDispatch<'a> {
                     args: parsed.args.clone(),
                 });
             }
+
+            if entry.source_label == "builtin" {
+                return dispatch_builtin_action(entry.definition.name, &parsed.args);
+            }
         }
 
         if self.dispatcher.command_config.help_enabled && is_help_command(&parsed.name) {
@@ -323,12 +331,86 @@ fn parse_help_page(args: &[String]) -> usize {
         .unwrap_or(1)
 }
 
+fn dispatch_builtin_action(command: &str, args: &[String]) -> Option<CommandDispatchSignal> {
+    let action = match command {
+        "plugins" => match args.first().map(String::as_str) {
+            Some("enable") => BuiltinCommandAction::PluginsEnable {
+                plugin_id: args.get(1).cloned().unwrap_or_default(),
+            },
+            Some("disable") => BuiltinCommandAction::PluginsDisable {
+                plugin_id: args.get(1).cloned().unwrap_or_default(),
+            },
+            Some("reload") => BuiltinCommandAction::PluginsReload,
+            _ => BuiltinCommandAction::PluginsShow,
+        },
+        "registry" => match args.first().map(String::as_str) {
+            Some("conflicts") => BuiltinCommandAction::RegistryConflicts,
+            _ => BuiltinCommandAction::RegistryReport,
+        },
+        "dynamic-errors" => match args.first().map(String::as_str) {
+            Some("clear") => BuiltinCommandAction::DynamicErrorsClear,
+            _ => BuiltinCommandAction::DynamicErrors,
+        },
+        _ => return None,
+    };
+    Some(CommandDispatchSignal::Builtin(action))
+}
+
 fn role_allowed(role: &CommandRole, is_admin: bool, is_owner: bool) -> bool {
     match role {
         CommandRole::Anyone => true,
         CommandRole::Admin => is_admin || is_owner,
         CommandRole::Owner => is_owner,
     }
+}
+
+fn builtin_command_definitions(config: &CommandConfig) -> Vec<CommandDefinition> {
+    let mut definitions = Vec::new();
+    if config.plugins_enabled {
+        definitions.push(CommandDefinition {
+            name: "plugins",
+            description: "Show or manage plugin status",
+            aliases: &["pl"],
+            examples: &[
+                "/plugins",
+                "/plugins enable example-plugin",
+                "/plugins disable example-plugin",
+                "/plugins reload",
+            ],
+            category: "host-management",
+            hidden: false,
+            required_role: CommandRole::Admin,
+            scope: CommandScope::All,
+            filter: None,
+        });
+    }
+    if config.registry_enabled {
+        definitions.push(CommandDefinition {
+            name: "registry",
+            description: "Show command conflicts and precedence",
+            aliases: &["reg"],
+            examples: &["/registry", "/registry conflicts"],
+            category: "host-management",
+            hidden: false,
+            required_role: CommandRole::Admin,
+            scope: CommandScope::All,
+            filter: None,
+        });
+    }
+    if config.dynamic_errors_enabled {
+        definitions.push(CommandDefinition {
+            name: "dynamic-errors",
+            description: "Show or clear dynamic plugin runtime errors",
+            aliases: &["derr"],
+            examples: &["/dynamic-errors", "/dynamic-errors clear"],
+            category: "host-management",
+            hidden: false,
+            required_role: CommandRole::Admin,
+            scope: CommandScope::All,
+            filter: None,
+        });
+    }
+    definitions
 }
 
 pub fn render_help_page(
@@ -362,7 +444,7 @@ pub fn render_help_page(
 
     let mut lines = vec![format!("[help {page}/{total_pages}]")];
     if total_items == 0 {
-        lines.push("No plugin commands are currently registered.".to_string());
+        lines.push("No commands are currently registered.".to_string());
     } else {
         lines.extend(render_command_groups(&entries[start..end], prefix));
     }
@@ -457,9 +539,9 @@ mod tests {
     use qimen_error::{QimenError, Result};
     use qimen_message::Message;
     use qimen_plugin_api::{
-        CommandDefinition, CommandInvocation, CommandPlugin, CommandPluginContext,
-        CommandPluginSignal, CommandRole, CommandScope, OwnedTaskFuture, PluginCompatibility,
-        PluginMetadata, RuntimeBotContext, TaskHandle,
+        BuiltinCommandAction, CommandDefinition, CommandInvocation, CommandPlugin,
+        CommandPluginContext, CommandPluginSignal, CommandRole, CommandScope, OwnedTaskFuture,
+        PluginCompatibility, PluginMetadata, RuntimeBotContext, TaskHandle,
     };
     use qimen_protocol_core::{
         ActionStatus, CapabilitySet, EventKind, NormalizedActionRequest, NormalizedActionResponse,
@@ -733,8 +815,11 @@ mod tests {
             "static-plugin:admin-wins"
         );
         let descriptions = dispatcher.describe_commands();
-        assert_eq!(descriptions.len(), 1);
-        assert_eq!(descriptions[0].1, "static-plugin:admin-wins");
+        let shared = descriptions
+            .iter()
+            .find(|(definition, _)| definition.name == "shared")
+            .unwrap();
+        assert_eq!(shared.1, "static-plugin:admin-wins");
     }
 
     #[test]
@@ -780,9 +865,13 @@ mod tests {
         }));
 
         let descriptions = dispatcher.describe_commands();
-        assert_eq!(descriptions.len(), 1);
-        assert_eq!(descriptions[0].0.name, "primary");
-        assert_eq!(descriptions[0].1, "static-plugin:alias-winner");
+        let plugin_descriptions = descriptions
+            .iter()
+            .filter(|(_, source)| source != "builtin")
+            .collect::<Vec<_>>();
+        assert_eq!(plugin_descriptions.len(), 1);
+        assert_eq!(plugin_descriptions[0].0.name, "primary");
+        assert_eq!(plugin_descriptions[0].1, "static-plugin:alias-winner");
     }
 
     fn sample_event(text: &str) -> NormalizedEvent {
@@ -813,14 +902,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_does_not_claim_plugin_commands() {
         let dispatcher = CommandDispatcher::new(CommandConfig::default());
-        for command in [
-            "ping",
-            "echo hello",
-            "status",
-            "plugins",
-            "registry",
-            "dynamic-errors",
-        ] {
+        for command in ["ping", "echo hello", "status"] {
             let event = sample_event(command);
             assert!(
                 dispatcher
@@ -831,6 +913,110 @@ mod tests {
                 "runtime unexpectedly claimed {command}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn host_management_commands_are_configurable_and_require_admin() {
+        let dispatcher = CommandDispatcher::new(CommandConfig::default());
+        for command in ["plugins", "pl", "registry", "reg", "dynamic-errors", "derr"] {
+            let event = sample_event(command);
+            assert!(matches!(
+                dispatcher
+                    .dispatch("qq-main", &event, &TEST_RUNTIME)
+                    .execute()
+                    .await,
+                Some(CommandDispatchSignal::Reply(message))
+                    if message.plain_text().contains("permission denied")
+            ));
+        }
+
+        let event = sample_event("plugins");
+        assert!(matches!(
+            dispatcher
+                .dispatch("qq-main", &event, &TEST_RUNTIME)
+                .with_roles(true, false)
+                .execute()
+                .await,
+            Some(CommandDispatchSignal::Builtin(
+                BuiltinCommandAction::PluginsShow
+            ))
+        ));
+
+        let event = sample_event("registry");
+        assert!(matches!(
+            dispatcher
+                .dispatch("qq-main", &event, &TEST_RUNTIME)
+                .with_roles(false, true)
+                .execute()
+                .await,
+            Some(CommandDispatchSignal::Builtin(
+                BuiltinCommandAction::RegistryReport
+            ))
+        ));
+
+        let disabled = CommandConfig {
+            plugins_enabled: false,
+            registry_enabled: false,
+            dynamic_errors_enabled: false,
+            ..CommandConfig::default()
+        };
+        let dispatcher = CommandDispatcher::new(disabled);
+        for command in ["plugins", "registry", "dynamic-errors"] {
+            let event = sample_event(command);
+            assert!(
+                dispatcher
+                    .dispatch("qq-main", &event, &TEST_RUNTIME)
+                    .with_roles(true, false)
+                    .execute()
+                    .await
+                    .is_none(),
+                "disabled host command unexpectedly claimed {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_host_command_does_not_reserve_its_name_or_alias() {
+        let config = CommandConfig {
+            plugins_enabled: false,
+            ..CommandConfig::default()
+        };
+        let mut dispatcher = CommandDispatcher::new(config);
+        dispatcher.register_plugin(Arc::new(AliasPlugin {
+            id: "plugin-management",
+            command: "plugins",
+            aliases: &["pl"],
+        }));
+
+        for command in ["plugins", "pl"] {
+            assert_eq!(
+                dispatcher
+                    .registry()
+                    .match_command(command)
+                    .unwrap()
+                    .source_label,
+                "static-plugin:plugin-management"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_priority_can_override_host_management_commands() {
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
+        dispatcher.register_plugin(Arc::new(AliasPlugin {
+            id: "plugin-management",
+            command: "plugins",
+            aliases: &[],
+        }));
+
+        assert_eq!(
+            dispatcher
+                .registry()
+                .match_command("plugins")
+                .unwrap()
+                .source_label,
+            "static-plugin:plugin-management"
+        );
     }
 
     #[tokio::test]

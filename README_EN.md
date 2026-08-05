@@ -206,9 +206,9 @@ Event received
 
 ## Command Entry
 
-The runtime does not register business commands. Names such as `ping`, `echo`, `status`, and `plugins` only respond when a static or dynamic plugin registers them. The optional host help fallback supports `/help [page]`; a plugin that registers `help` or `h` takes precedence.
+The runtime does not register business commands such as `ping`, `echo`, or `status`. It keeps three administrator-only host commands by default: `/plugins`, `/registry`, and `/dynamic-errors`. Each can be disabled independently, and all three use normal registry precedence at priority `10`, so static (`30`) and dynamic (`20`) plugins override the same names by default. The optional host help fallback supports `/help [page]`; a plugin that registers `help` or `h` takes precedence.
 
-Prefixes, bare private commands, `@bot` mentions, reply-based triggers, help availability, and help page size are configured under `[official_host.commands]` or on the Web panel's **Configuration → Command Entry** page.
+Prefixes, bare private commands, `@bot` mentions, reply-based triggers, help availability, help page size, and the three host command switches are configured under `[official_host.commands]` or on the Web panel's **Configuration → Command Entry** page.
 
 ## Project Structure
 

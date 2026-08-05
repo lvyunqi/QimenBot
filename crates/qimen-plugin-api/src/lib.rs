@@ -1412,12 +1412,11 @@ pub struct CommandInvocation {
     pub source_text: String,
 }
 
-/// Legacy host action identifiers kept for static-plugin source compatibility.
+/// Host-provided command actions for plugin management and diagnostics.
 ///
-/// The runtime no longer registers or dispatches these chat commands. Plugin
-/// management is exposed through the authenticated admin API, and plugins may
-/// freely register the corresponding command names themselves.
-#[deprecated(note = "host chat commands were removed; use plugin commands or the admin API")]
+/// These actions are emitted only for enabled host commands that win command
+/// registry precedence. Static and dynamic plugins can still override the same
+/// names through the normal priority rules.
 #[derive(Debug, Clone)]
 pub enum BuiltinCommandAction {
     Help,

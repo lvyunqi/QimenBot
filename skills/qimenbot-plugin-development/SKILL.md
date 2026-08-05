@@ -46,7 +46,7 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - 官方 QQ 本地媒体通过通用 Base64 消息段交给宿主处理；插件不读取 Bot 凭据、不自行实现分片上传，也不把 Base64 正文写入日志。
 - 不把 Secret、Token、用户配置、数据库或编译后的动态库提交到 QimenBot 主仓库。
 - 主框架代码必须保持插件无关；具体插件逻辑只能进入插件目录或独立插件仓库。
-- Runtime 不附带 `ping`、`echo`、`status`、`plugins` 等聊天命令。命令是否存在只看插件描述符；宿主 `help` 是可关闭、可被插件接管的分页兜底。
+- Runtime 不附带 `ping`、`echo`、`status` 等业务命令。宿主默认保留可逐项关闭的管理员命令 `plugins`、`registry`、`dynamic-errors`，固定优先级为 `10`；插件优先级更高时可接管同名命令。宿主 `help` 是可关闭、可被插件接管的分页兜底。
 - 命令前缀、私聊裸命令、@ 和回复入口由 `[official_host.commands]` 控制。插件不要自行删除协议 @ 标签或硬编码 `/`。
 - 动态插件回调是同步 FFI，不直接使用 `async fn`；跨 FFI 边界只用 Host API 提供的 ABI 稳定类型。
 - API 0.6 配置必须使用独立 Schema 描述符；不要把字段追加到旧 `PluginDescriptor`，也不要让插件提供 HTML/JavaScript。

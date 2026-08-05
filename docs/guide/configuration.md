@@ -168,12 +168,13 @@ plugin_modules = ["example-plugin", "my-plugin"]
 
 | 来源 | 默认值 | 能否在面板修改 |
 | --- | ---: | --- |
+| 宿主管理命令 | `10` | 不能修改数值，可逐项关闭 |
 | 静态插件 | `30` | 可以 |
 | 动态插件 | `20` | 可以 |
 
 优先级相同时，先比较插件声明的次级顺序：静态插件使用 `CommandPlugin::priority()`，该值较小的排在前面；动态插件使用兼容默认值 `200`。仍然相同则按插件 ID 排序，保证每次启动的结果一致。
 
-Runtime 不注册 `ping`、`echo`、`status`、`plugins`、`registry` 或 `dynamic-errors`。这些名称只有在静态或动态插件声明后才会响应。`help`/`h` 是唯一的宿主兜底，但它在插件匹配之后执行：插件注册同名命令时插件直接接管；`help_enabled = false` 时宿主也不再响应。
+Runtime 不注册 `ping`、`echo`、`status` 等业务命令。宿主默认注册 `/plugins`、`/registry` 和 `/dynamic-errors` 三个管理命令，均要求管理员或所有者权限，并以优先级 `10` 参加普通注册表排序。静态、动态插件的默认优先级分别是 `30`、`20`，所以插件声明同名命令时默认由插件接管；关闭某个宿主命令后，其命令名和别名都不再保留。`help`/`h` 在插件匹配失败后兜底，插件注册同名命令时直接接管。
 
 设置后会写入 `plugin_state_path` 指向的文件：
 
@@ -191,7 +192,7 @@ Runtime 不注册 `ping`、`echo`、`status`、`plugins`、`registry` 或 `dynam
 
 前缀、私聊裸命令、@ 提及和回复是四种独立入口。群聊普通文本不会直接进入命令路由；要么带 `prefixes` 中的前缀，要么明确 @/回复机器人。`prefixes` 可以配置 `/`、`!` 等多个值，最长匹配优先。
 
-宿主帮助按实际注册的插件命令生成，不维护另一份固定清单，因此停用插件后不会残留旧的 `ping` 或其他命令。默认每页 6 条：
+宿主帮助按当前有效注册表生成，不维护另一份固定清单，因此停用插件后不会残留旧的 `ping` 或其他业务命令；已开启且未被插件覆盖的三个宿主管理命令会正常进入目录。默认每页 6 条：
 
 ```text
 /help      # 第 1 页
@@ -221,6 +222,9 @@ plugin_config_dir = "config/plugins"
 [official_host.commands]
 help_enabled = true          # 插件未接管 help/h 时提供分页目录
 help_page_size = 6           # /help 2 查看第 2 页，范围 1-20
+plugins_enabled = true       # /plugins：插件状态、启停和动态重扫
+registry_enabled = true      # /registry：命令冲突和优先顺序
+dynamic_errors_enabled = true # /dynamic-errors：动态插件错误状态
 prefixes = ["/"]             # 支持多个前缀；空数组关闭前缀入口
 private_bare_enabled = true  # 私聊可不带前缀
 mention_enabled = true       # @机器人 后可直接输入命令

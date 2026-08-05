@@ -32,6 +32,9 @@ dynamic_plugin_timeout_secs = 30
 [official_host.commands]
 help_enabled = true
 help_page_size = 6
+plugins_enabled = true
+registry_enabled = true
+dynamic_errors_enabled = true
 prefixes = ["/"]
 private_bare_enabled = true
 mention_enabled = true
@@ -61,7 +64,7 @@ enabled = true
 - `[[bots]].id`：部署实例别名，可能随部署改变。
 - `[[bots]].account_id`：主动发送的稳定账号选择器。
 - `official_host.webhook`：API 0.5/0.6 动态 Webhook 的统一网关，不是单个插件配置。
-- `official_host.commands`：宿主统一命令入口和分页 help 兜底；不定义插件业务命令。
+- `official_host.commands`：宿主统一命令入口、分页 help 兜底和三个管理员管理命令开关；不定义插件业务命令。
 
 动态插件自身配置位于 `official_host.plugin_config_dir/<plugin_id>.toml`，默认就是
 `config/plugins/<plugin_id>.toml`。配置文件名必须与动态描述符 ID 完全一致。宿主会
@@ -140,7 +143,7 @@ Web 插件页的“重新扫描”或 `POST /api/v1/plugins/reload` 只重扫动
 
 ## 管理入口与插件命令边界
 
-Runtime 不再提供聊天内的插件管理命令。插件状态、热重载、在线配置、健康信息和命令优先级统一使用 Web 管理面板或带管理 Token 的 API：
+插件状态、热重载、在线配置、健康信息和命令优先级可以使用 Web 管理面板或带管理 Token 的 API：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -149,7 +152,7 @@ Runtime 不再提供聊天内的插件管理命令。插件状态、热重载、
 | `POST` | `/api/v1/plugins/reload` | 重新扫描并热重载动态插件 |
 | `PUT` | `/api/v1/plugins/<id>/priority` | 调整同名命令优先级 |
 
-`ping`、`echo`、`status`、`plugins`、`registry` 和 `dynamic-errors` 都可以由插件正常注册。宿主只在插件未接管时提供可关闭的分页 `help`；插件声明 `help` 或 `h` 后插件优先。
+聊天内默认还提供 `/plugins`、`/registry` 和 `/dynamic-errors`，均要求管理员或所有者权限。三者固定以优先级 `10` 进入普通命令注册表，可以在 Web“配置 → 命令入口”逐项关闭；关闭后宿主不保留对应命令名和别名。静态插件默认优先级 `30`、动态插件默认 `20`，所以插件声明同名命令时通常会接管。`ping`、`echo`、`status` 始终完全由插件提供。宿主只在插件未接管时提供可关闭的分页 `help`；插件声明 `help` 或 `h` 后插件优先。
 
 ## 官方 QQ Bot 兼容规则
 

@@ -33,6 +33,9 @@ dynamic_plugin_timeout_secs = 30
 [official_host.commands]
 help_enabled = true
 help_page_size = 6
+plugins_enabled = true
+registry_enabled = true
+dynamic_errors_enabled = true
 prefixes = ["/"]
 private_bare_enabled = true
 mention_enabled = true

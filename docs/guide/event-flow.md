@@ -95,6 +95,8 @@ for interceptor in &interceptor_chain {
 
 Runtime 只做解析和路由，不注册 `ping`、`echo`、`status` 等业务命令。上表命令名仅作为插件命令示例；没有插件声明时不会产生回复。
 
+宿主另有三个可关闭的管理员命令：`/plugins`、`/registry` 和 `/dynamic-errors`。它们和插件命令共用注册表及优先级规则，不会绕过插件抢占同名命令。
+
 ### 第 7 步：插件分发
 
 匹配到的命令会被路由到对应的 `CommandPlugin`：

@@ -141,6 +141,15 @@ pub struct CommandConfig {
     pub help_enabled: bool,
     #[serde(default = "default_help_page_size")]
     pub help_page_size: usize,
+    /// Provide the host `/plugins` management command when no plugin overrides it.
+    #[serde(default = "default_true")]
+    pub plugins_enabled: bool,
+    /// Provide the host `/registry` diagnostics command when no plugin overrides it.
+    #[serde(default = "default_true")]
+    pub registry_enabled: bool,
+    /// Provide the host `/dynamic-errors` diagnostics command when no plugin overrides it.
+    #[serde(default = "default_true")]
+    pub dynamic_errors_enabled: bool,
     /// Prefixes accepted in group, channel, and private conversations.
     #[serde(default = "default_command_prefixes")]
     pub prefixes: Vec<String>,
@@ -160,6 +169,9 @@ impl Default for CommandConfig {
         Self {
             help_enabled: true,
             help_page_size: default_help_page_size(),
+            plugins_enabled: true,
+            registry_enabled: true,
+            dynamic_errors_enabled: true,
             prefixes: default_command_prefixes(),
             private_bare_enabled: true,
             mention_enabled: true,
@@ -828,6 +840,9 @@ transport = "ws-forward"
         assert_eq!(config.official_host.plugin_config_dir, "config/plugins");
         assert!(config.official_host.commands.help_enabled);
         assert_eq!(config.official_host.commands.help_page_size, 6);
+        assert!(config.official_host.commands.plugins_enabled);
+        assert!(config.official_host.commands.registry_enabled);
+        assert!(config.official_host.commands.dynamic_errors_enabled);
         assert_eq!(config.official_host.commands.prefixes, vec!["/"]);
         assert!(config.official_host.commands.private_bare_enabled);
         assert!(config.official_host.commands.mention_enabled);
@@ -850,6 +865,9 @@ transport = "ws-forward"
             r#"
 help_enabled = false
 help_page_size = 4
+plugins_enabled = false
+registry_enabled = true
+dynamic_errors_enabled = false
 prefixes = ["/", "!"]
 private_bare_enabled = false
 mention_enabled = true
@@ -861,6 +879,9 @@ reply_enabled = false
         config.validate().unwrap();
         assert!(!config.official_host.commands.help_enabled);
         assert_eq!(config.official_host.commands.help_page_size, 4);
+        assert!(!config.official_host.commands.plugins_enabled);
+        assert!(config.official_host.commands.registry_enabled);
+        assert!(!config.official_host.commands.dynamic_errors_enabled);
         assert_eq!(config.official_host.commands.prefixes, vec!["/", "!"]);
         assert!(!config.official_host.commands.private_bare_enabled);
         assert!(config.official_host.commands.mention_enabled);

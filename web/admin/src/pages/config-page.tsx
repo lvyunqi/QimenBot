@@ -3,6 +3,7 @@ import type React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 import {
   AlertTriangle,
+  Activity,
   AtSign,
   BookOpenText,
   Check,
@@ -11,6 +12,7 @@ import {
   Gauge,
   History,
   Keyboard,
+  ListTree,
   PanelTop,
   Plus,
   Puzzle,
@@ -379,12 +381,17 @@ function CommandSection({
     general.command_mention_enabled,
     general.command_reply_enabled,
   ].filter(Boolean).length
+  const hostCommandCount = [
+    general.command_plugins_enabled,
+    general.command_registry_enabled,
+    general.command_dynamic_errors_enabled,
+  ].filter(Boolean).length
 
   return (
     <ConfigSection
       title="命令入口"
       description="命令本身由插件注册；这里仅控制消息如何进入命令路由，以及是否启用宿主帮助兜底。"
-      badge={<Badge variant="default">{triggerCount} 个入口</Badge>}
+      badge={<Badge variant="default">{triggerCount} 个入口 · {hostCommandCount} 条管理</Badge>}
     >
       <div className="config-form-grid">
         <ToggleSetting
@@ -402,6 +409,14 @@ function CommandSection({
           max={20}
           onChange={(command_help_page_size) => patch({ command_help_page_size })}
         />
+        <Field
+          label="宿主管理命令"
+          hint="仅保留插件管理与故障诊断。关闭某项后，插件仍可注册同名命令。"
+          wide
+          controlGroup
+        >
+          <HostCommandPicker general={general} patch={patch} />
+        </Field>
         <Field label="消息触发方式" hint="每种入口独立生效。群聊普通文本不会被当作命令。" wide controlGroup>
           <CommandTriggerPicker general={general} patch={patch} />
         </Field>
@@ -415,11 +430,68 @@ function CommandSection({
       <div className="security-note command-ownership-note">
         <BookOpenText />
         <div>
-          <strong>Runtime 不再注册业务命令</strong>
-          <span>ping、echo、status、plugins、registry 和 dynamic-errors 均不会由宿主响应；插件注册同名命令后直接接管。</span>
+          <strong>宿主只保留可关闭的管理命令</strong>
+          <span>plugins、registry 和 dynamic-errors 负责插件管理与故障诊断，并参与正常优先级竞争；ping、echo 和 status 仍完全交给插件。</span>
         </div>
       </div>
     </ConfigSection>
+  )
+}
+
+function HostCommandPicker({
+  general,
+  patch,
+}: {
+  general: GeneralConfigView
+  patch: (next: Partial<GeneralConfigView>) => void
+}) {
+  const options = [
+    {
+      key: "command_plugins_enabled" as const,
+      icon: Puzzle,
+      label: "插件管理",
+      code: "/plugins",
+      description: "查看、启停和重扫插件。",
+    },
+    {
+      key: "command_registry_enabled" as const,
+      icon: ListTree,
+      label: "命令注册表",
+      code: "/registry",
+      description: "查看冲突与最终优先顺序。",
+    },
+    {
+      key: "command_dynamic_errors_enabled" as const,
+      icon: Activity,
+      label: "动态错误",
+      code: "/dynamic-errors",
+      description: "查看或清理运行时错误状态。",
+    },
+  ]
+
+  return (
+    <div className="command-option-grid" role="group" aria-label="宿主管理命令">
+      {options.map((option) => {
+        const selected = general[option.key]
+        const Icon = option.icon
+        return (
+          <button
+            type="button"
+            key={option.key}
+            className={cn(selected && "is-selected")}
+            aria-pressed={selected}
+            onClick={() => patch({ [option.key]: !selected })}
+          >
+            <span className="command-option-icon"><Icon /></span>
+            <span className="command-option-copy">
+              <span><strong>{option.label}</strong><Badge variant={selected ? "success" : "neutral"}>{selected ? "已启用" : "已关闭"}</Badge></span>
+              <code>{option.code}</code>
+              <small>{option.description}</small>
+            </span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
