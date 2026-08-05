@@ -307,6 +307,7 @@ fn parse_command_input(
         CommandTriggerPolicy {
             prefixes: &command_config.prefixes,
             private_bare_enabled: command_config.private_bare_enabled,
+            group_bare_enabled: command_config.group_bare_enabled,
             mention_enabled: command_config.mention_enabled,
             reply_enabled: command_config.reply_enabled,
         },
@@ -899,6 +900,23 @@ mod tests {
         }
     }
 
+    fn sample_group_event(text: &str) -> NormalizedEvent {
+        let mut event = sample_event(text);
+        event.chat = Some(qimen_protocol_core::ChatRef {
+            id: "20001".to_string(),
+            kind: "group".to_string(),
+        });
+        event.raw_json = serde_json::json!({
+            "self_id": 123456,
+            "post_type": "message",
+            "message_type": "group",
+            "group_id": 20001,
+            "user_id": 10001,
+            "message": text,
+        });
+        event
+    }
+
     #[tokio::test]
     async fn runtime_does_not_claim_plugin_commands() {
         let dispatcher = CommandDispatcher::new(CommandConfig::default());
@@ -1036,6 +1054,44 @@ mod tests {
             }
             _ => panic!("expected command reply signal"),
         }
+    }
+
+    #[tokio::test]
+    async fn group_bare_setting_routes_registered_plugins() {
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
+        dispatcher.register_plugin(Arc::new(PluginEcho));
+
+        let signal = dispatcher
+            .dispatch("qq-main", &sample_group_event("status"), &TEST_RUNTIME)
+            .execute()
+            .await;
+        assert!(matches!(
+            signal,
+            Some(CommandDispatchSignal::Reply(message))
+                if message.plain_text() == "plugin status"
+        ));
+
+        let config = CommandConfig {
+            group_bare_enabled: false,
+            ..CommandConfig::default()
+        };
+        let mut dispatcher = CommandDispatcher::new(config);
+        dispatcher.register_plugin(Arc::new(PluginEcho));
+        assert!(
+            dispatcher
+                .dispatch("qq-main", &sample_group_event("status"), &TEST_RUNTIME)
+                .execute()
+                .await
+                .is_none()
+        );
+        assert!(matches!(
+            dispatcher
+                .dispatch("qq-main", &sample_group_event("/status"), &TEST_RUNTIME)
+                .execute()
+                .await,
+            Some(CommandDispatchSignal::Reply(message))
+                if message.plain_text() == "plugin status"
+        ));
     }
 
     #[tokio::test]

@@ -101,6 +101,8 @@ dynamic_errors_enabled = true
 prefixes = ["/"]
 # 私聊可直接输入命令，不要求前缀
 private_bare_enabled = true
+# 群聊可直接输入命令，不要求前缀或 @ 机器人
+group_bare_enabled = true
 # 群聊 @ 机器人后可直接输入命令
 mention_enabled = true
 # 回复机器人消息后可直接输入命令

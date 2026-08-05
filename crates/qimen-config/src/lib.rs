@@ -156,6 +156,9 @@ pub struct CommandConfig {
     /// Accept a command without a prefix in private conversations.
     #[serde(default = "default_true")]
     pub private_bare_enabled: bool,
+    /// Accept a command without a prefix in group conversations.
+    #[serde(default = "default_true")]
+    pub group_bare_enabled: bool,
     /// Accept text directed at the Bot with a leading mention.
     #[serde(default = "default_true")]
     pub mention_enabled: bool,
@@ -174,6 +177,7 @@ impl Default for CommandConfig {
             dynamic_errors_enabled: true,
             prefixes: default_command_prefixes(),
             private_bare_enabled: true,
+            group_bare_enabled: true,
             mention_enabled: true,
             reply_enabled: true,
         }
@@ -845,6 +849,7 @@ transport = "ws-forward"
         assert!(config.official_host.commands.dynamic_errors_enabled);
         assert_eq!(config.official_host.commands.prefixes, vec!["/"]);
         assert!(config.official_host.commands.private_bare_enabled);
+        assert!(config.official_host.commands.group_bare_enabled);
         assert!(config.official_host.commands.mention_enabled);
         assert!(config.official_host.commands.reply_enabled);
         assert_eq!(config.official_host.proactive_send.queue_capacity, 256);
@@ -870,6 +875,7 @@ registry_enabled = true
 dynamic_errors_enabled = false
 prefixes = ["/", "!"]
 private_bare_enabled = false
+group_bare_enabled = false
 mention_enabled = true
 reply_enabled = false
 "#,
@@ -884,6 +890,7 @@ reply_enabled = false
         assert!(!config.official_host.commands.dynamic_errors_enabled);
         assert_eq!(config.official_host.commands.prefixes, vec!["/", "!"]);
         assert!(!config.official_host.commands.private_bare_enabled);
+        assert!(!config.official_host.commands.group_bare_enabled);
         assert!(config.official_host.commands.mention_enabled);
         assert!(!config.official_host.commands.reply_enabled);
     }

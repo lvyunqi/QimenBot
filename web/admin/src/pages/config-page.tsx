@@ -13,6 +13,7 @@ import {
   History,
   Keyboard,
   ListTree,
+  MessageSquare,
   PanelTop,
   Plus,
   Puzzle,
@@ -378,6 +379,7 @@ function CommandSection({
   const triggerCount = [
     general.command_prefixes.length > 0,
     general.command_private_bare_enabled,
+    general.command_group_bare_enabled,
     general.command_mention_enabled,
     general.command_reply_enabled,
   ].filter(Boolean).length
@@ -417,10 +419,10 @@ function CommandSection({
         >
           <HostCommandPicker general={general} patch={patch} />
         </Field>
-        <Field label="消息触发方式" hint="每种入口独立生效。群聊普通文本不会被当作命令。" wide controlGroup>
+        <Field label="消息触发方式" hint="每种入口独立生效；关闭群聊直接输入后，群聊仍可用前缀、@ 或回复触发。" wide controlGroup>
           <CommandTriggerPicker general={general} patch={patch} />
         </Field>
-        <Field label="命令前缀" hint="可同时启用多个前缀；全部取消后，群聊只能通过 @ 或回复触发。" wide controlGroup>
+        <Field label="命令前缀" hint="可同时启用多个前缀；全部取消后仍可按已启用的群聊直接输入、@ 或回复入口触发。" wide controlGroup>
           <CommandPrefixPicker
             values={general.command_prefixes}
             onChange={(command_prefixes) => patch({ command_prefixes })}
@@ -509,6 +511,13 @@ function CommandTriggerPicker({
       label: "私聊直接输入",
       code: "help",
       description: "仅私聊允许不带前缀。",
+    },
+    {
+      key: "command_group_bare_enabled" as const,
+      icon: MessageSquare,
+      label: "群聊直接输入",
+      code: "ping",
+      description: "无需前缀或 @；平台需开放群全量消息。",
     },
     {
       key: "command_mention_enabled" as const,

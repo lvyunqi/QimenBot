@@ -144,6 +144,7 @@ export function generalToMutation(
     command_dynamic_errors_enabled: general.command_dynamic_errors_enabled,
     command_prefixes: general.command_prefixes,
     command_private_bare_enabled: general.command_private_bare_enabled,
+    command_group_bare_enabled: general.command_group_bare_enabled,
     command_mention_enabled: general.command_mention_enabled,
     command_reply_enabled: general.command_reply_enabled,
     proactive_queue_capacity: general.proactive_queue_capacity,

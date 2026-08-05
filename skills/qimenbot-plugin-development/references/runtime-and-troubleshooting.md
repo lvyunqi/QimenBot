@@ -38,6 +38,7 @@ registry_enabled = true
 dynamic_errors_enabled = true
 prefixes = ["/"]
 private_bare_enabled = true
+group_bare_enabled = true
 mention_enabled = true
 reply_enabled = true
 

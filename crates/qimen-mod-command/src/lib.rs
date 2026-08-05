@@ -21,6 +21,7 @@ impl Module for CommandModule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandTrigger {
     Private,
+    Group,
     Prefix,
     Mention,
     Reply,
@@ -37,6 +38,7 @@ pub struct MatchedCommandInput {
 pub struct CommandTriggerPolicy<'a> {
     pub prefixes: &'a [String],
     pub private_bare_enabled: bool,
+    pub group_bare_enabled: bool,
     pub mention_enabled: bool,
     pub reply_enabled: bool,
 }
@@ -76,6 +78,18 @@ pub fn match_command_input(
             command_text,
             source_text: message.plain_text(),
         });
+    }
+
+    if event.is_group() && policy.group_bare_enabled {
+        let source_text = message.plain_text();
+        let command_text = source_text.trim().to_string();
+        if !command_text.is_empty() {
+            return Some(MatchedCommandInput {
+                trigger: CommandTrigger::Group,
+                command_text,
+                source_text,
+            });
+        }
     }
 
     if event.is_private() && policy.private_bare_enabled {
@@ -271,6 +285,7 @@ mod tests {
         CommandTriggerPolicy {
             prefixes,
             private_bare_enabled: true,
+            group_bare_enabled: true,
             mention_enabled: true,
             reply_enabled: true,
         }
@@ -301,10 +316,22 @@ mod tests {
             ..policy(&prefixes)
         };
         assert!(match_command_input(&private, disabled).is_none());
-        assert!(
-            match_command_input(&event("group", Message::text("status")), policy(&prefixes))
-                .is_none()
-        );
+    }
+
+    #[test]
+    fn group_bare_command_is_available_when_enabled() {
+        let prefixes = vec!["/".to_string()];
+        let matched =
+            match_command_input(&event("group", Message::text("status")), policy(&prefixes));
+        let matched = matched.unwrap();
+        assert_eq!(matched.trigger, CommandTrigger::Group);
+        assert_eq!(matched.command_text, "status");
+
+        let disabled = CommandTriggerPolicy {
+            group_bare_enabled: false,
+            ..policy(&prefixes)
+        };
+        assert!(match_command_input(&event("group", Message::text("status")), disabled).is_none());
     }
 
     #[test]

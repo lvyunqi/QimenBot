@@ -326,6 +326,7 @@ async fn update_general(
     comparable_before.command_dynamic_errors_enabled = saved_general.command_dynamic_errors_enabled;
     comparable_before.command_prefixes = saved_general.command_prefixes.clone();
     comparable_before.command_private_bare_enabled = saved_general.command_private_bare_enabled;
+    comparable_before.command_group_bare_enabled = saved_general.command_group_bare_enabled;
     comparable_before.command_mention_enabled = saved_general.command_mention_enabled;
     comparable_before.command_reply_enabled = saved_general.command_reply_enabled;
     let other_settings_changed = comparable_before != saved_general;

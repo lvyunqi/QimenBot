@@ -190,7 +190,7 @@ Runtime 不注册 `ping`、`echo`、`status` 等业务命令。宿主默认注�
 
 ### 命令入口和帮助分页
 
-前缀、私聊裸命令、@ 提及和回复是四种独立入口。群聊普通文本不会直接进入命令路由；要么带 `prefixes` 中的前缀，要么明确 @/回复机器人。`prefixes` 可以配置 `/`、`!` 等多个值，最长匹配优先。
+前缀、私聊直接输入、群聊直接输入、@ 提及和回复是五种独立入口。`group_bare_enabled = true` 时，群聊可直接发送已注册命令，不要求前缀或 @；关闭后才需要使用其他已开启入口。`prefixes` 可以配置 `/`、`!` 等多个值，最长匹配优先。
 
 宿主帮助按当前有效注册表生成，不维护另一份固定清单，因此停用插件后不会残留旧的 `ping` 或其他业务命令；已开启且未被插件覆盖的三个宿主管理命令会正常进入目录。默认每页 6 条：
 
@@ -227,6 +227,7 @@ registry_enabled = true      # /registry：命令冲突和优先顺序
 dynamic_errors_enabled = true # /dynamic-errors：动态插件错误状态
 prefixes = ["/"]             # 支持多个前缀；空数组关闭前缀入口
 private_bare_enabled = true  # 私聊可不带前缀
+group_bare_enabled = true    # 群聊可不带前缀或 @ 机器人
 mention_enabled = true       # @机器人 后可直接输入命令
 reply_enabled = true         # 回复机器人后可直接输入命令
 ```

@@ -141,6 +141,8 @@ pub struct GeneralConfigView {
     pub command_dynamic_errors_enabled: bool,
     pub command_prefixes: Vec<String>,
     pub command_private_bare_enabled: bool,
+    #[serde(default = "enabled_by_default")]
+    pub command_group_bare_enabled: bool,
     pub command_mention_enabled: bool,
     pub command_reply_enabled: bool,
     pub proactive_queue_capacity: usize,
@@ -194,6 +196,8 @@ pub struct GeneralMutation {
     pub command_dynamic_errors_enabled: bool,
     pub command_prefixes: Vec<String>,
     pub command_private_bare_enabled: bool,
+    #[serde(default = "enabled_by_default")]
+    pub command_group_bare_enabled: bool,
     pub command_mention_enabled: bool,
     pub command_reply_enabled: bool,
     pub proactive_queue_capacity: usize,
@@ -370,6 +374,7 @@ pub fn general_view(config: &AppConfig) -> GeneralConfigView {
         command_dynamic_errors_enabled: config.official_host.commands.dynamic_errors_enabled,
         command_prefixes: config.official_host.commands.prefixes.clone(),
         command_private_bare_enabled: config.official_host.commands.private_bare_enabled,
+        command_group_bare_enabled: config.official_host.commands.group_bare_enabled,
         command_mention_enabled: config.official_host.commands.mention_enabled,
         command_reply_enabled: config.official_host.commands.reply_enabled,
         proactive_queue_capacity: config.official_host.proactive_send.queue_capacity,
