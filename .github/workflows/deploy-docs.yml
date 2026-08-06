@@ -76,18 +76,26 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         # Pages 后端偶尔会让 deployment 永久停在 deployment_queued。
         # action 的轮询上限是 10 分钟，失败后必须创建全新的 deployment 重试。
         continue-on-error: true
 
+      - name: Wait for Pages deployment cancellation
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+
       - name: Retry GitHub Pages deployment (1/2)
         id: retry_1
         if: steps.deployment.outcome == 'failure'
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         continue-on-error: true
+
+      - name: Wait before second Pages retry
+        if: steps.retry_1.outcome == 'failure'
+        run: sleep 30
 
       - name: Retry GitHub Pages deployment (2/2)
         id: retry_2
         if: steps.deployment.outcome == 'failure' && steps.retry_1.outcome == 'failure'
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
