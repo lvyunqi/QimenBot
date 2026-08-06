@@ -2253,7 +2253,7 @@ impl Runtime {
         text: &str,
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionSignal> {
-        let payload: Value = serde_json::from_str(text)?;
+        let payload = parse_onebot11_payload_with_context(text, bot)?;
         if is_inbound_message_payload(&payload) {
             tracing::debug!(
                 target: "qimen_raw_message",
@@ -2270,7 +2270,6 @@ impl Runtime {
             adapter,
             client,
         };
-
         if let Some(signal) = system_dispatcher
             .dispatch(Self::build_system_event_context(
                 bot,
@@ -2343,7 +2342,7 @@ impl Runtime {
             raw_bytes: None,
         };
 
-        let event = adapter.decode_event(packet).await?;
+        let event = decode_event_with_qimen_context(adapter, packet, bot).await?;
         self.record_bot_event(&bot.id);
         tracing::info!(
             bot_id = %bot.id,
@@ -2387,7 +2386,7 @@ impl Runtime {
             raw_bytes: None,
         };
 
-        let event = adapter.decode_event(packet).await?;
+        let event = decode_event_with_qimen_context(adapter, packet, bot).await?;
         self.record_bot_event(&bot.id);
         if matches!(event.kind, EventKind::Message | EventKind::MessageSent)
             && let Some(raw_payload) = raw_payload
@@ -2510,6 +2509,8 @@ impl Runtime {
         runtime_ctx: &dyn NormalizedActionExecutor,
         limiter: &TokenBucketLimiter,
     ) -> Result<SessionSignal> {
+        let mut event = event;
+        attach_qimen_context(&mut event.raw_json, bot);
         if let Some(message_id) = event.message_id_str() {
             let dedup_key = runtime_ctx.dedup_key(&event, &message_id);
             if !self.dedup.check_and_mark(&dedup_key).await {
@@ -4823,6 +4824,63 @@ fn parse_protocol(value: &str) -> ProtocolId {
     }
 }
 
+fn parse_onebot11_payload_with_context(text: &str, bot: &BotRuntimeInfo) -> Result<Value> {
+    let mut payload = serde_json::from_str(text)?;
+    attach_qimen_context(&mut payload, bot);
+    Ok(payload)
+}
+
+async fn decode_event_with_qimen_context<A>(
+    adapter: &A,
+    packet: IncomingPacket,
+    bot: &BotRuntimeInfo,
+) -> Result<NormalizedEvent>
+where
+    A: ProtocolAdapter + ?Sized,
+{
+    let mut event = adapter.decode_event(packet).await?;
+    attach_qimen_context(&mut event.raw_json, bot);
+    Ok(event)
+}
+
+/// Adds trusted, host-owned routing metadata to the raw event copy exposed to
+/// plugins. Adapter-provided content under the reserved key is always replaced.
+///
+/// `bot_instance` is a deployment alias and must not be persisted as an
+/// account identity. Stateful plugins should use `account_id` and reject a
+/// missing value when they cannot derive a protocol-native stable account.
+fn attach_qimen_context(raw_json: &mut Value, bot: &BotRuntimeInfo) {
+    let protocol = match &bot.protocol {
+        ProtocolId::OneBot11 => "onebot11",
+        ProtocolId::OneBot12 => "onebot12",
+        ProtocolId::QqOfficial => "qq-official",
+        ProtocolId::Satori => "satori",
+        ProtocolId::Custom(protocol) => protocol.as_str(),
+    };
+    let mut context = serde_json::Map::from_iter([
+        ("version".to_string(), Value::from(1)),
+        ("protocol".to_string(), Value::from(protocol)),
+        ("bot_instance".to_string(), Value::from(bot.id.as_str())),
+    ]);
+    if let Some(account_id) = bot
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|account_id| !account_id.is_empty())
+    {
+        context.insert("account_id".to_string(), Value::from(account_id));
+    }
+
+    if !raw_json.is_object() {
+        let original = std::mem::take(raw_json);
+        *raw_json = serde_json::json!({ "qimen_raw_event": original });
+    }
+    raw_json
+        .as_object_mut()
+        .expect("raw event was normalized to an object")
+        .insert("qimen_context".to_string(), Value::Object(context));
+}
+
 fn parse_transport(value: &str) -> TransportMode {
     match value {
         "ws-forward" => TransportMode::WsForward,
@@ -5099,6 +5157,162 @@ mod tests {
         }
         assert!(!is_outbound_message_action("set_group_ban"));
         assert!(!is_outbound_message_action("get_login_info"));
+    }
+
+    #[test]
+    fn onebot_message_payload_receives_trusted_qimen_context() {
+        let bot = onebot11_bot();
+        let raw = json!({
+            "post_type": "message",
+            "message_type": "private",
+            "self_id": 2733944636_u64,
+            "user_id": 10001,
+            "message_id": 1,
+            "message": "/ping",
+            "qimen_context": {
+                "version": 999,
+                "protocol": "spoofed",
+                "bot_instance": "spoofed",
+                "account_id": "spoofed"
+            }
+        });
+
+        let payload = parse_onebot11_payload_with_context(&raw.to_string(), &bot).unwrap();
+
+        assert_eq!(payload["message"], "/ping");
+        assert_qimen_context(&payload, "onebot11", "onebot-main", Some("2733944636"));
+    }
+
+    #[test]
+    fn onebot_system_payload_receives_trusted_qimen_context() {
+        let bot = onebot11_bot();
+        let raw = json!({
+            "post_type": "notice",
+            "notice_type": "notify",
+            "sub_type": "poke",
+            "self_id": 2733944636_u64,
+            "group_id": 20002,
+            "user_id": 10001,
+            "target_id": 2733944636_u64
+        });
+
+        let payload = parse_onebot11_payload_with_context(&raw.to_string(), &bot).unwrap();
+
+        assert_eq!(payload["notice_type"], "notify");
+        assert_qimen_context(&payload, "onebot11", "onebot-main", Some("2733944636"));
+    }
+
+    #[tokio::test]
+    async fn qq_message_event_receives_trusted_qimen_context() {
+        let bot = qq_official_bot();
+        let packet = qq_gateway_packet(
+            &bot,
+            json!({
+                "op": 0,
+                "s": 42,
+                "t": "GROUP_AT_MESSAGE_CREATE",
+                "id": "event-message",
+                "d": {
+                    "id": "message-id",
+                    "content": "/ping",
+                    "group_openid": "group-openid",
+                    "author": {"member_openid": "member-openid"}
+                }
+            }),
+        );
+
+        let event = decode_event_with_qimen_context(&QqBotAdapter, packet, &bot)
+            .await
+            .unwrap();
+
+        assert_eq!(event.kind, EventKind::Message);
+        assert_eq!(
+            event
+                .raw_json
+                .pointer("/qqbot_payload/id")
+                .and_then(Value::as_str),
+            Some("message-id")
+        );
+        assert_qimen_context(
+            &event.raw_json,
+            "qq-official",
+            "qq-official",
+            Some("qq-official-account"),
+        );
+    }
+
+    #[tokio::test]
+    async fn qq_system_event_receives_trusted_qimen_context() {
+        let bot = qq_official_bot();
+        let packet = qq_gateway_packet(
+            &bot,
+            json!({
+                "op": 0,
+                "s": 43,
+                "t": "GROUP_ADD_ROBOT",
+                "id": "event-notice",
+                "d": {
+                    "group_openid": "group-openid",
+                    "op_member_openid": "member-openid",
+                    "timestamp": "2026-08-06T00:00:00+08:00"
+                }
+            }),
+        );
+
+        let event = decode_event_with_qimen_context(&QqBotAdapter, packet, &bot)
+            .await
+            .unwrap();
+
+        assert_eq!(event.kind, EventKind::Notice);
+        assert_eq!(event.raw_json["notice_type"], "group_add_robot");
+        assert_qimen_context(
+            &event.raw_json,
+            "qq-official",
+            "qq-official",
+            Some("qq-official-account"),
+        );
+    }
+
+    #[test]
+    fn qimen_context_overwrites_adapter_content_without_copying_credentials() {
+        let bot = qq_official_bot();
+        let mut raw = json!({
+            "qqbot_payload": {"id": "message-id"},
+            "qimen_context": {
+                "version": 999,
+                "protocol": "spoofed",
+                "bot_instance": "spoofed",
+                "account_id": "spoofed"
+            }
+        });
+
+        attach_qimen_context(&mut raw, &bot);
+
+        assert_eq!(raw["qqbot_payload"]["id"], "message-id");
+        assert_eq!(raw["qimen_context"]["version"], 1);
+        assert_eq!(raw["qimen_context"]["protocol"], "qq-official");
+        assert_eq!(raw["qimen_context"]["bot_instance"], "qq-official");
+        assert_eq!(raw["qimen_context"]["account_id"], "qq-official-account");
+        assert!(raw["qimen_context"].get("appid").is_none());
+        assert!(raw["qimen_context"].get("secret").is_none());
+        assert!(raw["qimen_context"].get("access_token").is_none());
+    }
+
+    #[test]
+    fn qimen_context_wraps_non_object_and_omits_missing_account() {
+        let mut bot = qq_official_bot();
+        bot.id = "  deployment-alias  ".to_string();
+        bot.account_id = None;
+        bot.protocol = ProtocolId::Custom("custom-protocol".to_string());
+        let mut raw = json!(["raw", "event"]);
+
+        attach_qimen_context(&mut raw, &bot);
+
+        assert_eq!(raw["qimen_raw_event"], json!(["raw", "event"]));
+        assert_eq!(raw["qimen_context"]["version"], 1);
+        assert_eq!(raw["qimen_context"]["protocol"], "custom-protocol");
+        assert_eq!(raw["qimen_context"]["bot_instance"], "  deployment-alias  ");
+        assert!(raw["qimen_context"].get("account_id").is_none());
     }
 
     #[tokio::test]
@@ -5492,6 +5706,52 @@ path = "/onebot/reverse"
 
         async fn after_completion(&self, _bot_id: &str, _event: &NormalizedEvent) {
             self.after_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn assert_qimen_context(
+        raw_json: &Value,
+        protocol: &str,
+        bot_instance: &str,
+        account_id: Option<&str>,
+    ) {
+        let context = raw_json
+            .get("qimen_context")
+            .and_then(Value::as_object)
+            .expect("host context must be present");
+        assert_eq!(context.get("version"), Some(&Value::from(1)));
+        assert_eq!(
+            context.get("protocol").and_then(Value::as_str),
+            Some(protocol)
+        );
+        assert_eq!(
+            context.get("bot_instance").and_then(Value::as_str),
+            Some(bot_instance)
+        );
+        assert_eq!(
+            context.get("account_id").and_then(Value::as_str),
+            account_id
+        );
+    }
+
+    fn onebot11_bot() -> BotRuntimeInfo {
+        let mut bot = qq_official_bot();
+        bot.id = "onebot-main".to_string();
+        bot.account_id = Some("2733944636".to_string());
+        bot.protocol = ProtocolId::OneBot11;
+        bot.transport = TransportMode::WsForward;
+        bot.appid = None;
+        bot.secret = None;
+        bot
+    }
+
+    fn qq_gateway_packet(bot: &BotRuntimeInfo, payload: Value) -> IncomingPacket {
+        IncomingPacket {
+            protocol: ProtocolId::QqOfficial,
+            transport_mode: TransportMode::Gateway,
+            bot_instance: bot.id.clone(),
+            payload,
+            raw_bytes: None,
         }
     }
 

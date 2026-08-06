@@ -2,6 +2,11 @@
 
 ## 未发布
 
+### 动态插件事件上下文
+
+- 动态插件收到的 `raw_event_json` 现在由宿主覆盖注入版本化 `qimen_context`，包含协议、部署实例别名和可选的稳定 `account_id`。插件无需改变 API 0.6 FFI 布局即可按当前 Bot 隔离持久化数据；宿主不会自动复制 `[[bots]].appid`、Secret 或 access token，但会把管理员配置的 `[[bots]].account_id` 原样提供给插件，该值可能由部署者选择为 AppID。
+- 适配器或上游事件中的同名 `qimen_context` 会被宿主替换。`bot_instance` 仅用于诊断和实例路由，不是稳定账号；有状态插件应优先使用 `account_id`，缺失时按协议安全降级或拒绝操作。
+
 ## v0.1.20 (2026-08-05)
 
 ### 命令入口与前缀

@@ -335,10 +335,10 @@ fn my_logger(req: &InterceptorRequest) {
 #[repr(C)]
 pub struct InterceptorRequest {
     pub bot_id: RString,           // Bot 实例 ID
-    pub sender_id: RString,        // 发送者 QQ 号
-    pub group_id: RString,         // 群号（私聊为空字符串）
+    pub sender_id: RString,        // 协议提供的发送者 ID（官方 QQ 为 OpenID）
+    pub group_id: RString,         // 群/会话 ID（私聊为空字符串）
     pub message_text: RString,     // 消息纯文本
-    pub raw_event_json: RString,   // 原始事件 JSON
+    pub raw_event_json: RString,   // 规范化原始事件 JSON
     pub sender_nickname: RString,  // 发送者昵称
     pub message_id: RString,       // 消息 ID
     pub timestamp: i64,            // 事件 Unix 时间戳
@@ -358,9 +358,9 @@ pub struct InterceptorRequest {
 pub struct CommandRequest {
     pub args: RString,             // 命令参数（空格分隔后的文本）
     pub command_name: RString,     // 匹配到的命令名
-    pub sender_id: RString,        // 发送者 QQ 号
-    pub group_id: RString,         // 群号（私聊为空字符串）
-    pub raw_event_json: RString,   // 原始 OneBot 事件 JSON
+    pub sender_id: RString,        // 协议提供的发送者 ID（官方 QQ 为 OpenID）
+    pub group_id: RString,         // 群/会话 ID（私聊为空字符串）
+    pub raw_event_json: RString,   // 规范化原始事件 JSON
 
     // ── v0.3 新增 ──
     pub sender_nickname: RString,  // 发送者昵称
@@ -373,12 +373,34 @@ pub struct CommandRequest {
 |------|------|
 | `args` | 命令参数，如 `/echo hello world` → `"hello world"` |
 | `command_name` | 匹配到的命令名（包括别名匹配后的原始名） |
-| `sender_id` | 发送者 QQ 号 |
-| `group_id` | 群号，私聊时为空字符串 |
-| `raw_event_json` | 原始 OneBot 事件 JSON，用于获取更多高级字段 |
+| `sender_id` | 协议提供的发送者 ID；官方 QQ 为 OpenID，始终按字符串处理 |
+| `group_id` | 群/会话 ID，私聊时为空字符串；始终按字符串处理 |
+| `raw_event_json` | 规范化原始事件 JSON，并包含宿主覆盖的 `qimen_context` |
 | `sender_nickname` | 发送者昵称（v0.3 新增） |
 | `message_id` | 消息 ID，可用于引用回复（v0.3 新增） |
 | `timestamp` | 事件时间戳，0 表示不可用（v0.3 新增） |
+
+### 宿主账号上下文
+
+宿主会在交给动态命令、拦截器和事件路由的 JSON 副本中覆盖写入保留字段：
+
+```json
+{
+  "qimen_context": {
+    "version": 1,
+    "protocol": "qq-official",
+    "bot_instance": "qq-main",
+    "account_id": "102012345"
+  }
+}
+```
+
+- `protocol` 是当前适配器协议，如 `onebot11` 或 `qq-official`。
+- `bot_instance` 对应 `[[bots]].id`，是可调整的部署别名，只用于诊断和实例级路由。
+- `account_id` 只在当前 Bot 配置了非空 `[[bots]].account_id` 时出现，是插件持久化和主动发送应使用的稳定账号。
+- `version` 用于后续扩展；未知版本应拒绝依赖新增字段，不要猜测含义。
+
+该对象由宿主覆盖，适配器或上游事件中的同名字段不会保留。宿主不会自动复制 `[[bots]].appid`、Secret、access token 等独立凭据字段；但管理员配置的 `[[bots]].account_id` 会原样提供给插件，因此当部署者选择 AppID 作为 `account_id` 时，该 AppID 会出现在上下文中。OneBot 插件需要兼容旧宿主时，可以把根级 `self_id` 作为协议原生回退；官方 QQ 普通消息本身不携带 AppID，因此缺少 `account_id` 时，有状态插件应拒绝跨 Bot 共享数据，而不是使用 `bot_instance` 或 `unknown` 代替。
 
 ## CommandResponse — 命令响应 {#command-response}
 
@@ -484,7 +506,7 @@ DynamicActionResponse::reject("理由")
 #[repr(C)]
 pub struct NoticeRequest {
     pub route: RString,            // 路由名（如 "GroupPoke"）
-    pub raw_event_json: RString,   // 原始 OneBot 事件 JSON
+    pub raw_event_json: RString,   // 规范化原始事件 JSON
 }
 ```
 
