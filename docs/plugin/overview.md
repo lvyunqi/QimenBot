@@ -2,6 +2,10 @@
 
 本页说明静态插件的目录结构、注册方式、命令定义和加载配置。
 
+::: tip 可以用 AI 辅助开发
+QimenBot 支持使用 **Vibe Coding** 开发插件：先安装[插件开发 Skill](/plugin/skill)，再让 AI 读取对应示例、生成最小项目并根据 `cargo check` 和运行日志迭代。Skill 同时覆盖静态插件、独立动态插件、官方 QQ Bot、OneBot 11、在线配置和商城发布规范。
+:::
+
 ## 最小插件
 
 ```rust

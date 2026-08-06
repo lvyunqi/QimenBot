@@ -64,6 +64,7 @@ export default defineConfig({
         {
           text: '开始',
           items: [
+            { text: 'Skill 安装与 Vibe Coding', link: '/plugin/skill' },
             { text: '插件开发概览', link: '/plugin/overview' },
           ]
         },
