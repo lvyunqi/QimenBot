@@ -68,34 +68,53 @@ jobs:
           path: docs/.vitepress/dist
 
   deploy:
+    name: Deploy to GitHub Pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.deployment.outcome }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
         # Pages 后端偶尔会让 deployment 永久停在 deployment_queued。
-        # action 的轮询上限是 10 分钟，失败后必须创建全新的 deployment 重试。
+        # action 的轮询上限是 10 分钟，失败后交给独立 job 创建新 deployment。
         continue-on-error: true
 
-      - name: Wait for Pages deployment cancellation
-        if: steps.deployment.outcome == 'failure'
-        run: sleep 30
+  deploy_retry_1:
+    name: Retry GitHub Pages deployment (1/2)
+    if: needs.deploy.outputs.outcome == 'failure'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: deploy
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.deployment.outcome }}
+    steps:
+      - name: Wait for the previous deployment to close
+        run: sleep 60
 
-      - name: Retry GitHub Pages deployment (1/2)
-        id: retry_1
-        if: steps.deployment.outcome == 'failure'
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v5
         continue-on-error: true
 
-      - name: Wait before second Pages retry
-        if: steps.retry_1.outcome == 'failure'
-        run: sleep 30
+  deploy_retry_2:
+    name: Retry GitHub Pages deployment (2/2)
+    if: ${{ always() && needs.deploy.outputs.outcome == 'failure' && needs.deploy_retry_1.outputs.outcome == 'failure' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: [deploy, deploy_retry_1]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the previous deployment to close
+        run: sleep 60
 
-      - name: Retry GitHub Pages deployment (2/2)
-        id: retry_2
-        if: steps.deployment.outcome == 'failure' && steps.retry_1.outcome == 'failure'
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v5
