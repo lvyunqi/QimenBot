@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.1"
+released_at = "2026-08-08T14:20:37Z"
+release_tag = "v0.2.1"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "修复官方 QQ 引用消息的身份归因：当前发言者以事件 author 为准，引用作者与 @ 目标不会被误认。改进签名图片的视觉输入处理，并加入有步数上限的只读会话与记忆查询工具；图片无法准备时不会降级交给文本模型猜测。驱动声明仍只覆盖可重复验证的消息 fixture；真实账号触发、出站发送及官方 QQ 媒体上传尚未作为发布能力声明。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "4ba31eed06a5a8a9c3acc8a77f424474eb023e9c0f9655b4b1b5796d7d6f6c9d"
+size_bytes = 4602368
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "fafc6ca6b162f17824024279be253511a5983555e00e4705e41f902fb7ce9c8f"
+size_bytes = 4333072
+min_glibc = "2.29"
+github_attestation = true
