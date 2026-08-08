@@ -1,0 +1,14 @@
+schema_version = 1
+id = "alicebot"
+name = "AliceBot"
+summary = "异步 AI 对话、分域记忆与隐私审计。"
+description = "面向 QimenBot 的动态 AI 对话插件，提供异步 /ask、按协议/会话/主体隔离的记忆、隐私审计和受限贴纸缓存。插件在宿主 data_dir 中使用 SQLite，并仅在配置后访问 LLM HTTPS 和已验证的 HTTPS 媒体；不读取 QQ Bot 凭据，也不自行上传官方 QQ 媒体。"
+type = "dynamic"
+repository = "lvyunqi/AliceBot"
+repository_id = 1325442799
+license = "MIT"
+authors = ["lvyunqi"]
+categories = ["ai", "memory"]
+keywords = ["ai", "llm", "memory", "onebot11", "qq-official"]
+homepage = "https://github.com/lvyunqi/AliceBot"
+trust = "community"

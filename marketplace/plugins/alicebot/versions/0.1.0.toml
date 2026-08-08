@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.1.0"
+released_at = "2026-08-08T07:11:43Z"
+release_tag = "v0.1.0"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "首次发布。提供异步 /ask、分域记忆、隐私审计和受限贴纸缓存；驱动声明仅覆盖可重复的消息规范化 fixture，真实账号触发、出站发送和媒体上传尚未作为发布能力声明。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "1B80976B94EF22F4D954CEE8E230801A96999911A40B319721F7286B8603D001"
+size_bytes = 4496384
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "6AB09F56A0CE91715A8BB4F9F634DAFEB8BDB13259B3B7DAE5AA255B9CD88C37"
+size_bytes = 4255248
+min_glibc = "2.29"
+github_attestation = true
