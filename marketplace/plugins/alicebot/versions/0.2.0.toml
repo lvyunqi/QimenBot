@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.0"
+released_at = "2026-08-08T10:15:24Z"
+release_tag = "v0.2.0"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "新增多模态图片输入支持，并改进贴纸请求的确定性图片投递和失败反馈。驱动声明仍只覆盖可重复验证的消息 fixture；真实账号触发、出站发送及官方 QQ 媒体上传尚未作为发布能力声明。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "07494BF81FCE37ECACE00B58DD8CC5F4F80CF8E2D224A82EC21559CE3ECC8582"
+size_bytes = 4516864
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "E61C617E987660B15FDB38C81D85F53C5D45B15165761A29808596F16534D8EB"
+size_bytes = 4271632
+min_glibc = "2.29"
+github_attestation = true
