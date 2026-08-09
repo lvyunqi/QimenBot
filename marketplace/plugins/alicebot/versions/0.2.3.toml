@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.3"
+released_at = "2026-08-09T04:03:40Z"
+release_tag = "v0.2.3"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "修复历史图片提问未附带视觉内容、QQ 临时媒体链接重启后失效及附图后错误称看不到图的重试策略，并清理模型思考标签残留。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "28e7041ac5ad1bb720be8b88686006933c8356fe0b3543210a8e52ed27abb2ce"
+size_bytes = 4609024
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "06ed410fa534edc20328afaa5ddfaaef2123029d51e579acefb082718eb69069"
+size_bytes = 4349456
+min_glibc = "2.29"
+github_attestation = true
