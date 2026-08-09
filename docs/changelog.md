@@ -2,6 +2,11 @@
 
 ## 未发布
 
+### 宿主命令匹配
+
+- 宿主内置命令不再注册任何别名，只响应完整名称 `/plugins`、`/registry`、`/dynamic-errors` 和 `/help`。旧缩写 `pl`、`reg`、`derr`、`h` 不再被 Runtime 占用，避免普通消息或第三方插件命令被短名称意外命中。
+- 静态和动态插件声明的命令别名保持不变；插件仍可按自身需要注册上述短名称。
+
 ### 动态插件事件上下文
 
 - 动态插件收到的 `raw_event_json` 现在由宿主覆盖注入版本化 `qimen_context`，包含协议、部署实例别名和可选的稳定 `account_id`。插件无需改变 API 0.6 FFI 布局即可按当前 Bot 隔离持久化数据；宿主不会自动复制 `[[bots]].appid`、Secret 或 access token，但会把管理员配置的 `[[bots]].account_id` 原样提供给插件，该值可能由部署者选择为 AppID。

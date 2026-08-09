@@ -177,7 +177,7 @@ CommandPluginSignal::Reply(message)
 
 管理员优先级保存在 `plugin-state.toml` 的 `[priorities]` 表中。Web 面板保存后更新 Runtime 内存，并让已启用的 Bot 重连以重建 `CommandDispatcher`。
 
-Runtime 不向注册表写入 `ping`、`echo`、`status` 等业务命令。默认启用的 `/plugins`、`/registry` 和 `/dynamic-errors` 会以 `builtin` 来源、优先级 `10` 写入同一个注册表，不会在注册表前抢占消息；三者均要求管理员或所有者权限。管理员可以在 Web“配置 → 命令入口”逐项关闭，关闭后对应名称与别名不再占用。插件优先级高于 `10` 时可以正常接管同名命令。宿主 `help` 仅在插件匹配失败后兜底，因此插件声明 `help` 或 `h` 时仍由插件处理。
+Runtime 不向注册表写入 `ping`、`echo`、`status` 等业务命令。默认启用的 `/plugins`、`/registry` 和 `/dynamic-errors` 会以 `builtin` 来源、优先级 `10` 写入同一个注册表，不会在注册表前抢占消息；三者均要求管理员或所有者权限。管理员可以在 Web“配置 → 命令入口”逐项关闭，关闭后对应完整名称不再占用。宿主命令不注册别名，`pl`、`reg`、`derr` 和 `h` 不会被 Runtime 命中。插件优先级高于 `10` 时可以接管同名完整命令，也可以自行注册任意别名。宿主只把完整的 `help` 作为插件匹配失败后的分页兜底。
 
 Web 面板的插件页按管理员优先级显示排名，同名命令的确定性排序仍记录在 `CommandRegistry` 诊断中。排查冲突时可临时启用 debug 日志，并对照插件页的优先级与插件 ID。
 
