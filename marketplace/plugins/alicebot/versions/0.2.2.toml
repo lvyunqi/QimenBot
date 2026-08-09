@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.2"
+released_at = "2026-08-09T00:28:01Z"
+release_tag = "v0.2.2"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "优化默认聊天风格：回复更简短、低情绪、少用 emoji，关闭刻意错别字；同步更新配置 Schema、管理界面和中文 README。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "c05a8add0575883bce77e49ed18577a25e21463bc8bbfe432dc7b648996c915e"
+size_bytes = 4603392
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "9540b4a9082da60c89d693103348b685060ff462a848757f3f8b247cfc0352d1"
+size_bytes = 4341264
+min_glibc = "2.29"
+github_attestation = true
