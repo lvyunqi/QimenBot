@@ -1176,6 +1176,115 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn content_addressed_path_bypasses_a_tls_retained_library_image() {
+        use std::process::Command;
+
+        if !cfg!(all(target_os = "linux", target_env = "gnu")) {
+            return;
+        }
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "qimen-dynamic-reload-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let compile_fixture = |version: u32, output: &Path| {
+            let source = root.join(format!("fixture-v{version}.rs"));
+            std::fs::write(
+                &source,
+                format!(
+                    r#"
+use std::cell::RefCell;
+
+thread_local! {{
+    static STATE: RefCell<Option<String>> = const {{ RefCell::new(None) }};
+}}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn fixture_version() -> u32 {{
+    {version}
+}}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn fixture_touch_tls() {{
+    STATE.with(|state| *state.borrow_mut() = Some(format!("version-{version}")));
+}}
+"#
+                ),
+            )
+            .unwrap();
+            let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+            let result = Command::new(rustc)
+                .arg("--crate-name")
+                .arg("qimen_dynamic_reload_fixture")
+                .arg("--crate-type=cdylib")
+                .arg("--edition=2024")
+                .arg(&source)
+                .arg("-o")
+                .arg(output)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "fixture build failed: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+
+        let first_build = root.join("fixture-v1.so");
+        let second_build = root.join("fixture-v2.so");
+        compile_fixture(1, &first_build);
+        compile_fixture(2, &second_build);
+
+        let reused_path = root.join("libfixture.so");
+        let retired_path = root.join("libfixture-retired.so");
+        let content_addressed_path = root.join("libfixture-2222222222222222.so");
+        std::fs::copy(&first_build, &reused_path).unwrap();
+
+        unsafe {
+            let first = libloading::Library::new(&reused_path).unwrap();
+            let version = first
+                .get::<unsafe extern "C" fn() -> u32>(b"fixture_version")
+                .unwrap();
+            let touch_tls = first
+                .get::<unsafe extern "C" fn()>(b"fixture_touch_tls")
+                .unwrap();
+            assert_eq!(version(), 1);
+            touch_tls();
+        }
+
+        std::fs::rename(&reused_path, &retired_path).unwrap();
+        std::fs::copy(&second_build, &reused_path).unwrap();
+        unsafe {
+            let same_path = libloading::Library::new(&reused_path).unwrap();
+            let version = same_path
+                .get::<unsafe extern "C" fn() -> u32>(b"fixture_version")
+                .unwrap();
+            assert_eq!(
+                version(),
+                1,
+                "GNU dlopen should retain the old image while its TLS destructor is pending"
+            );
+        }
+
+        std::fs::copy(&second_build, &content_addressed_path).unwrap();
+        unsafe {
+            let replacement = libloading::Library::new(&content_addressed_path).unwrap();
+            let version = replacement
+                .get::<unsafe extern "C" fn() -> u32>(b"fixture_version")
+                .unwrap();
+            assert_eq!(version(), 2);
+        }
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn queued_send_action_is_copied_without_losing_fields() {
         let action = SendAction {
             message_type: RString::from("group"),

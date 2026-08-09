@@ -295,16 +295,18 @@ pub async fn install(
         &plugin_id,
         &version.version,
         &prepared.installed.active_file,
+        &prepared.installed.current.sha256,
     ) {
         restore_transaction(&state, &prepared.transaction).await?;
         return Err(error);
     }
     let plugin_enabled = load_plugin_state(&context.plugin_state_path)?.is_enabled(&plugin_id);
 
+    let mut installed = prepared.installed.clone();
+    installed.current.installed_at =
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut next_lock = context.lock;
-    next_lock
-        .plugins
-        .insert(plugin_id.clone(), prepared.installed.clone());
+    next_lock.plugins.insert(plugin_id.clone(), installed);
     if let Err(error) = next_lock.save(&context.paths.lock_path) {
         restore_transaction(&state, &prepared.transaction).await?;
         return Err(marketplace_error(error));
@@ -512,7 +514,7 @@ pub async fn rollback(
         .as_ref()
         .map(|version| version.version.clone())
         .ok_or_else(|| AdminError::Conflict("没有可回滚的历史版本".to_string()))?;
-    let (rolled_back, transaction) = context
+    let (mut rolled_back, transaction) = context
         .paths
         .prepare_rollback(&plugin_id, &installed)
         .map_err(marketplace_error)?;
@@ -524,10 +526,13 @@ pub async fn rollback(
         &plugin_id,
         &previous_version,
         &rolled_back.active_file,
+        &rolled_back.current.sha256,
     ) {
         restore_transaction(&state, &transaction).await?;
         return Err(error);
     }
+    rolled_back.current.installed_at =
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     context.lock.plugins.insert(plugin_id.clone(), rolled_back);
     if let Err(error) = context.lock.save(&context.paths.lock_path) {
         restore_transaction(&state, &transaction).await?;
@@ -1296,6 +1301,7 @@ async fn restore_transaction(
             || transaction.apply().map_err(runtime_marketplace_error),
         )
         .await?;
+    transaction.finalize().map_err(marketplace_error)?;
     Ok(())
 }
 
@@ -1306,32 +1312,51 @@ fn validate_active_plugin(
     plugin_id: &str,
     version: &str,
     active_file: &str,
+    expected_sha256: &str,
 ) -> Result<(), AdminError> {
-    let matching = scan_dynamic_plugins(plugin_bin_dir)?
-        .into_iter()
-        .filter(|entry| entry.plugin_id == plugin_id)
-        .collect::<Vec<_>>();
-    let descriptor_ok = matching.len() == 1
+    let active_path = FsPath::new(plugin_bin_dir).join(active_file);
+    if !active_path.is_file() {
+        return Err(AdminError::Conflict(format!(
+            "插件 '{plugin_id}' 更新后的活动文件不存在"
+        )));
+    }
+    let actual_sha256 = sha256_file(&active_path).map_err(marketplace_error)?;
+    if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+        return Err(AdminError::Conflict(format!(
+            "插件 '{plugin_id}' 更新后的活动文件校验失败：期望 SHA256 {expected_sha256}，实际为 {actual_sha256}"
+        )));
+    }
+
+    let enabled = load_plugin_state(plugin_state_path)?.is_enabled(plugin_id);
+    let report = state.runtime.host_plugin_report();
+    let matching = report
+        .as_ref()
+        .map(|report| {
+            report
+                .dynamic_plugins
+                .iter()
+                .filter(|entry| entry.plugin_id == plugin_id)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !enabled {
+        if matching.is_empty() {
+            return Ok(());
+        }
+        return Err(AdminError::Conflict(format!(
+            "插件 '{plugin_id}' 已停用，但更新后仍残留在运行时报告中"
+        )));
+    }
+
+    let loaded = matching.len() == 1
         && matching[0].plugin_version == version
         && FsPath::new(&matching[0].path)
             .file_name()
             .and_then(|value| value.to_str())
             == Some(active_file);
-    if !descriptor_ok {
+    if !loaded {
         return Err(AdminError::Conflict(format!(
-            "插件 '{plugin_id}' 文件替换后没有以版本 {version} 唯一出现"
-        )));
-    }
-    let enabled = load_plugin_state(plugin_state_path)?.is_enabled(plugin_id);
-    let loaded = state.runtime.host_plugin_report().is_some_and(|report| {
-        report
-            .dynamic_plugins
-            .iter()
-            .any(|entry| entry.plugin_id == plugin_id && entry.plugin_version == version)
-    });
-    if enabled && !loaded {
-        return Err(AdminError::Conflict(format!(
-            "插件 '{plugin_id}' 描述符有效，但初始化失败，已恢复原版本"
+            "插件 '{plugin_id}' 文件已更新到 {version}，但新版本没有成功初始化，已恢复原版本"
         )));
     }
     Ok(())

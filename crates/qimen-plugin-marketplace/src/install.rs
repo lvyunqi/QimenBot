@@ -230,13 +230,6 @@ impl MarketplacePaths {
             }
         }
 
-        let active_file = existing
-            .map(|installed| installed.active_file.clone())
-            .unwrap_or_else(|| managed_file_name(&plugin.manifest.id, &asset.target));
-        validate_file_name(&active_file)?;
-        let active_path = self.plugin_bin_dir.join(&active_file);
-        ensure_install_destination(&active_path, existing.is_some())?;
-
         let installed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let next_version = InstalledVersion {
             version: version.version.clone(),
@@ -248,6 +241,9 @@ impl MarketplacePaths {
             rollback_safe: version.rollback_safe,
             installed_at,
         };
+        let active_file = managed_file_name(&plugin.manifest.id, &next_version)?;
+        let active_path = self.plugin_bin_dir.join(&active_file);
+        ensure_install_destination(&active_path)?;
         let archive_path = self.archive_path(&plugin.manifest.id, &next_version)?;
         if archive_path.exists() {
             verify_file(&archive_path, asset)?;
@@ -282,11 +278,17 @@ impl MarketplacePaths {
             current: next_version,
             previous: existing.map(|installed| installed.current.clone()),
         };
-        let transaction = ActiveFileTransaction::replace(
-            active_path,
-            archive_path.clone(),
-            transaction_root(&self.cache_dir, &plugin.manifest.id),
-        )?;
+        let transaction_root = transaction_root(&self.cache_dir, &plugin.manifest.id);
+        let transaction = if let Some(installed) = existing {
+            ActiveFileTransaction::replace_from(
+                self.active_path(installed)?,
+                active_path,
+                archive_path.clone(),
+                transaction_root,
+            )?
+        } else {
+            ActiveFileTransaction::install(active_path, archive_path.clone(), transaction_root)?
+        };
         Ok(PreparedInstall {
             plugin_id: plugin.manifest.id.clone(),
             archive_path,
@@ -325,14 +327,18 @@ impl MarketplacePaths {
                 actual,
             });
         }
+        let active_file = managed_file_name(plugin_id, &previous)?;
+        let active_path = self.plugin_bin_dir.join(&active_file);
+        ensure_install_destination(&active_path)?;
         let next = InstalledPlugin {
-            active_file: installed.active_file.clone(),
+            active_file,
             pinned: installed.pinned,
             current: previous,
             previous: None,
         };
-        let transaction = ActiveFileTransaction::replace(
+        let transaction = ActiveFileTransaction::replace_from(
             self.active_path(installed)?,
+            active_path,
             archive,
             transaction_root(&self.cache_dir, plugin_id),
         )?;
@@ -380,15 +386,16 @@ pub struct PreparedInstall {
 
 #[derive(Debug, Clone)]
 pub struct ActiveFileTransaction {
+    previous_active_path: Option<PathBuf>,
     active_path: PathBuf,
     incoming_path: Option<PathBuf>,
     transaction_root: PathBuf,
-    backup_path: PathBuf,
-    had_active_file: bool,
+    backup_path: Option<PathBuf>,
+    had_previous_file: bool,
 }
 
 impl ActiveFileTransaction {
-    pub fn replace(
+    pub fn install(
         active_path: PathBuf,
         incoming_path: PathBuf,
         transaction_root: PathBuf,
@@ -399,31 +406,83 @@ impl ActiveFileTransaction {
                 incoming_path.display()
             )));
         }
-        Self::new(active_path, Some(incoming_path), transaction_root)
+        Self::new(None, active_path, Some(incoming_path), transaction_root)
+    }
+
+    pub fn replace(
+        active_path: PathBuf,
+        incoming_path: PathBuf,
+        transaction_root: PathBuf,
+    ) -> Result<Self> {
+        Self::replace_from(
+            active_path.clone(),
+            active_path,
+            incoming_path,
+            transaction_root,
+        )
+    }
+
+    pub fn replace_from(
+        previous_active_path: PathBuf,
+        active_path: PathBuf,
+        incoming_path: PathBuf,
+        transaction_root: PathBuf,
+    ) -> Result<Self> {
+        if !incoming_path.is_file() {
+            return Err(MarketplaceError::NotFound(format!(
+                "staged plugin binary '{}' does not exist",
+                incoming_path.display()
+            )));
+        }
+        Self::new(
+            Some(previous_active_path),
+            active_path,
+            Some(incoming_path),
+            transaction_root,
+        )
     }
 
     pub fn remove(active_path: PathBuf, transaction_root: PathBuf) -> Result<Self> {
-        Self::new(active_path, None, transaction_root)
+        Self::new(
+            Some(active_path.clone()),
+            active_path,
+            None,
+            transaction_root,
+        )
     }
 
     fn new(
+        previous_active_path: Option<PathBuf>,
         active_path: PathBuf,
         incoming_path: Option<PathBuf>,
         transaction_root: PathBuf,
     ) -> Result<Self> {
-        let file_name = active_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| MarketplaceError::UnsafePath(active_path.clone()))?;
-        validate_file_name(file_name)?;
-        let backup_path = transaction_root.join("previous").join(file_name);
-        let had_active_file = active_path.exists();
+        validate_managed_file_path(&active_path)?;
+        let backup_path = previous_active_path
+            .as_ref()
+            .map(|path| {
+                validate_managed_file_path(path)?;
+                if path.parent() != active_path.parent() {
+                    return Err(MarketplaceError::Conflict(
+                        "plugin file transaction cannot cross plugin directories".to_string(),
+                    ));
+                }
+                let file_name = path
+                    .file_name()
+                    .ok_or_else(|| MarketplaceError::UnsafePath(path.clone()))?;
+                Ok(transaction_root.join("previous").join(file_name))
+            })
+            .transpose()?;
+        let had_previous_file = previous_active_path
+            .as_ref()
+            .is_some_and(|path| path.exists());
         Ok(Self {
+            previous_active_path,
             active_path,
             incoming_path,
             transaction_root,
             backup_path,
-            had_active_file,
+            had_previous_file,
         })
     }
 
@@ -439,17 +498,32 @@ impl ActiveFileTransaction {
         if let Some(parent) = self.active_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        if let Some(parent) = self.backup_path.parent() {
-            fs::create_dir_all(parent)?;
+        if let Some(backup_path) = &self.backup_path {
+            if let Some(parent) = backup_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            if backup_path.exists() {
+                return Err(MarketplaceError::Conflict(format!(
+                    "plugin transaction '{}' has already been applied",
+                    self.transaction_root.display()
+                )));
+            }
         }
-        if self.backup_path.exists() {
+        if self
+            .previous_active_path
+            .as_ref()
+            .is_none_or(|previous| previous != &self.active_path)
+            && self.active_path.exists()
+        {
             return Err(MarketplaceError::Conflict(format!(
-                "plugin transaction '{}' has already been applied",
-                self.transaction_root.display()
+                "managed plugin destination '{}' already exists",
+                self.active_path.display()
             )));
         }
-        if self.active_path.exists() {
-            move_file(&self.active_path, &self.backup_path)?;
+        if let (Some(previous), Some(backup)) = (&self.previous_active_path, &self.backup_path)
+            && previous.exists()
+        {
+            move_file(previous, backup)?;
         }
         if let Some(incoming) = &self.incoming_path
             && let Err(error) = copy_atomic(incoming, &self.active_path)
@@ -461,16 +535,17 @@ impl ActiveFileTransaction {
     }
 
     pub fn rollback(&self) -> Result<()> {
-        if self.backup_path.exists() {
-            if self.active_path.exists() {
-                fs::remove_file(&self.active_path)?;
-            }
-            if let Some(parent) = self.active_path.parent() {
+        let backup_exists = self.backup_path.as_ref().is_some_and(|path| path.exists());
+        if (backup_exists || !self.had_previous_file) && self.active_path.exists() {
+            fs::remove_file(&self.active_path)?;
+        }
+        if let (Some(previous), Some(backup)) = (&self.previous_active_path, &self.backup_path)
+            && backup.exists()
+        {
+            if let Some(parent) = previous.parent() {
                 fs::create_dir_all(parent)?;
             }
-            move_file(&self.backup_path, &self.active_path)?;
-        } else if !self.had_active_file && self.active_path.exists() {
-            fs::remove_file(&self.active_path)?;
+            move_file(backup, previous)?;
         }
         Ok(())
     }
@@ -579,8 +654,8 @@ fn ensure_managed_child(path: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_install_destination(path: &Path, replacing_existing: bool) -> Result<()> {
-    if !replacing_existing && path.exists() {
+fn ensure_install_destination(path: &Path) -> Result<()> {
+    if path.exists() {
         return Err(MarketplaceError::Conflict(format!(
             "managed plugin destination '{}' already exists; move or associate that file before installing",
             path.display()
@@ -589,13 +664,31 @@ fn ensure_install_destination(path: &Path, replacing_existing: bool) -> Result<(
     Ok(())
 }
 
-fn managed_file_name(plugin_id: &str, target: &str) -> String {
+fn validate_managed_file_path(path: &Path) -> Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| MarketplaceError::UnsafePath(path.to_path_buf()))?;
+    validate_file_name(file_name)
+}
+
+fn managed_file_name(plugin_id: &str, installed: &InstalledVersion) -> Result<String> {
+    installed.validate(plugin_id)?;
     let normalized = plugin_id.replace('-', "_");
-    match dynamic_library_extension(target) {
-        Some("dll") => format!("qimen_marketplace_{normalized}.dll"),
-        Some("dylib") => format!("libqimen_marketplace_{normalized}.dylib"),
-        _ => format!("libqimen_marketplace_{normalized}.so"),
-    }
+    let fingerprint = installed.sha256.to_ascii_lowercase();
+    let file_name = match dynamic_library_extension(&installed.target) {
+        Some("dll") => format!("qimen_marketplace_{normalized}_{fingerprint}.dll"),
+        Some("dylib") => format!("libqimen_marketplace_{normalized}_{fingerprint}.dylib"),
+        Some("so") => format!("libqimen_marketplace_{normalized}_{fingerprint}.so"),
+        _ => {
+            return Err(MarketplaceError::InvalidMetadata(format!(
+                "installed target '{}' is not dynamically loadable",
+                installed.target
+            )));
+        }
+    };
+    validate_file_name(&file_name)?;
+    Ok(file_name)
 }
 
 fn transaction_root(cache_dir: &Path, plugin_id: &str) -> PathBuf {
@@ -621,6 +714,8 @@ fn lower_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PluginKind, PluginManifest, TrustLevel};
+    use std::time::Duration;
 
     #[test]
     fn replacement_can_be_rolled_back_without_losing_the_previous_file() {
@@ -652,7 +747,7 @@ mod tests {
         fs::create_dir_all(incoming.parent().unwrap()).unwrap();
         fs::write(&incoming, b"new").unwrap();
         let transaction =
-            ActiveFileTransaction::replace(active.clone(), incoming, root.join("transaction"))
+            ActiveFileTransaction::install(active.clone(), incoming, root.join("transaction"))
                 .unwrap();
 
         transaction.apply().unwrap();
@@ -661,6 +756,40 @@ mod tests {
         assert!(!active.exists());
         transaction.rollback().unwrap();
 
+        transaction.finalize().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn versioned_replacement_moves_the_old_path_and_restores_it_on_rollback() {
+        let root = temp_root();
+        let old_active = root.join("plugins/libexample_1111111111111111.so");
+        let new_active = root.join("plugins/libexample_2222222222222222.so");
+        let incoming = root.join("incoming/plugin.so");
+        fs::create_dir_all(old_active.parent().unwrap()).unwrap();
+        fs::create_dir_all(incoming.parent().unwrap()).unwrap();
+        fs::write(&old_active, b"old").unwrap();
+        fs::write(&incoming, b"new").unwrap();
+
+        let transaction = ActiveFileTransaction::replace_from(
+            old_active.clone(),
+            new_active.clone(),
+            incoming,
+            root.join("transaction"),
+        )
+        .unwrap();
+
+        transaction.apply().unwrap();
+        assert!(!old_active.exists());
+        assert_eq!(fs::read(&new_active).unwrap(), b"new");
+
+        transaction.rollback().unwrap();
+        assert_eq!(fs::read(&old_active).unwrap(), b"old");
+        assert!(!new_active.exists());
+
+        transaction.apply().unwrap();
+        assert!(!old_active.exists());
+        assert_eq!(fs::read(&new_active).unwrap(), b"new");
         transaction.finalize().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
@@ -687,8 +816,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(&active, b"unmanaged").unwrap();
 
-        assert!(ensure_install_destination(&active, false).is_err());
-        assert!(ensure_install_destination(&active, true).is_ok());
+        assert!(ensure_install_destination(&active).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -728,6 +856,200 @@ mod tests {
             paths.prepare_rollback("status-tools", &installed),
             Err(MarketplaceError::ChecksumMismatch { .. })
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_activates_the_previous_version_at_its_content_addressed_path() {
+        let root = temp_root();
+        let paths = MarketplacePaths::new(
+            root.join("cache"),
+            root.join("marketplace-lock.toml"),
+            root.join("plugins"),
+        );
+        let previous_bytes = b"reviewed previous version";
+        let previous = InstalledVersion {
+            version: "1.0.0".into(),
+            repository_id: 42,
+            target: "x86_64-unknown-linux-gnu".into(),
+            sha256: sha256_bytes(previous_bytes),
+            channel: ReleaseChannel::Stable,
+            data_schema_version: 1,
+            rollback_safe: true,
+            installed_at: "2026-08-03T00:00:00Z".into(),
+        };
+        let installed = InstalledPlugin {
+            active_file: "libqimen_marketplace_status_tools.so".into(),
+            pinned: false,
+            current: InstalledVersion {
+                version: "1.1.0".into(),
+                sha256: sha256_bytes(b"current version"),
+                rollback_safe: true,
+                ..previous.clone()
+            },
+            previous: Some(previous.clone()),
+        };
+        let current_path = paths.active_path(&installed).unwrap();
+        fs::create_dir_all(current_path.parent().unwrap()).unwrap();
+        fs::write(&current_path, b"current version").unwrap();
+        let archive = paths.archive_path("status-tools", &previous).unwrap();
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(&archive, previous_bytes).unwrap();
+
+        let (rolled_back, transaction) =
+            paths.prepare_rollback("status-tools", &installed).unwrap();
+        assert_ne!(rolled_back.active_file, installed.active_file);
+        assert!(rolled_back.active_file.contains(&previous.sha256));
+
+        transaction.apply().unwrap();
+        assert!(!current_path.exists());
+        assert_eq!(
+            fs::read(paths.active_path(&rolled_back).unwrap()).unwrap(),
+            previous_bytes
+        );
+        transaction.finalize().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_file_names_change_with_the_reviewed_asset_checksum() {
+        let version = InstalledVersion {
+            version: "1.0.0".into(),
+            repository_id: 42,
+            target: "x86_64-unknown-linux-gnu".into(),
+            sha256: "a".repeat(64),
+            channel: ReleaseChannel::Stable,
+            data_schema_version: 1,
+            rollback_safe: true,
+            installed_at: "2026-08-03T00:00:00Z".into(),
+        };
+        let first = managed_file_name("status-tools", &version).unwrap();
+        let second = managed_file_name(
+            "status-tools",
+            &InstalledVersion {
+                sha256: "b".repeat(64),
+                ..version
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            first,
+            format!("libqimen_marketplace_status_tools_{}.so", "a".repeat(64))
+        );
+        assert_eq!(
+            second,
+            format!("libqimen_marketplace_status_tools_{}.so", "b".repeat(64))
+        );
+        assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn prepared_update_migrates_a_legacy_active_file_to_the_asset_path() {
+        let root = temp_root();
+        let paths = MarketplacePaths::new(
+            root.join("cache"),
+            root.join("marketplace-lock.toml"),
+            root.join("plugins"),
+        );
+        let old_bytes = b"legacy active version";
+        let new_bytes = b"reviewed replacement version";
+        let asset = PluginAsset {
+            target: "x86_64-pc-windows-msvc".into(),
+            asset_name: "qimen_dynamic_plugin_status_tools-x86_64-pc-windows-msvc.dll".into(),
+            sha256: sha256_bytes(new_bytes),
+            size_bytes: new_bytes.len() as u64,
+            min_glibc: None,
+            github_attestation: true,
+        };
+        let version = VersionManifest {
+            schema_version: 1,
+            version: "1.1.0".into(),
+            released_at: "2026-08-03T00:00:00Z".into(),
+            release_tag: "v1.1.0".into(),
+            channel: ReleaseChannel::Stable,
+            qimenbot: ">=0.1.20, <0.2.0".into(),
+            dynamic_api: Some("0.6".into()),
+            yanked: false,
+            data_schema_version: 1,
+            rollback_safe: true,
+            changelog: String::new(),
+            drivers: Vec::new(),
+            assets: vec![asset.clone()],
+        };
+        let plugin = CatalogPlugin {
+            manifest: PluginManifest {
+                schema_version: 1,
+                id: "status-tools".into(),
+                name: "Status Tools".into(),
+                summary: "Reports status".into(),
+                description: String::new(),
+                kind: PluginKind::Dynamic,
+                repository: "example/status-tools".into(),
+                repository_id: 42,
+                license: "MIT".into(),
+                authors: Vec::new(),
+                categories: Vec::new(),
+                keywords: Vec::new(),
+                homepage: None,
+                trust: TrustLevel::Community,
+            },
+            versions: vec![version.clone()],
+        };
+        let existing = InstalledPlugin {
+            active_file: "qimen_marketplace_status_tools.dll".into(),
+            pinned: false,
+            current: InstalledVersion {
+                version: "1.0.0".into(),
+                repository_id: 42,
+                target: asset.target.clone(),
+                sha256: sha256_bytes(old_bytes),
+                channel: ReleaseChannel::Stable,
+                data_schema_version: 1,
+                rollback_safe: true,
+                installed_at: "2026-08-03T00:00:00Z".into(),
+            },
+            previous: None,
+        };
+        let legacy_path = paths.active_path(&existing).unwrap();
+        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        fs::write(&legacy_path, old_bytes).unwrap();
+        let archive_version = InstalledVersion {
+            version: version.version.clone(),
+            repository_id: plugin.manifest.repository_id,
+            target: asset.target.clone(),
+            sha256: asset.sha256.clone(),
+            channel: version.channel,
+            data_schema_version: version.data_schema_version,
+            rollback_safe: version.rollback_safe,
+            installed_at: "2026-08-03T00:00:00Z".into(),
+        };
+        let archive = paths
+            .archive_path(&plugin.manifest.id, &archive_version)
+            .unwrap();
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(&archive, new_bytes).unwrap();
+
+        let prepared = paths
+            .prepare_install(
+                &MarketplaceClient::new(Duration::from_secs(1)).unwrap(),
+                &plugin,
+                &version,
+                &asset,
+                Some(&existing),
+            )
+            .await
+            .unwrap();
+        assert_ne!(prepared.installed.active_file, existing.active_file);
+        assert!(prepared.installed.active_file.contains(&asset.sha256));
+
+        prepared.transaction.apply().unwrap();
+        assert!(!legacy_path.exists());
+        assert_eq!(
+            fs::read(paths.active_path(&prepared.installed).unwrap()).unwrap(),
+            new_bytes
+        );
+        prepared.transaction.finalize().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
