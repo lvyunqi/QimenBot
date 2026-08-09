@@ -313,7 +313,7 @@ fn my_filter(req: &InterceptorRequest) -> InterceptorResponse {
 
 ### `#[after_completion]` — 消息后置处理 {#after-completion}
 
-所有插件处理完毕后执行，适合做日志记录、统计等。
+消息正常走完命令分发和回复阶段后执行，适合做日志记录、统计等。它不是 `finally`：`pre_handle` 阻断、回复发送失败或流水线提前返回时不会调用。
 
 ```rust
 use abi_stable_host_api::InterceptorRequest;
@@ -336,7 +336,7 @@ fn my_logger(req: &InterceptorRequest) {
 pub struct InterceptorRequest {
     pub bot_id: RString,           // Bot 实例 ID
     pub sender_id: RString,        // 协议提供的发送者 ID（官方 QQ 为 OpenID）
-    pub group_id: RString,         // 群/会话 ID（私聊为空字符串）
+    pub group_id: RString,         // 仅群聊的群 ID；C2C、频道和 DMS 为空
     pub message_text: RString,     // 消息纯文本
     pub raw_event_json: RString,   // 规范化原始事件 JSON
     pub sender_nickname: RString,  // 发送者昵称
@@ -349,6 +349,8 @@ pub struct InterceptorRequest {
 每个插件模块内最多一个 `#[pre_handle]` 和一个 `#[after_completion]` 函数。
 :::
 
+完整的执行顺序、官方 QQ 事件范围、阻断语义、发送方式和排错步骤见[拦截器](/plugin/interceptors)。
+
 ## CommandRequest — 命令请求 {#command-request}
 
 每个命令回调接收一个 `&CommandRequest`，包含完整的请求上下文：
@@ -359,7 +361,7 @@ pub struct CommandRequest {
     pub args: RString,             // 命令参数（空格分隔后的文本）
     pub command_name: RString,     // 匹配到的命令名
     pub sender_id: RString,        // 协议提供的发送者 ID（官方 QQ 为 OpenID）
-    pub group_id: RString,         // 群/会话 ID（私聊为空字符串）
+    pub group_id: RString,         // 仅群聊的群 ID；C2C、频道和 DMS 为空
     pub raw_event_json: RString,   // 规范化原始事件 JSON
 
     // ── v0.3 新增 ──
@@ -374,7 +376,7 @@ pub struct CommandRequest {
 | `args` | 命令参数，如 `/echo hello world` → `"hello world"` |
 | `command_name` | 匹配到的命令名（包括别名匹配后的原始名） |
 | `sender_id` | 协议提供的发送者 ID；官方 QQ 为 OpenID，始终按字符串处理 |
-| `group_id` | 群/会话 ID，私聊时为空字符串；始终按字符串处理 |
+| `group_id` | 仅群聊场景的群 ID；C2C、频道和 DMS 为空。其他目标从 `raw_event_json` 读取 |
 | `raw_event_json` | 规范化原始事件 JSON，并包含宿主覆盖的 `qimen_context` |
 | `sender_nickname` | 发送者昵称（v0.3 新增） |
 | `message_id` | 消息 ID，可用于引用回复（v0.3 新增） |

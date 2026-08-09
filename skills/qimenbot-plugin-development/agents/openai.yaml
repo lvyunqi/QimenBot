@@ -1,0 +1,4 @@
+interface:
+  display_name: "QimenBot 插件开发"
+  short_description: "开发、排查并发布 QimenBot 静态与动态插件"
+  default_prompt: "使用 $qimenbot-plugin-development 开发或排查一个符合当前 QimenBot API 的插件。"

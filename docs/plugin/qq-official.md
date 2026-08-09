@@ -88,7 +88,7 @@ ctx.group_id_i64();
 ctx.event.message_id();
 ```
 
-持久化用户数据时，建议至少使用 `(protocol, bot_instance, sender_id)` 作为联合键。不同机器人应用收到的 openid 不应假定可以直接互通，也不要拿 openid 当作真实 QQ 号展示给用户。
+持久化用户数据时，建议至少使用 `(protocol, account_id, sender_id)` 作为联合键。`account_id` 从 `ctx.event.raw_json["qimen_context"]["account_id"]` 读取，对应管理员配置的稳定 `[[bots]].account_id`；`bot_instance` 只是可调整的部署别名，不应作为长期账号主键。缺少稳定账号时应要求管理员补配置，不要把多个 Bot 的状态归入 `unknown`。不同机器人应用收到的 OpenID 不保证互通，也不要拿 OpenID 当作真实 QQ 号展示给用户。
 
 ## 识别会话场景
 

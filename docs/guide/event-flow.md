@@ -45,7 +45,7 @@ capacity = 10    # 最多缓存 10 个令牌
 
 ### 第 4 步：拦截器链 `pre_handle`
 
-所有注册的拦截器按优先级**顺序**执行 `pre_handle` 方法：
+所有注册的拦截器按链中的**注册顺序**执行 `pre_handle` 方法：
 
 ```rust
 for interceptor in &interceptor_chain {
@@ -66,8 +66,8 @@ for interceptor in &interceptor_chain {
 根据 `owners` 和 `admins` 配置判断发送者的角色：
 
 ```
-发送者 QQ 号在 owners 列表中 → Owner 角色
-发送者 QQ 号在 admins 列表中 → Admin 角色
+发送者字符串 ID 在 owners 列表中 → Owner 角色
+发送者字符串 ID 在 admins 列表中 → Admin 角色
 其他 → Anyone 角色
 ```
 
@@ -117,7 +117,7 @@ let signal = plugin.on_command(&ctx, &invocation).await;
 
 ### 第 8 步：拦截器链 `after_completion`
 
-所有拦截器按**逆序**执行 `after_completion` 方法：
+消息正常走完命令分发和回复阶段后，所有拦截器按**逆序**执行 `after_completion` 方法：
 
 ```rust
 for interceptor in interceptor_chain.iter().rev() {
@@ -125,9 +125,11 @@ for interceptor in interceptor_chain.iter().rev() {
 }
 ```
 
+`pre_handle` 返回 `false`、回复发送失败或流水线提前返回时，不会进入这一步。`after_completion` 不是资源清理的 `finally` 钩子。
+
 **典型用途：**
 - 统计处理时间
-- 清理临时状态
+- 记录正常完成状态
 - 日志记录
 
 ## 系统事件处理

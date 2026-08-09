@@ -11,6 +11,7 @@
 - 消息：<https://lvyunqi.github.io/QimenBot/plugin/messages.html>
 - 事件：<https://lvyunqi.github.io/QimenBot/plugin/events.html>
 - 拦截器：<https://lvyunqi.github.io/QimenBot/plugin/interceptors.html>
+- 静态 API：<https://lvyunqi.github.io/QimenBot/api/plugin-api.html>
 - 官方 QQ Bot：<https://lvyunqi.github.io/QimenBot/plugin/qq-official.html>
 - 官方 QQ Bot Markdown：<https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/type/markdown.html>
 - 仓库示例：`plugins/qimen-plugin-example/`
@@ -128,6 +129,31 @@ async fn ban(&self, ctx: &CommandPluginContext<'_>, args: Vec<String>) -> Comman
 
 不要把参数解析失败写成 `unwrap()`；返回明确用法或业务错误。
 
+## 高级 MessageFilter
+
+`CommandDefinition` 支持可选 `MessageFilter`，但当前 `#[command]` 宏没有对应属性。只有手工实现 `CommandPlugin::commands()` 时才能设置：
+
+```rust
+use qimen_plugin_api::{AtMode, CommandDefinition, MediaType, MessageFilter};
+
+CommandDefinition::new("inspect", "检查带图片的命令").filter(MessageFilter {
+    at_mode: AtMode::Need,
+    media_types: vec![MediaType::Image],
+    ..Default::default()
+})
+```
+
+使用前确认边界：
+
+- 过滤器在命令名已经匹配后执行，只做二次门禁，不会把任意普通消息注册成命令。
+- 运行时会在命令匹配前丢弃 `plain_text()` 为空的消息，因此媒体过滤器只适用于“命令文本 + 媒体”，不能捕获纯图片或纯文件消息。
+- `cmd`、`starts_with`、`ends_with`、`contains` 匹配规范化纯文本。
+- `at_mode`、`reply_filter` 和媒体类型可跨协议使用，但仍需目标平台实际提供对应消息段。
+- `groups` 和 `senders` 当前是 `Vec<i64>`，仅适合 OneBot 数字 ID，不适合官方 QQ OpenID。
+- 正则捕获目前只参与内部匹配，不会写入 `CommandInvocation.args`；需要捕获值时在 `on_command` 中再次解析 `source_text`。
+
+宏能表达的普通命令优先继续使用 `#[command]`。只在确实需要高级过滤、手工优先级或自定义插件结构时实现 trait。
+
 ## 上下文与跨协议 ID
 
 当前常用返回类型是可选值，不要沿用旧 skill 中的非空假设：
@@ -150,6 +176,20 @@ let chat = ctx.chat_id().unwrap_or("unknown");
 官方 QQ Bot 使用 openid、group_openid、guild/channel ID，数字转换通常返回 `None`。消息 ID 也优先读取字符串形式。只有明确限定 OneBot 11 且调用 OneBot Action 时才转换为 `i64`。
 
 `ctx.onebot_actions()` 提供异步 OneBot Action，例如群资料、禁言、踢人和主动发送。它不是官方 QQ OpenAPI；跨协议普通回复应返回 `Message`，让运行时按群、C2C、频道或 DMS 自动选择发送端点。
+
+## RuntimeBotContext 与后台任务
+
+`ctx.runtime` 是协议无关的宿主上下文，提供：
+
+- `bot_instance()`：当前部署实例名；
+- `protocol()` 与 `capabilities()`：协议和适配器能力；
+- `reply(event, message)`：按来信场景执行被动回复；
+- `send_action(request)`：发送高级 `NormalizedActionRequest`；
+- `spawn_owned(name, future)`：把 `'static + Send` future 交给 Tokio 运行时。
+
+普通命令直接返回 `Message` 或 `CommandPluginSignal`，不要为了发送一条回复手写 `send_action`。构造高级 Action 前检查 `capabilities()`，并分别验证 OneBot 与官方 QQ 的动作映射。
+
+`spawn_owned` 当前启动的是脱离命令回调的任务，返回的 `TaskHandle` 只有名称，不提供取消或 `join`。不要假定插件停用时宿主会自动终止任务。只让它执行有明确结束条件的工作；长期任务需要自建停止信号，并在手工 `Module::on_unload` 或进程关闭流程中完成停止。使用宏生成的简单模块无法注入自定义卸载逻辑时，不要启动不可控的永久任务。
 
 ## 消息与官方 QQ Bot
 
@@ -197,9 +237,17 @@ impl MessageEventInterceptor for AuditInterceptor {
 }
 
 #[module(id = "my-plugin", interceptors = [AuditInterceptor])]
+#[commands]
+impl MyPlugin {}
 ```
 
-`pre_handle = false` 会阻断后续消息处理；`after_completion` 在所有处理结束后逆序执行。锁不能跨 `.await` 持有，状态共享使用线程安全类型。
+涉及拦截器时必须完整阅读 [消息拦截器开发](interceptors.md)。不要沿用以下旧假设：
+
+- `pre_handle = false` 会阻断后续消息处理，并且不会调用任何 `after_completion`。
+- `after_completion` 只在命令分发和回复阶段正常完成后逆序执行，不是 `finally`。
+- `#[module(interceptors = [Type])]` 直接构造 `Type`，适合无字段的单元结构体；带构造参数的拦截器要手工实现 `Module::interceptors()`。
+- 静态拦截器没有 `RuntimeBotContext`，不能直接发送阻断回复。
+- OneBot 11 与官方 QQ Bot 的普通消息共用同一条拦截器链；通知、申请和元事件不在其中。
 
 ## 验证
 
@@ -217,6 +265,8 @@ cargo check -p qimenbotd
 - 模块公开的命令名、别名、角色和作用域符合预期。
 - 参数缺失、非数字 ID、私聊/群聊和字符串 ID 不会 panic。
 - 事件与拦截器的放行、阻断和信号符合预期。
+- 手写 `MessageFilter` 已验证命令匹配顺序、官方 QQ 字符串 ID 限制和正则捕获处理。
+- 后台任务有明确停止条件，不依赖只有名称的 `TaskHandle` 取消任务。
 
 运行宿主后确认启动报告包含模块 ID，并在 Web 管理面板“插件”页检查实际状态和命令清单。找不到模块时依次检查 daemon 依赖、`extern crate`、`black_box`、`plugin_modules` 和 `plugin-state.toml`。
 

@@ -120,9 +120,9 @@ pub struct RouteDescriptorEntry {
 pub struct CommandRequest {
     pub args: RString,             // 命令参数（空格分隔后的文本）
     pub command_name: RString,     // 匹配到的命令名
-    pub sender_id: RString,        // 发送者 QQ 号
-    pub group_id: RString,         // 群号（私聊为空字符串）
-    pub raw_event_json: RString,   // 原始 OneBot 事件完整 JSON
+    pub sender_id: RString,        // 协议提供的字符串发送者 ID
+    pub group_id: RString,         // 仅群聊群 ID；C2C、频道和 DMS 为空
+    pub raw_event_json: RString,   // 规范化事件 JSON，包含 qimen_context
 
     // ── v0.3 新增 ──
     pub sender_nickname: RString,  // 发送者昵称
@@ -235,10 +235,10 @@ pub struct InterceptorDescriptorEntry {
 #[repr(C)]
 pub struct InterceptorRequest {
     pub bot_id: RString,           // Bot 实例 ID
-    pub sender_id: RString,        // 发送者 QQ 号
-    pub group_id: RString,         // 群号（私聊为空字符串）
+    pub sender_id: RString,        // 协议提供的字符串发送者 ID
+    pub group_id: RString,         // 仅群聊群 ID；C2C、频道和 DMS 为空
     pub message_text: RString,     // 消息纯文本
-    pub raw_event_json: RString,   // 完整事件 JSON
+    pub raw_event_json: RString,   // 规范化事件 JSON，包含 qimen_context
     pub sender_nickname: RString,  // 发送者昵称
     pub message_id: RString,       // 消息 ID
     pub timestamp: i64,            // 事件 Unix 时间戳（秒），0 表示不可用

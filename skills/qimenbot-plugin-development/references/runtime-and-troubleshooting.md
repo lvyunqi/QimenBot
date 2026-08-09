@@ -168,6 +168,29 @@ Web 插件页的“重新扫描”或 `POST /api/v1/plugins/reload` 只重扫动
 - 官方原始字段从规范化事件中的 `raw_json.qqbot_payload` 读取；缺失时必须降级。
 - 回复配额、媒体上传和平台权限是宿主/开放平台约束，插件不能假设无限主动发送。
 
+## 宿主可信账号上下文
+
+动态命令、拦截器和事件路由的 `raw_event_json` 都包含宿主覆盖的保留对象：
+
+```json
+{
+  "qimen_context": {
+    "version": 1,
+    "protocol": "qq-official",
+    "bot_instance": "qq-main",
+    "account_id": "102012345"
+  }
+}
+```
+
+- `protocol` 是当前适配器协议。
+- `bot_instance` 对应可调整的 `[[bots]].id`，不要持久化为账号主键。
+- `account_id` 只在管理员配置了非空值时出现；优先用于数据库分区、缓存键和 `BotApi::for_account`。
+- `version` 未识别时只使用当前已知字段，不猜测新字段含义。
+- 上游事件伪造的同名对象会被宿主替换；宿主不复制 Secret、Token 或其他凭据。
+
+OneBot 插件兼容旧宿主时，可以把协议原生 `self_id` 作为稳定账号回退。官方 QQ 普通事件不保证包含 AppID；缺少 `account_id` 时，有状态插件应要求管理员补配置，不能把不同 Bot 的数据归入 `unknown`。
+
 ## 诊断顺序
 
 ### 插件完全没有出现
@@ -199,6 +222,17 @@ Web 插件页的“重新扫描”或 `POST /api/v1/plugins/reload` 只重扫动
 4. 检查 `[official_host.commands]` 是否启用了当前前缀、私聊裸命令、@ 或回复入口。
 5. 官方 QQ 群检查所订阅 Intent、全量消息权限和 @ 事件类型。
 6. 确认参数语法：静态 aliases 是数组，动态 aliases 是逗号分隔字符串。
+7. 检查前置拦截器是否返回阻断；静态和动态拦截器共用同一条链。
+
+### 拦截器不执行或行为异常
+
+1. 完整阅读 [消息拦截器开发](interceptors.md)，确认目标是 `Message`，不是 notice/request/meta、`MessageSent` 或 Webhook。
+2. 检查消息是否在拦截器之前被去重、群过滤、空文本检查或 Bot 级限流丢弃。
+3. 静态插件确认模块已启用，`interceptors = [...]` 中的类型是可直接构造的单元结构体；带字段类型需要手工 `Module::interceptors()`。
+4. 动态插件确认描述符包含回调符号，重新扫描后日志出现 `registering dynamic interceptor`。
+5. 官方 QQ 检查 Intent 和平台权限；宿主未收到的事件不会进入拦截器。
+6. `pre_handle` 阻断后不会调用任何 `after_completion`；回复失败或流水线报错也不会调用后置钩子。
+7. 动态前置回调失败、panic 或超时时会 fail-open，检查 `dynamic-errors`、插件健康状态和超时熔断记录。
 
 ### 能触发但不回复
 

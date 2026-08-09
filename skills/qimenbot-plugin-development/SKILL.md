@@ -1,6 +1,6 @@
 ---
 name: qimenbot-plugin-development
-description: Develops, reviews, builds, publishes, deploys, and troubleshoots QimenBot static and dynamic Rust plugins, including commands, events, messages, interceptors, proactive sending, webhooks, ABI compatibility, the GitHub plugin marketplace, and standalone crates.io projects. Use when a task mentions QimenBot plugins, #[module], #[dynamic_plugin], cdylib, plugin hot reload, marketplace publishing, plugin configuration, or dynamic plugin loading errors.
+description: Develops, reviews, builds, publishes, deploys, and troubleshoots QimenBot static and dynamic Rust plugins, including commands, advanced message filters, events, messages, interceptors, runtime account identity, background tasks, proactive sending, webhooks, ABI compatibility, online configuration, and the GitHub plugin marketplace. Use when a task mentions QimenBot plugins, #[module], #[dynamic_plugin], cdylib, plugin hot reload, marketplace publishing, plugin configuration, qimen_context, or dynamic plugin loading errors.
 ---
 
 # QimenBot 插件开发
@@ -30,11 +30,22 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 
 用户已指定类型时不要擅自改型。信息不足且两种实现差异会改变交付物时才询问；否则根据部署条件选择并说明依据。
 
+## 按任务读取参考
+
+| 任务 | 必须读取 |
+|---|---|
+| 静态命令、系统事件、OneBot Action、后台任务或手写过滤器 | [references/static-plugins.md](references/static-plugins.md) |
+| 独立动态插件、生命周期、主动发送、Webhook 或构建 target | [references/dynamic-plugins.md](references/dynamic-plugins.md) |
+| 任意静态或动态消息拦截器 | [references/interceptors.md](references/interceptors.md) |
+| 加载、命令入口、`qimen_context`、官方 QQ 或运行错误 | [references/runtime-and-troubleshooting.md](references/runtime-and-troubleshooting.md) |
+| API 0.6 Schema 表单、密钥和配置生效 | [references/online-configuration.md](references/online-configuration.md) |
+| 商城收录、Release 资产、驱动矩阵和版本升级 | [references/marketplace-publishing.md](references/marketplace-publishing.md) |
+
 ## 必须执行的流程
 
 1. 确认 QimenBot 版本、协议、操作系统、CPU、GNU/musl、部署方式和是否拥有主框架源码。
 2. 静态插件完整阅读 [references/static-plugins.md](references/static-plugins.md)；动态插件完整阅读 [references/dynamic-plugins.md](references/dynamic-plugins.md)。
-3. 涉及配置、加载、在线表单、官方 QQ Bot 或错误诊断时，再阅读 [references/runtime-and-troubleshooting.md](references/runtime-and-troubleshooting.md) 和 [references/online-configuration.md](references/online-configuration.md)；涉及商城收录或 GitHub Release 分发时，完整阅读 [references/marketplace-publishing.md](references/marketplace-publishing.md)。
+3. 按上表完整读取任务涉及的专项参考。拦截器任务不能只看静态或动态概览；官方 QQ、有状态插件和主动发送任务必须读取运行参考中的稳定账号规则。
 4. 先检查目标项目现有 `Cargo.toml`、示例和配置，沿用当前 API，不做无关重构。
 5. 为命令、事件、配置解析、生命周期或 target 兼容性添加与风险相称的测试或可重复验证。
 6. 完成编译、产物检查、加载验证和部署说明；不能运行宿主时明确列出未验证项。
@@ -43,6 +54,7 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 
 - 插件 ID 一经发布应保持稳定；配置文件名和启停状态都依赖它。
 - 跨协议 ID 一律优先按字符串处理。官方 QQ Bot 的 openid 不能强转为传统 QQ 数字。
+- 动态请求、拦截器和事件路由从 `raw_event_json.qimen_context` 读取宿主可信的 `protocol`、`bot_instance` 和可选 `account_id`。持久化与主动发送优先使用稳定 `account_id`；缺失时不要用 `unknown` 合并多个 Bot 的状态。
 - 普通回复优先使用 QimenBot 通用消息模型；`OneBotActionClient` 只适用于 OneBot Action，不等同于官方 QQ OpenAPI。
 - 官方 QQ 本地媒体通过通用 Base64 消息段交给宿主处理；插件不读取 Bot 凭据、不自行实现分片上传，也不把 Base64 正文写入日志。
 - 官方 QQ Markdown 使用平台扩展语法；标题、文字样式、链接、图片、列表、引用、分隔线和换行等以官方 Markdown 文档为准。原生 HTML 标签（例如 `<br>`、`<font>`）不要按浏览器兼容性推断，需在目标聊天场景实测。
@@ -50,6 +62,8 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - 主框架代码必须保持插件无关；具体插件逻辑只能进入插件目录或独立插件仓库。
 - Runtime 不附带 `ping`、`echo`、`status` 等业务命令。宿主默认保留可逐项关闭的管理员命令 `plugins`、`registry`、`dynamic-errors`，固定优先级为 `10`；插件优先级更高时可接管同名命令。宿主 `help` 是可关闭、可被插件接管的分页兜底。
 - 命令前缀、私聊裸命令、@ 和回复入口由 `[official_host.commands]` 控制。插件不要自行删除协议 @ 标签或硬编码 `/`。
+- 消息拦截器只覆盖 `EventKind::Message`。`Notice`、`Request`、`Meta`、`MessageSent` 和 Webhook 使用各自路由；`pre_handle` 阻断后不执行命令，也不执行任何 `after_completion`。
+- `after_completion` 只代表消息正常完成，不是 `finally`。必须释放的资源依靠 RAII、`#[shutdown]` 或明确的线程停止流程处理。
 - 动态插件回调是同步 FFI，不直接使用 `async fn`；跨 FFI 边界只用 Host API 提供的 ABI 稳定类型。
 - API 0.6 配置必须使用独立 Schema 描述符；不要把字段追加到旧 `PluginDescriptor`，也不要让插件提供 HTML/JavaScript。
 - 密钥只能使用 Schema 的 `writeOnly` / `x-qimen-secret` / `format = "password"` 标记；不要在普通配置值、日志、默认值或 README 中放凭据。
@@ -67,6 +81,8 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - API 0.6 插件同时使用已发布的 `abi-stable-host-api 0.1.13` 与 `qimen-dynamic-plugin-derive 0.1.13`，没有混用 `0.1.12`、浮动 Git 分支或本地 path。
 - 在线配置已覆盖 Schema、UI Schema、密钥保留、revision 冲突和 `live/reload/restart` 生效语义。
 - 已覆盖权限、作用域、字符串 ID、错误处理和资源清理。
+- 有状态逻辑已使用 `qimen_context.account_id` 或明确的协议原生稳定身份隔离 Bot，没有持久化可变的 `bot_instance` 作为账号主键。
+- 拦截器已验证放行、阻断、无命令匹配、官方 QQ 字符串 ID、后置钩子条件和动态超时 fail-open 行为。
 - 已确认命令在目标宿主入口配置下可触发，帮助描述、隐藏状态和分页展示符合预期。
 - 动态后台线程能在 `#[shutdown]` 中停止并 `join`；Webhook 已考虑鉴权、签名、超时和重放。
 - 商城投稿已核对公开仓库、许可证、驱动矩阵、固定资产名、target、glibc、大小、SHA256 和构建证明。

@@ -103,7 +103,7 @@ pub trait MessageEventInterceptor: Send + Sync + 'static {
 | 方法 | 返回值 | 说明 |
 |------|-------|------|
 | `pre_handle` | `bool` | 返回 `false` 拦截消息，`true` 放行 |
-| `after_completion` | — | 所有插件处理完后调用（逆序），默认空实现 |
+| `after_completion` | — | 消息正常完成后逆序调用，默认空实现；前置阻断或流水线报错时不调用 |
 
 ### RuntimeBotContext — 运行时上下文
 

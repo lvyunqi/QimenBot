@@ -282,18 +282,26 @@ bot + protocol + chat.kind + chat.id + message_id + msg_idx
 
 ### 拦截器链
 
-拦截器按优先级排列，形成处理链：
+拦截器按注册顺序形成处理链。静态拦截器在前，动态拦截器在重新扫描时追加：
 
 ```
 → Interceptor[0].pre_handle()  → true
 → Interceptor[1].pre_handle()  → true
 → Interceptor[2].pre_handle()  → false (拦截!)
     ↓ 不再继续
+```
 
-// after_completion 按逆序执行
+被前置拦截器阻断后，不执行命令，也不执行任何 `after_completion`。只有消息正常走完命令分发和回复阶段，才会对完整链逆序调用后置钩子：
+
+```text
+→ Interceptor[0].pre_handle()  → true
+→ Interceptor[1].pre_handle()  → true
+→ 命令分发和回复正常完成
 ← Interceptor[1].after_completion()
 ← Interceptor[0].after_completion()
 ```
+
+重复消息、群过滤、空文本和 Bot 级限流都发生在拦截器之前。完整边界见[拦截器](/plugin/interceptors)。
 
 ### 插件状态
 

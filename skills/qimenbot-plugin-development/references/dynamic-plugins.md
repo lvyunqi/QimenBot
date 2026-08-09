@@ -140,6 +140,27 @@ fn status(req: &CommandRequest) -> CommandResponse
 
 常用请求字段全部是 ABI 稳定值：`args`、`command_name`、`sender_id`、`group_id`、`sender_nickname`、`message_id`、`timestamp`、`raw_event_json`。读取字符串使用 `.as_str()`。跨协议时不要把 ID 假定为数字；平台专属字段从 `raw_event_json` 解析，并为缺失字段提供降级。
 
+`group_id` 只表示群聊目标。C2C、频道和 DMS 中它为空字符串，当前 ABI 没有独立 `chat_id`；频道 ID、guild ID 和平台原始会话字段从 `raw_event_json` 读取。不要把空 `group_id` 当作官方 QQ 解码失败。
+
+宿主会覆盖写入可信账号上下文：
+
+```json
+{
+  "qimen_context": {
+    "version": 1,
+    "protocol": "qq-official",
+    "bot_instance": "qq-main",
+    "account_id": "102012345"
+  }
+}
+```
+
+- `protocol` 用于选择 OneBot 或官方 QQ 的平台分支。
+- `bot_instance` 是可调整的 `[[bots]].id`，只适合诊断和实例级路由。
+- 可选 `account_id` 是持久化和主动发送应优先使用的稳定账号选择器。
+- 缺少 `account_id` 且无法从协议原始事件可靠推导时，有状态插件应拒绝跨 Bot 合并数据，不要使用 `unknown` 或 `bot_instance` 充当账号主键。
+- 宿主不会注入 AppSecret、access token 等凭据；不要尝试从上下文绕过宿主发送能力。
+
 事件路由：
 
 ```rust
@@ -166,7 +187,13 @@ fn filter(req: &InterceptorRequest) -> InterceptorResponse {
 }
 ```
 
-拦截器不能长时间阻塞；耗时任务移到受控工作线程或外部服务。
+涉及拦截器时完整阅读 [消息拦截器开发](interceptors.md)。必须遵守：
+
+- `pre_handle` 阻断后不执行命令，也不执行任何 `after_completion`。
+- `after_completion` 只在命令分发和回复阶段正常完成后调用，不是 `finally`。
+- 动态前置回调加载失败、panic 或超时时采用 fail-open，不能作为唯一鉴权边界。
+- `InterceptorResponse::block()` 不携带回复；需要提示时在回调内使用 `BotApi` 或 `SendBuilder`，并按真实会话选择目标。
+- 回调不能长时间阻塞；耗时任务移到受控工作线程或外部服务。
 
 ## 回复消息
 
@@ -207,6 +234,8 @@ message = "hello"
 ```
 
 `PluginInitConfig` 还提供 `plugin_id`、`plugin_dir` 和 `data_dir`。初始化失败返回 `PluginInitResult::err(...)`，宿主会跳过插件并记录原因。
+
+把数据库、缓存和文件命名空间绑定到稳定插件 ID 与 `qimen_context.account_id`，不要绑定可变化的 `bot_instance`。同一插件同时服务多个 Bot 时，所有用户状态键至少包含协议、稳定账号和发送者字符串 ID。
 
 `#[shutdown]` 必须释放文件、数据库、socket、线程和全局状态。热重载顺序是：停止路由、调用 shutdown、等待回调安全结束、解绑 Host API、卸载动态库、重新扫描并 init 新库。
 
