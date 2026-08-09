@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.4"
+released_at = "2026-08-09T12:47:49Z"
+release_tag = "v0.2.4"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "修复官方 QQ Bot 将长期 HTTPS 表情包 URL 误判为未验证的问题，恢复群内 @ 请求和 /sticker 的宿主图片发送队列。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "749b7dbb4be536f19c3f2651594c7e7bbf128726805ac903217cb864890fe080"
+size_bytes = 4609024
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "3604b3b3efe11e0dbdb619d7d3f01e629ec218e8138d9de9a8ffd801d24d9545"
+size_bytes = 4349456
+min_glibc = "2.29"
+github_attestation = true
