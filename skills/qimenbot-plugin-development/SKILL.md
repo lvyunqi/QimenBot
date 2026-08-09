@@ -60,7 +60,7 @@ description: Develops, reviews, builds, publishes, deploys, and troubleshoots Qi
 - 官方 QQ Markdown 使用平台扩展语法；标题、文字样式、链接、图片、列表、引用、分隔线和换行等以官方 Markdown 文档为准。原生 HTML 标签（例如 `<br>`、`<font>`）不要按浏览器兼容性推断，需在目标聊天场景实测。
 - 不把 Secret、Token、用户配置、数据库或编译后的动态库提交到 QimenBot 主仓库。
 - 主框架代码必须保持插件无关；具体插件逻辑只能进入插件目录或独立插件仓库。
-- Runtime 不附带 `ping`、`echo`、`status` 等业务命令。宿主默认保留可逐项关闭的管理员命令 `plugins`、`registry`、`dynamic-errors`，固定优先级为 `10`；插件优先级更高时可接管同名命令。宿主 `help` 是可关闭、可被插件接管的分页兜底。
+- Runtime 不附带 `ping`、`echo`、`status` 等业务命令。宿主默认保留可逐项关闭的管理员命令 `plugins`、`registry`、`dynamic-errors`，固定优先级为 `10`；插件优先级更高时可接管同名命令。宿主 `help` 是可关闭、可被插件接管的分页兜底。宿主不注册 `pl`、`reg`、`derr`、`h` 等别名，插件自己的 aliases 不受限制。
 - 命令前缀、私聊裸命令、@ 和回复入口由 `[official_host.commands]` 控制。插件不要自行删除协议 @ 标签或硬编码 `/`。
 - 消息拦截器只覆盖 `EventKind::Message`。`Notice`、`Request`、`Meta`、`MessageSent` 和 Webhook 使用各自路由；`pre_handle` 阻断后不执行命令，也不执行任何 `after_completion`。
 - `after_completion` 只代表消息正常完成，不是 `finally`。必须释放的资源依靠 RAII、`#[shutdown]` 或明确的线程停止流程处理。

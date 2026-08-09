@@ -322,7 +322,7 @@ fn parse_command_input(
 }
 
 fn is_help_command(name: &str) -> bool {
-    name.eq_ignore_ascii_case("help") || name.eq_ignore_ascii_case("h")
+    name.eq_ignore_ascii_case("help")
 }
 
 fn parse_help_page(args: &[String]) -> usize {
@@ -371,7 +371,7 @@ fn builtin_command_definitions(config: &CommandConfig) -> Vec<CommandDefinition>
         definitions.push(CommandDefinition {
             name: "plugins",
             description: "Show or manage plugin status",
-            aliases: &["pl"],
+            aliases: &[],
             examples: &[
                 "/plugins",
                 "/plugins enable example-plugin",
@@ -389,7 +389,7 @@ fn builtin_command_definitions(config: &CommandConfig) -> Vec<CommandDefinition>
         definitions.push(CommandDefinition {
             name: "registry",
             description: "Show command conflicts and precedence",
-            aliases: &["reg"],
+            aliases: &[],
             examples: &["/registry", "/registry conflicts"],
             category: "host-management",
             hidden: false,
@@ -402,7 +402,7 @@ fn builtin_command_definitions(config: &CommandConfig) -> Vec<CommandDefinition>
         definitions.push(CommandDefinition {
             name: "dynamic-errors",
             description: "Show or clear dynamic plugin runtime errors",
-            aliases: &["derr"],
+            aliases: &[],
             examples: &["/dynamic-errors", "/dynamic-errors clear"],
             category: "host-management",
             hidden: false,
@@ -936,7 +936,7 @@ mod tests {
     #[tokio::test]
     async fn host_management_commands_are_configurable_and_require_admin() {
         let dispatcher = CommandDispatcher::new(CommandConfig::default());
-        for command in ["plugins", "pl", "registry", "reg", "dynamic-errors", "derr"] {
+        for command in ["plugins", "registry", "dynamic-errors"] {
             let event = sample_event(command);
             assert!(matches!(
                 dispatcher
@@ -989,6 +989,23 @@ mod tests {
                     .await
                     .is_none(),
                 "disabled host command unexpectedly claimed {command}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn host_command_abbreviations_are_not_recognized() {
+        let dispatcher = CommandDispatcher::new(CommandConfig::default());
+
+        for command in ["pl", "reg", "derr", "h"] {
+            assert!(
+                dispatcher
+                    .dispatch("qq-main", &sample_event(command), &TEST_RUNTIME)
+                    .with_roles(true, true)
+                    .execute()
+                    .await
+                    .is_none(),
+                "host unexpectedly claimed abbreviation {command}"
             );
         }
     }
@@ -1106,6 +1123,15 @@ mod tests {
             Some(CommandDispatchSignal::Help { page: 2 })
         ));
 
+        assert!(
+            dispatcher
+                .dispatch("qq-main", &sample_event("h"), &TEST_RUNTIME)
+                .execute()
+                .await
+                .is_none(),
+            "host help abbreviation should not be reserved"
+        );
+
         let disabled = CommandConfig {
             help_enabled: false,
             ..CommandConfig::default()
@@ -1121,16 +1147,18 @@ mod tests {
 
         let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
         dispatcher.register_plugin(Arc::new(PluginHelp));
-        let event = sample_event("help");
-        match dispatcher
-            .dispatch("qq-main", &event, &TEST_RUNTIME)
-            .execute()
-            .await
-        {
-            Some(CommandDispatchSignal::Reply(message)) => {
-                assert_eq!(message.plain_text(), "plugin help");
+        for command in ["help", "h"] {
+            let event = sample_event(command);
+            match dispatcher
+                .dispatch("qq-main", &event, &TEST_RUNTIME)
+                .execute()
+                .await
+            {
+                Some(CommandDispatchSignal::Reply(message)) => {
+                    assert_eq!(message.plain_text(), "plugin help");
+                }
+                _ => panic!("plugin should own the {command} command"),
             }
-            _ => panic!("plugin should own the help command"),
         }
     }
 
