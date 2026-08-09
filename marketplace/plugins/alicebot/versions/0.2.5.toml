@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.5"
+released_at = "2026-08-09T15:02:09Z"
+release_tag = "v0.2.5"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 2
+rollback_safe = false
+changelog = "让表情包收藏结果可验证：合规图片默认收藏，记录收藏和缓存状态；群内 @ 查询收藏状态不再由模型猜测，并新增受限的收藏状态和标签检索工具。升级后数据库结构从 v17 迁移到 v18，不能回滚到 0.2.4 及更早版本。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "eca063242a6fd72e923650bffae11b97782d1a9793b9673245bc00cb28752fee"
+size_bytes = 4642304
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "47bc7a2041aea63099b48c8d6a8f9ee5241014f6f60008518cd0dfa0a2eb971f"
+size_bytes = 4374032
+min_glibc = "2.29"
+github_attestation = true
