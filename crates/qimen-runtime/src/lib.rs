@@ -288,6 +288,7 @@ struct BotControl {
 #[derive(Debug, Clone)]
 struct BotStatusRecord {
     desired_enabled: bool,
+    applied_generation: u64,
     state: BotConnectionState,
     state_since_epoch_ms: u64,
     last_event_epoch_ms: Option<u64>,
@@ -751,6 +752,7 @@ impl Runtime {
                     bot.id.clone(),
                     BotStatusRecord {
                         desired_enabled: bot.enabled,
+                        applied_generation: 0,
                         state: if bot.enabled {
                             BotConnectionState::Starting
                         } else {
@@ -994,21 +996,65 @@ impl Runtime {
         if !sender.borrow().enabled {
             return Err(QimenError::Runtime(format!("bot '{}' is disabled", bot_id)));
         }
+        self.set_bot_connection_state(bot_id, BotConnectionState::Reconnecting, None);
         sender.send_modify(|control| {
             control.generation = control.generation.wrapping_add(1);
         });
-        self.set_bot_connection_state(bot_id, BotConnectionState::Reconnecting, None);
         Ok(())
     }
 
     pub fn reconnect_all_bots(&self) {
+        self.request_reconnect_all_bots();
+    }
+
+    fn request_reconnect_all_bots(&self) -> Vec<(String, u64)> {
+        let mut requested = Vec::new();
         for (bot_id, sender) in &self.bot_controls {
             if sender.borrow().enabled {
+                self.set_bot_connection_state(bot_id, BotConnectionState::Reconnecting, None);
                 sender.send_modify(|control| {
                     control.generation = control.generation.wrapping_add(1);
                 });
-                self.set_bot_connection_state(bot_id, BotConnectionState::Reconnecting, None);
+                requested.push((bot_id.clone(), sender.borrow().generation));
             }
+        }
+        requested
+    }
+
+    async fn reconnect_all_bots_after_dynamic_reload(&self) {
+        let requested = self.request_reconnect_all_bots();
+        if requested.is_empty() {
+            return;
+        }
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let pending = self
+                .bot_statuses
+                .read()
+                .map(|statuses| {
+                    requested
+                        .iter()
+                        .filter(|(bot_id, generation)| {
+                            statuses
+                                .get(bot_id)
+                                .is_none_or(|status| status.applied_generation < *generation)
+                        })
+                        .map(|(bot_id, _)| bot_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|_| requested.iter().map(|(bot_id, _)| bot_id.clone()).collect());
+            if pending.is_empty() {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    bots = %pending.join(","),
+                    "dynamic plugin reload completed, but bot dispatchers did not acknowledge the new generation before timeout"
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -1048,7 +1094,7 @@ impl Runtime {
 
     pub async fn reload_dynamic_plugins(&self) -> Result<usize> {
         let count = self.rescan_dynamic_plugins().await?;
-        self.reconnect_all_bots();
+        self.reconnect_all_bots_after_dynamic_reload().await;
         Ok(count)
     }
 
@@ -1164,7 +1210,7 @@ impl Runtime {
         if let Err(apply_error) = apply() {
             let rollback_result = rollback();
             let reload_result = self.rescan_dynamic_plugins_unlocked().await;
-            self.reconnect_all_bots();
+            self.reconnect_all_bots_after_dynamic_reload().await;
             return match (rollback_result, reload_result) {
                 (Ok(()), Ok(_)) => Err(apply_error),
                 (rollback_result, reload_result) => Err(QimenError::Runtime(format!(
@@ -1177,7 +1223,7 @@ impl Runtime {
 
         match self.rescan_dynamic_plugins_unlocked().await {
             Ok(count) => {
-                self.reconnect_all_bots();
+                self.reconnect_all_bots_after_dynamic_reload().await;
                 Ok(count)
             }
             Err(load_error) => {
@@ -1197,7 +1243,7 @@ impl Runtime {
                         "reload skipped because file rollback failed".to_string(),
                     ))
                 };
-                self.reconnect_all_bots();
+                self.reconnect_all_bots_after_dynamic_reload().await;
                 Err(QimenError::Runtime(format!(
                     "replacement dynamic plugins failed to load: {load_error}; unload: {}; rollback: {}; previous-version reload: {}",
                     result_summary(unload_result),
@@ -1304,6 +1350,9 @@ impl Runtime {
         loop {
             let desired = *control.borrow_and_update();
             if !desired.enabled {
+                self.update_bot_status(&bot.id, |status| {
+                    status.applied_generation = desired.generation;
+                });
                 self.set_bot_connection_state(&bot.id, BotConnectionState::Disabled, None);
                 tokio::select! {
                     changed = control.changed() => {
@@ -1320,7 +1369,12 @@ impl Runtime {
             }
 
             self.set_bot_connection_state(&bot.id, BotConnectionState::Starting, None);
-            let run = self.run_bot(bot, limiter);
+            let system_dispatcher = self.build_system_dispatcher();
+            let command_dispatcher = self.build_command_dispatcher()?;
+            self.update_bot_status(&bot.id, |status| {
+                status.applied_generation = desired.generation;
+            });
+            let run = self.run_bot(bot, limiter, system_dispatcher, command_dispatcher);
             tokio::pin!(run);
             tokio::select! {
                 result = &mut run => {
@@ -1373,19 +1427,28 @@ impl Runtime {
     }
 
     /// 每个 Bot 使用独立 future 运行，避免长连接阻塞后续实例启动。
-    async fn run_bot(&self, bot: &BotRuntimeInfo, limiter: &TokenBucketLimiter) -> Result<()> {
+    async fn run_bot(
+        &self,
+        bot: &BotRuntimeInfo,
+        limiter: &TokenBucketLimiter,
+        system_dispatcher: OneBotSystemDispatcher,
+        command_dispatcher: CommandDispatcher,
+    ) -> Result<()> {
         if matches!(bot.protocol, ProtocolId::OneBot11)
             && matches!(bot.transport, TransportMode::WsForward)
         {
-            self.run_onebot11_forward_ws(bot, limiter).await
+            self.run_onebot11_forward_ws(bot, limiter, &system_dispatcher, &command_dispatcher)
+                .await
         } else if matches!(bot.protocol, ProtocolId::OneBot11)
             && matches!(bot.transport, TransportMode::WsReverse)
         {
-            self.run_onebot11_reverse_ws(bot, limiter).await
+            self.run_onebot11_reverse_ws(bot, limiter, &system_dispatcher, &command_dispatcher)
+                .await
         } else if matches!(bot.protocol, ProtocolId::QqOfficial)
             && matches!(bot.transport, TransportMode::Gateway)
         {
-            self.run_qqbot_gateway(bot, limiter).await
+            self.run_qqbot_gateway(bot, limiter, &system_dispatcher, &command_dispatcher)
+                .await
         } else {
             tracing::warn!(
                 bot_id = %bot.id,
@@ -1760,6 +1823,8 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         limiter: &TokenBucketLimiter,
+        system_dispatcher: &OneBotSystemDispatcher,
+        command_dispatcher: &CommandDispatcher,
     ) -> Result<()> {
         let appid = bot
             .appid
@@ -1785,8 +1850,6 @@ impl Runtime {
             .register_qq_official_executor(bot, Arc::clone(&api_client))
             .await;
         let adapter = QqBotAdapter;
-        let system_dispatcher = self.build_system_dispatcher();
-        let command_dispatcher = self.build_command_dispatcher()?;
         let reconnect_policy = ReconnectPolicy::default();
         let mut reconnect_delay = reconnect_policy.initial_delay;
         let mut session = QqBotGatewaySession {
@@ -1849,8 +1912,8 @@ impl Runtime {
                     bot,
                     &adapter,
                     &api_client,
-                    &system_dispatcher,
-                    &command_dispatcher,
+                    system_dispatcher,
+                    command_dispatcher,
                     &mut client,
                     &reconnect_policy,
                     limiter,
@@ -1979,6 +2042,8 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         limiter: &TokenBucketLimiter,
+        system_dispatcher: &OneBotSystemDispatcher,
+        command_dispatcher: &CommandDispatcher,
     ) -> Result<()> {
         let bind = bot.bind.clone().ok_or_else(|| {
             QimenError::Config(format!("bot '{}' missing ws-reverse bind", bot.id))
@@ -1994,8 +2059,6 @@ impl Runtime {
         })
         .await?;
         let adapter = OneBot11Adapter;
-        let system_dispatcher = self.build_system_dispatcher();
-        let command_dispatcher = self.build_command_dispatcher()?;
         let reconnect_policy = ReconnectPolicy::default();
         self.set_bot_connection_state(&bot.id, BotConnectionState::Reconnecting, None);
 
@@ -2029,8 +2092,8 @@ impl Runtime {
                 .run_onebot11_session(
                     bot,
                     &adapter,
-                    &system_dispatcher,
-                    &command_dispatcher,
+                    system_dispatcher,
+                    command_dispatcher,
                     &mut client,
                     &reconnect_policy,
                     limiter,
@@ -2076,6 +2139,8 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         limiter: &TokenBucketLimiter,
+        system_dispatcher: &OneBotSystemDispatcher,
+        command_dispatcher: &CommandDispatcher,
     ) -> Result<()> {
         let endpoint = bot.endpoint.clone().ok_or_else(|| {
             QimenError::Config(format!("bot '{}' missing ws-forward endpoint", bot.id))
@@ -2084,8 +2149,6 @@ impl Runtime {
         tracing::info!(bot_id = %bot.id, endpoint = %endpoint, "connecting to OneBot11 forward WS");
 
         let adapter = OneBot11Adapter;
-        let system_dispatcher = self.build_system_dispatcher();
-        let command_dispatcher = self.build_command_dispatcher()?;
         let reconnect_policy = ReconnectPolicy::default();
         let mut reconnect_delay = reconnect_policy.initial_delay;
 
@@ -2131,8 +2194,8 @@ impl Runtime {
                 .run_onebot11_session(
                     bot,
                     &adapter,
-                    &system_dispatcher,
-                    &command_dispatcher,
+                    system_dispatcher,
+                    command_dispatcher,
                     &mut client,
                     &reconnect_policy,
                     limiter,
@@ -5359,6 +5422,57 @@ path = "/onebot/reverse"
                 .is_err(),
             "ws-reverse boot must keep running while it waits for clients"
         );
+    }
+
+    #[tokio::test]
+    async fn dynamic_reload_waits_until_bot_dispatchers_apply_the_new_generation() {
+        let config: AppConfig = toml::from_str(
+            r#"
+[runtime]
+env = "test"
+shutdown_timeout_secs = 1
+task_grace_secs = 1
+
+[observability]
+level = "info"
+json_logs = false
+metrics_bind = "127.0.0.1:0"
+
+[official_host]
+builtin_modules = []
+plugin_modules = []
+
+[[bots]]
+id = "reverse-bot"
+protocol = "onebot11"
+transport = "ws-reverse"
+bind = "127.0.0.1:0"
+path = "/onebot/reverse"
+"#,
+        )
+        .unwrap();
+        let runtime = Runtime::from_config(&config);
+        let supervisor = runtime.supervise_bot(&runtime.bots[0], &runtime.rate_limiters[0]);
+        tokio::pin!(supervisor);
+
+        let reload = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::timeout(
+                Duration::from_millis(500),
+                runtime.reconnect_all_bots_after_dynamic_reload(),
+            )
+            .await
+            .expect("dispatcher generation should be acknowledged without waiting for timeout");
+
+            let expected = runtime.bot_controls["reverse-bot"].borrow().generation;
+            let applied = runtime.bot_statuses.read().unwrap()["reverse-bot"].applied_generation;
+            assert_eq!(applied, expected);
+        };
+
+        tokio::select! {
+            result = &mut supervisor => panic!("bot supervisor stopped unexpectedly: {result:?}"),
+            () = reload => {}
+        }
     }
 
     #[test]

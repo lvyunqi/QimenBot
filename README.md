@@ -122,7 +122,7 @@ cargo run --package qimenbotd
 
 管理面板会嵌入 Rust 二进制，所以前端必须先构建。Docker 一键安装、目录映射、systemd、Windows Service、备份恢复和故障排查见[完整部署指南](docs/guide/deployment.md)。
 
-第三方动态插件可以在管理面板的“插件商城”中安装和更新。商城会按 QimenBot、ABI、OS、CPU、GNU/MSVC 和 glibc 过滤版本，并按版本展示 OneBot 11、官方 QQ Bot 的场景、事件和发送能力；替换失败时会恢复旧二进制。管理员查看[商城使用教程](docs/plugin/marketplace.md)，插件作者从[商城投稿规范](docs/marketplace/index.md)开始。
+第三方动态插件可以在管理面板的“插件商城”中安装和更新。商城会按 QimenBot、ABI、OS、CPU、GNU/MSVC 和 glibc 过滤版本，并按版本展示 OneBot 11、官方 QQ Bot 的场景、事件和发送能力；不同资产使用独立的 SHA256 活动路径，替换或初始化失败时会恢复旧二进制。管理员查看[商城使用教程](docs/plugin/marketplace.md)，插件作者从[商城投稿规范](docs/marketplace/index.md)开始。
 
 ## 配置详解
 

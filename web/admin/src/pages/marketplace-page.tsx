@@ -508,7 +508,10 @@ function PluginDetail({
           <div>
             <PackageCheck />
             <span>
-              <small>{installed.loaded ? "当前已加载" : installed.active ? "文件已激活" : "活动文件缺失"}</small>
+              <small>
+                {installed.loaded ? "当前已加载" : installed.active ? "文件已激活" : "活动文件缺失"}
+                {` · 安装于 ${formatDateTime(installed.installed_at)}`}
+              </small>
               <strong>v{installed.version}</strong>
             </span>
           </div>
@@ -598,7 +601,7 @@ function VersionDetails({ version }: { version: MarketplaceVersionView }) {
           {version.installable ? <Check /> : <AlertTriangle />}
           {version.installable ? "当前宿主兼容" : version.yanked ? "版本已撤回" : "当前宿主不兼容"}
         </Badge>
-        <span>{formatDate(version.released_at)}</span>
+        <span>发布于 {formatDateTime(version.released_at)}</span>
       </div>
       <div className="marketplace-version-facts">
         <VersionFact label="QimenBot" value={version.qimenbot} />
@@ -942,8 +945,16 @@ function compareSemver(left: string, right: string) {
   return 0
 }
 
-function formatDate(value: string) {
+function formatDateTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric" }).format(date)
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZoneName: "short",
+  }).format(date)
 }

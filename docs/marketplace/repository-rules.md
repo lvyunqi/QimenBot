@@ -93,7 +93,7 @@ some-crate = { version = "1", registry = "company-private" }
 
 公开 Git 依赖应固定 commit，不能长期跟随可变分支。crate 版本、tag 和 `#[dynamic_plugin]` 描述符版本应一致。
 
-后台线程必须在 `#[shutdown]` 中停止并 `join`，否则 Windows 热更新可能因为 DLL 仍被占用而失败。Webhook 必须考虑鉴权、签名、时间戳、超时、请求体上限和重放。
+后台线程必须在 `#[shutdown]` 中停止并 `join`，否则 Windows 热更新可能因为 DLL 仍被占用而失败。商城会为不同资产分配带 SHA256 的独立活动文件名，以避免 Linux 延迟卸载旧 Rust 动态库时误用旧版本；这不能替代插件自己的关闭逻辑。Webhook 必须考虑鉴权、签名、时间戳、超时、请求体上限和重放。
 
 ## 静态插件需要额外说明
 
