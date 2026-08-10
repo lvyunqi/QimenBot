@@ -1,0 +1,36 @@
+schema_version = 1
+version = "0.2.6"
+released_at = "2026-08-10T01:26:08Z"
+release_tag = "v0.2.6"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 3
+rollback_safe = false
+changelog = "新增 collect_recent_image、send_recent_image 和 send_sticker 原生 Agent 工具，并为明确的收藏、复制和重发表情包请求提供确定性执行兜底；通过 QQ 官方引用索引精确关联历史消息和图片，支持热重载后恢复图片上下文，并新增脱敏工具调用审计。升级后数据库结构从 v18 迁移到 v19，不能安全回滚到 0.2.5。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+events = ["message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+events = ["message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_alicebot-x86_64-pc-windows-msvc.dll"
+sha256 = "91b88465689c9a1413db0be9008de4a7fb18e1831538e811f0c3ae03e565a8dd"
+size_bytes = 4711936
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_alicebot-x86_64-unknown-linux-gnu.so"
+sha256 = "bc2ceaa9f4d6d0bc778324a833da728c136658481ea5a7ab0d8ff56a24e6f7e9"
+size_bytes = 4427280
+min_glibc = "2.29"
+github_attestation = true
