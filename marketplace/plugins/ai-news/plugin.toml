@@ -1,0 +1,14 @@
+schema_version = 1
+id = "ai-news"
+name = "AI 早报主动推送"
+summary = "轮询橘鸦 AI 早报 RSS，向 OneBot 11 与 QQ 官方机器人群主动推送每日内容。"
+description = "面向 QimenBot 的 AI 早报动态插件。管理员可通过 API 0.6 在线配置多个机器人账号与目标群；插件后台线程轮询橘鸦 AI 早报 RSS，按目标独立去重并持久化状态。OneBot 11 使用纯文本和可选 Base64 封面图，QQ 官方机器人使用单段 Markdown 并保留公网 HTTPS 图片。插件不保存 Bot 凭据，不使用数据库或 Webhook。"
+type = "dynamic"
+repository = "lvyunqi/ai-news"
+repository_id = 1329922711
+license = "Apache-2.0"
+authors = ["lvyunqi"]
+categories = ["ai", "news", "automation"]
+keywords = ["ai", "news", "rss", "daily", "onebot11", "qq-official"]
+homepage = "https://github.com/lvyunqi/ai-news"
+trust = "community"
