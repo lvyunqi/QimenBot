@@ -1,0 +1,44 @@
+schema_version = 1
+version = "0.1.0-rc.1"
+released_at = "2026-08-11T04:25:11Z"
+release_tag = "v0.1.0-rc.1"
+channel = "prerelease"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "首次预发布：支持 API 0.6 在线配置、RSS 定时轮询、逐目标去重、OneBot 11 文本/封面和 QQ 官方 Markdown 主动群推送。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+outbound = ["proactive", "rich-message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+outbound = ["proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_ai_news-x86_64-pc-windows-msvc.dll"
+sha256 = "f96df333146355ea3fec521170bcfc61673778bb816a10512eeb9ff3ecbeb439"
+size_bytes = 7806464
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_ai_news-x86_64-unknown-linux-gnu.so"
+sha256 = "18f863f44daeac3aaed2f25728f11322d7ffc38c2af07f80c409dd345ed7fe00"
+size_bytes = 11124640
+min_glibc = "2.30"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_ai_news-aarch64-unknown-linux-gnu.so"
+sha256 = "d243f77af77df95e14880684a0491ae81d5a4ec9f350f975455bc25ee1dfb9ce"
+size_bytes = 10953928
+min_glibc = "2.30"
+github_attestation = true
