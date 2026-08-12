@@ -1,0 +1,61 @@
+schema_version = 1
+version = "0.1.2"
+released_at = "2026-08-12T16:10:05Z"
+release_tag = "v0.1.2"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 42
+rollback_safe = true
+changelog = "修复首次在线配置保存：公开启动字段提供完整安全默认值，数据库和旧启动内容路径从表单隐藏并保持旧配置兼容；shadcn 管理端支持直接上传 JSON/TOML 内容包并复用既有暂存、校验和发布事务。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_douluo_game-x86_64-pc-windows-msvc.dll"
+sha256 = "440aeb482d39ac6e1f32f325a4cef7988d1b2292dbaf60e95affa44d79c39230"
+size_bytes = 11264000
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_douluo_game-aarch64-pc-windows-msvc.dll"
+sha256 = "cfd9d84a1f049be27fc3f9d61adf104d635250d0460eba1ac430311091732372"
+size_bytes = 9486336
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_douluo_game-x86_64-unknown-linux-gnu.so"
+sha256 = "9583ccb93d844353b786940f7deb807ff2f4bccfc7299fd7bee55830897a4268"
+size_bytes = 11845848
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_douluo_game-aarch64-unknown-linux-gnu.so"
+sha256 = "84e46730a1df1c76f653c577c2619275a0dc639318f6910fdb69aaaa79503da5"
+size_bytes = 11618288
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_douluo_game-x86_64-apple-darwin.dylib"
+sha256 = "23f07204b2e28560fdd92d2992651566ac582516066e9728ed77725b326be898"
+size_bytes = 11014128
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_douluo_game-aarch64-apple-darwin.dylib"
+sha256 = "e70abcbdb87466bb47cbe4289b9cbb166d0ff0553cae8d9e2fe76f88f23c0157"
+size_bytes = 10304448
+github_attestation = true
