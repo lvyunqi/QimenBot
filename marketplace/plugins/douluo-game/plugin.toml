@@ -1,0 +1,14 @@
+schema_version = 1
+id = "douluo-game"
+name = "斗罗大陆文字游戏"
+summary = "提供角色成长、地图任务、经济、PVE、魂环与魂技玩法。"
+description = "面向 QimenBot 的大型文字 RPG 动态插件。提供角色创建、武魂觉醒、地图与 NPC、任务、经济和背包、PVE 战斗、魂环与魂技、内容包目录以及可选的 shadcn 管理端。插件在宿主 data_dir 中使用 SQLite，管理服务默认关闭且仅允许受控监听；不读取 Bot 凭据、不提供 Webhook、不执行定时主动推送。当前商城兼容矩阵只声明已完成真实宿主验收的 OneBot 11 私聊与群聊能力。"
+type = "dynamic"
+repository = "lvyunqi/douluo-bot"
+repository_id = 1324189576
+license = "Apache-2.0"
+authors = ["lvyunqi"]
+categories = ["game", "rpg"]
+keywords = ["douluo", "rpg", "game", "onebot11", "sqlite", "shadcn"]
+homepage = "https://github.com/lvyunqi/douluo-bot"
+trust = "community"
