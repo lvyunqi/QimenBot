@@ -1,0 +1,67 @@
+schema_version = 1
+version = "0.1.3"
+released_at = "2026-08-13T05:07:31Z"
+release_tag = "v0.1.3"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "新增雷达站新模型兼容：当 iq-history 尚未聚合新模型时，排行、单模型查询和多模型对比自动补用 intelligence-efficiency 的实时 IQ 快照；已有历史数据保持优先，趋势命令仍只使用真实历史序列。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["private", "group"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at", "channel-at", "channel-private"]
+events = ["message"]
+outbound = ["reply", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-x86_64-pc-windows-msvc.dll"
+sha256 = "157708789a6a3619f1c21e3fa2589e4d95cd39bc76e9d45ad8f9461a4cf5a228"
+size_bytes = 4730880
+github_attestation = true
+
+[[assets]]
+target = "aarch64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_gpt_radar-aarch64-pc-windows-msvc.dll"
+sha256 = "9e9970be690add2624472c3434f3609db0d69956f76ddb72ba349f44c2b55c71"
+size_bytes = 4071936
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-unknown-linux-gnu.so"
+sha256 = "802511bf4fa0a6709bc0af7ae83b9dc9d7db2c3dd9c88ef54b50570684281005"
+size_bytes = 4675416
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-unknown-linux-gnu.so"
+sha256 = "60f1cbbe99c43fc3ea9524845c5b4df7c30f3521065379d249ca1dce83264ac1"
+size_bytes = 4126496
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-x86_64-apple-darwin.dylib"
+sha256 = "72d6b7a68b71cc78505fbaa4107f7f2cd8b1179f0010edc3e3d1429d00eda835"
+size_bytes = 4210616
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_gpt_radar-aarch64-apple-darwin.dylib"
+sha256 = "a69da45d97fcebdbb703be5b76e721c84fbb143011acffb6460979914f9a8644"
+size_bytes = 3917280
+github_attestation = true
