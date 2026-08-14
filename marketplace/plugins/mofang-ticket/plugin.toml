@@ -1,0 +1,14 @@
+schema_version = 1
+id = "mofang-ticket"
+name = "魔方财务工单推送"
+summary = "接收魔方财务系统工单 Webhook，鉴权去重后主动推送到配置的 QQ 群。"
+description = "对接魔方财务系统的 QimenBot 动态插件，打通「工单事件 → QQ 群」实时通知链路。接收魔方系统 POST 的工单事件 Webhook，经 HMAC-SHA256 签名校验、时间戳容差窗口、nonce 防重放与 event.id 幂等去重后，把原始内容原文透传到配置的 notify.targets 群（OneBot 11 / 官方 QQ Bot 按协议原生群号）。当前不写数据库、不启动后台线程、不处理入站消息命令；接单/转移/回复等人工介入能力后续补充。主动发送为纯文本。"
+type = "dynamic"
+repository = "lvyunqi/mofang-ticket-bot"
+repository_id = 1333414136
+license = "MIT"
+authors = ["lvyunqi"]
+categories = ["management", "monitoring"]
+keywords = ["mofang", "ticket", "webhook", "notify", "onebot11", "qq-official"]
+homepage = "https://github.com/lvyunqi/mofang-ticket-bot"
+trust = "community"

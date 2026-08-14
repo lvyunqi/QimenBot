@@ -1,0 +1,58 @@
+schema_version = 1
+version = "0.1.5"
+released_at = "2026-08-14T03:48:53Z"
+release_tag = "v0.1.5"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "首次发布：接收魔方财务系统工单 Webhook，HMAC-SHA256 鉴权 + 时间戳容差 + nonce 防重放 + event.id 幂等去重，主动推送原始内容到配置的 QQ 群（OneBot 11 / 官方 QQ）。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+outbound = ["proactive"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+outbound = ["proactive"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_mofang_ticket-x86_64-pc-windows-msvc.dll"
+sha256 = "3ca8c037f2973ce240e7ac1c8b4c548593e04f448ef57da0e4c5507752b2a5e9"
+size_bytes = 393216
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-x86_64-unknown-linux-gnu.so"
+sha256 = "f628bb5c92b41ed8bc6a686fc14f6cb9ad689a22125fb69e4e7b3eb7588165c5"
+size_bytes = 763664
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-aarch64-unknown-linux-gnu.so"
+sha256 = "c5998f36814947e227c4e089160a920aac4303276a01cb0cd771b2dde8298d75"
+size_bytes = 764640
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-x86_64-apple-darwin.dylib"
+sha256 = "a5c291b70f3d1410390c940a32232b8f8e6707d853b3a678d0905a25919b56d0"
+size_bytes = 663992
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-aarch64-apple-darwin.dylib"
+sha256 = "70527637733876023cf21ea1e81b6525c24303a84e1b2451ad5c52938a0ae12d"
+size_bytes = 655616
+github_attestation = true
