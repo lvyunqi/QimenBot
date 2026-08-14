@@ -1,0 +1,58 @@
+schema_version = 1
+version = "0.1.6"
+released_at = "2026-08-14T05:07:29Z"
+release_tag = "v0.1.6"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 1
+rollback_safe = true
+changelog = "修复首次安装无配置文件时 init 失败导致安装回滚：空配置改为以禁用态成功加载；启用但 inbound.secret 未配置或不足 16 字符时，插件保持加载并由 Webhook 返回 503。"
+
+[[drivers]]
+driver = "onebot11"
+scenes = ["group"]
+outbound = ["proactive"]
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["group-at"]
+outbound = ["proactive"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_mofang_ticket-x86_64-pc-windows-msvc.dll"
+sha256 = "00d14e55754bbbeb2d9dd9cd6c4ebc152ddd330eb49b6b2609e19e51fabd419e"
+size_bytes = 396288
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-x86_64-unknown-linux-gnu.so"
+sha256 = "ecb07702c1da221ac07584ced7f50aa862df0000cb79f912791f16d742456ccb"
+size_bytes = 762856
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "aarch64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-aarch64-unknown-linux-gnu.so"
+sha256 = "6ac52a44a75da69c7cc3986f02b367d50ed87bc6c41f0ed5c40a8093e816b412"
+size_bytes = 769352
+min_glibc = "2.31"
+github_attestation = true
+
+[[assets]]
+target = "x86_64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-x86_64-apple-darwin.dylib"
+sha256 = "6d784b3e513d75eb258a77278a5e0f7a481accc63168cb1dc160f8402da06445"
+size_bytes = 667944
+github_attestation = true
+
+[[assets]]
+target = "aarch64-apple-darwin"
+asset_name = "libqimen_dynamic_plugin_mofang_ticket-aarch64-apple-darwin.dylib"
+sha256 = "aa88d29c9a9aca6214147c8efef60b091e6a72f42fbf42fa5b10ad00646a1b26"
+size_bytes = 655888
+github_attestation = true
