@@ -1,0 +1,14 @@
+schema_version = 1
+id = "xianchen"
+name = "仙尘修仙文字游戏"
+summary = "修仙文字 RPG：修炼、突破、宗门、灵田、炼丹与拍卖行。"
+description = "面向 QimenBot 的修仙题材大型文字 RPG 动态插件。提供角色创建与修炼、境界突破、功法与神通、宗门与职事、灵田种植、炼丹、坊市与拍卖行、Boss 攻略、奇遇事件以及可选的 Web 管理后台。数据存储在宿主 data_dir 的 SQLite 数据库中，管理后台监听地址可配置（默认 127.0.0.1，仅本机），插件不读取 Bot 凭据、不提供 Webhook。Go 内核已嵌入动态库，首次启动自动释放到数据目录并独立运行。当前兼容矩阵只声明已完成真实宿主验收的 QQ 开放平台能力。"
+type = "dynamic"
+repository = "lvyunqi/xianchen-bot"
+repository_id = 1353790320
+license = "GPL-3.0-only"
+authors = ["suiyuan", "mryunqi"]
+categories = ["game", "rpg"]
+keywords = ["xianchen", "xiuxian", "rpg", "game", "qq-official", "sqlite", "golang"]
+homepage = "https://github.com/lvyunqi/xianchen-bot"
+trust = "community"
