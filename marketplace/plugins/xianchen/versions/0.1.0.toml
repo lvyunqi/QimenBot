@@ -1,0 +1,32 @@
+schema_version = 1
+version = "0.1.0"
+released_at = "2026-09-01T17:15:00Z"
+release_tag = "v0.1.0"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 258
+rollback_safe = true
+changelog = "首个正式版。仙尘修仙文字游戏：修炼、突破、宗门、灵田、炼丹、坊市、拍卖行、Boss 与奇遇；官方 QQ 群聊与单聊实机验收；API 0.6 在线配置（worker 进程、管理后台监听、官方 QQ Markdown 开关）。"
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at"]
+events = ["message"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_xianchen-x86_64-pc-windows-msvc.dll"
+sha256 = "a2ba100ce7692c2c472378998fcfc989d502719cff62db8b656841664dd8c624"
+size_bytes = 26502144
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_xianchen-x86_64-unknown-linux-gnu.so"
+sha256 = "fa06a7f9939bf436a02dcb1242bb1c8714534800564e5c34fb22b75d0f721f23"
+size_bytes = 25327184
+min_glibc = "2.31"
+github_attestation = true
