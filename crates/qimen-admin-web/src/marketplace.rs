@@ -264,7 +264,7 @@ pub async fn install(
             "插件 '{plugin_id}' 的仓库数字 ID 与本地安装锁不一致，已停止更新"
         )));
     }
-    let scanned = scan_dynamic_plugins(&context.plugin_bin_dir)?;
+    let scanned = crate::scan_dynamic_plugins_cached(&state, &context.plugin_bin_dir).await?;
     let same_id = scanned
         .iter()
         .filter(|entry| entry.plugin_id == plugin_id)
@@ -287,7 +287,7 @@ pub async fn install(
         .await
         .map_err(marketplace_error)?;
     validate_staged_descriptor(&prepared, plugin, version)?;
-    apply_transaction(&state, &prepared.transaction).await?;
+    apply_transaction(&state, &plugin_id, &prepared.transaction).await?;
     if let Err(error) = validate_active_plugin(
         &state,
         &context.plugin_bin_dir,
@@ -297,7 +297,7 @@ pub async fn install(
         &prepared.installed.active_file,
         &prepared.installed.current.sha256,
     ) {
-        restore_transaction(&state, &prepared.transaction).await?;
+        restore_transaction(&state, &plugin_id, &prepared.transaction).await?;
         return Err(error);
     }
     let plugin_enabled = load_plugin_state(&context.plugin_state_path)?.is_enabled(&plugin_id);
@@ -308,7 +308,7 @@ pub async fn install(
     let mut next_lock = context.lock;
     next_lock.plugins.insert(plugin_id.clone(), installed);
     if let Err(error) = next_lock.save(&context.paths.lock_path) {
-        restore_transaction(&state, &prepared.transaction).await?;
+        restore_transaction(&state, &plugin_id, &prepared.transaction).await?;
         return Err(marketplace_error(error));
     }
     if let Err(error) = prepared.transaction.finalize() {
@@ -368,7 +368,7 @@ pub async fn adopt(
             "只有动态插件可以关联本地二进制".to_string(),
         ));
     }
-    let scanned = scan_dynamic_plugins(&context.plugin_bin_dir)?;
+    let scanned = crate::scan_dynamic_plugins_cached(&state, &context.plugin_bin_dir).await?;
     let matches = scanned
         .iter()
         .filter(|entry| entry.plugin_id == plugin_id)
@@ -518,7 +518,7 @@ pub async fn rollback(
         .paths
         .prepare_rollback(&plugin_id, &installed)
         .map_err(marketplace_error)?;
-    apply_transaction(&state, &transaction).await?;
+    apply_transaction(&state, &plugin_id, &transaction).await?;
     if let Err(error) = validate_active_plugin(
         &state,
         &context.plugin_bin_dir,
@@ -528,14 +528,14 @@ pub async fn rollback(
         &rolled_back.active_file,
         &rolled_back.current.sha256,
     ) {
-        restore_transaction(&state, &transaction).await?;
+        restore_transaction(&state, &plugin_id, &transaction).await?;
         return Err(error);
     }
     rolled_back.current.installed_at =
         chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     context.lock.plugins.insert(plugin_id.clone(), rolled_back);
     if let Err(error) = context.lock.save(&context.paths.lock_path) {
-        restore_transaction(&state, &transaction).await?;
+        restore_transaction(&state, &plugin_id, &transaction).await?;
         return Err(marketplace_error(error));
     }
     if let Err(error) = transaction.finalize() {
@@ -570,10 +570,10 @@ pub async fn uninstall(
         .paths
         .prepare_uninstall(&plugin_id, &installed)
         .map_err(marketplace_error)?;
-    apply_transaction(&state, &transaction).await?;
+    apply_transaction(&state, &plugin_id, &transaction).await?;
     context.lock.plugins.remove(&plugin_id);
     if let Err(error) = context.lock.save(&context.paths.lock_path) {
-        restore_transaction(&state, &transaction).await?;
+        restore_transaction(&state, &plugin_id, &transaction).await?;
         return Err(marketplace_error(error));
     }
     if let Err(error) = transaction.finalize() {
@@ -740,12 +740,11 @@ async fn build_snapshot(
             MarketplaceLock::default()
         }
     };
-    let scanned = scan_dynamic_plugins(
-        state
-            .runtime
-            .active_plugin_bin_dir()
-            .unwrap_or(&stored.config.official_host.plugin_bin_dir),
-    )?;
+    let plugin_bin_dir = state
+        .runtime
+        .active_plugin_bin_dir()
+        .unwrap_or(&stored.config.official_host.plugin_bin_dir);
+    let scanned = crate::scan_dynamic_plugins_cached(state, plugin_bin_dir).await?;
     let loaded_ids = state
         .runtime
         .host_plugin_report()
@@ -1278,11 +1277,14 @@ fn validate_staged_descriptor(
 
 async fn apply_transaction(
     state: &AdminState,
+    plugin_id: &str,
     transaction: &qimen_plugin_marketplace::ActiveFileTransaction,
 ) -> Result<(), AdminError> {
     state
         .runtime
-        .reload_dynamic_plugins_transaction(
+        .reload_dynamic_plugin_transaction(
+            plugin_id,
+            transaction.active_path().to_str(),
             || transaction.apply().map_err(runtime_marketplace_error),
             || transaction.rollback().map_err(runtime_marketplace_error),
         )
@@ -1292,11 +1294,14 @@ async fn apply_transaction(
 
 async fn restore_transaction(
     state: &AdminState,
+    plugin_id: &str,
     transaction: &qimen_plugin_marketplace::ActiveFileTransaction,
 ) -> Result<(), AdminError> {
     state
         .runtime
-        .reload_dynamic_plugins_transaction(
+        .reload_dynamic_plugin_transaction(
+            plugin_id,
+            transaction.active_path().to_str(),
             || transaction.rollback().map_err(runtime_marketplace_error),
             || transaction.apply().map_err(runtime_marketplace_error),
         )

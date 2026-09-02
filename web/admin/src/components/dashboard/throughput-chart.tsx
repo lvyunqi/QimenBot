@@ -43,7 +43,9 @@ export function ThroughputChart({ data }: ThroughputChartProps) {
               axisLine={false}
               tickLine={false}
               tick={{ fill: "var(--muted-foreground)", fontSize: 10, fontFamily: "var(--font-mono)" }}
-              interval={1}
+              interval="preserveStartEnd"
+              minTickGap={36}
+              padding={{ left: 4, right: 4 }}
               dy={8}
             />
             <YAxis

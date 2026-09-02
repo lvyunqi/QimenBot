@@ -356,6 +356,31 @@ impl MarketplacePaths {
         )
     }
 
+    /// Stage removal of a dynamic plugin that was placed in the plugin
+    /// directory manually. Configuration and data live outside this path and
+    /// are deliberately preserved.
+    pub fn prepare_unmanaged_uninstall(
+        &self,
+        plugin_id: &str,
+        active_path: &Path,
+    ) -> Result<ActiveFileTransaction> {
+        validate_plugin_id(plugin_id)?;
+        ensure_managed_child(active_path, &self.plugin_bin_dir)?;
+        if active_path
+            .strip_prefix(&self.plugin_bin_dir)
+            .map_err(|_| MarketplaceError::UnsafePath(active_path.to_path_buf()))?
+            .components()
+            .count()
+            != 1
+        {
+            return Err(MarketplaceError::UnsafePath(active_path.to_path_buf()));
+        }
+        ActiveFileTransaction::remove(
+            active_path.to_path_buf(),
+            transaction_root(&self.cache_dir, plugin_id),
+        )
+    }
+
     pub fn archive_existing(
         &self,
         plugin_id: &str,
@@ -757,6 +782,46 @@ mod tests {
         transaction.rollback().unwrap();
 
         transaction.finalize().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unmanaged_uninstall_is_reversible_until_finalized() {
+        let root = temp_root();
+        let plugin_dir = root.join("plugins");
+        let active = plugin_dir.join("libexample.so");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(&active, b"plugin").unwrap();
+        let paths = MarketplacePaths::new(root.join("cache"), root.join("lock.toml"), plugin_dir);
+        let transaction = paths
+            .prepare_unmanaged_uninstall("example", &active)
+            .unwrap();
+
+        transaction.apply().unwrap();
+        assert!(!active.exists());
+        transaction.rollback().unwrap();
+        assert_eq!(fs::read(&active).unwrap(), b"plugin");
+
+        transaction.apply().unwrap();
+        transaction.finalize().unwrap();
+        assert!(!active.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unmanaged_uninstall_rejects_paths_outside_the_plugin_directory() {
+        let root = temp_root();
+        let plugin_dir = root.join("plugins");
+        let outside = root.join("libexample.so");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(&outside, b"plugin").unwrap();
+        let paths = MarketplacePaths::new(root.join("cache"), root.join("lock.toml"), plugin_dir);
+
+        assert!(
+            paths
+                .prepare_unmanaged_uninstall("example", &outside)
+                .is_err()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

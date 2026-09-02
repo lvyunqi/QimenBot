@@ -18,7 +18,7 @@ use qimen_host_types::{
     DynamicRouteEntry, DynamicRuntimeHealthEntry, DynamicWebhookDescriptor, DynamicWebhookEntry,
 };
 use qimen_message::Message;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -80,6 +80,11 @@ pub struct DynamicPluginRuntime {
     libraries: HashMap<String, LibraryHandle>,
     host_api_bindings: HashMap<String, Box<ProactiveHostContext>>,
     loading_suspended: bool,
+    suspended_libraries: HashSet<String>,
+    /// Libraries whose lifecycle callback timed out and is still running in a
+    /// detached blocking task. They must not be reused until that task has
+    /// released its `Arc<LoadedLibrary>` and the reaper has unloaded the code.
+    pending_unloads: HashSet<String>,
 }
 
 /// Response from a dynamic plugin callback.
@@ -110,6 +115,8 @@ impl DynamicPluginRuntime {
             libraries: HashMap::new(),
             host_api_bindings: HashMap::new(),
             loading_suspended: false,
+            suspended_libraries: HashSet::new(),
+            pending_unloads: HashSet::new(),
         }
     }
 
@@ -118,10 +125,30 @@ impl DynamicPluginRuntime {
     /// background threads whose code lives in the dynamic library.
     /// The caller should drop the outer lock immediately after calling this.
     pub(crate) fn get_library(&mut self, path: &str) -> Result<LibraryHandle> {
-        if self.loading_suspended {
-            return Err(QimenError::Runtime(
-                "dynamic plugin loading is suspended during reload".to_string(),
-            ));
+        if self.loading_suspended
+            || self.suspended_libraries.contains(path)
+            || self.pending_unloads.contains(path)
+        {
+            return Err(QimenError::Runtime(format!(
+                "dynamic plugin loading is suspended during reload or plugin shutdown: {path}"
+            )));
+        }
+        self.ensure_library(path)?;
+        self.libraries
+            .get(path)
+            .cloned()
+            .ok_or_else(|| QimenError::Runtime(format!("library '{}' missing after load", path)))
+    }
+
+    /// Obtain a handle for a library that is being initialized as part of a
+    /// single-plugin transaction. The path remains suspended to message and
+    /// interceptor callbacks until initialization and route publication have
+    /// both completed.
+    pub(crate) fn get_library_for_initialization(&mut self, path: &str) -> Result<LibraryHandle> {
+        if self.loading_suspended || self.pending_unloads.contains(path) {
+            return Err(QimenError::Runtime(format!(
+                "dynamic plugin loading is suspended during reload or plugin shutdown: {path}"
+            )));
         }
         self.ensure_library(path)?;
         self.libraries
@@ -966,6 +993,40 @@ impl DynamicPluginRuntime {
         }
     }
 
+    /// Wait for a single plugin's borrowed handles, then unload that library.
+    ///
+    /// Keeping this operation scoped to one path is important for online plugin
+    /// toggles and marketplace updates: an unrelated slow plugin must not hold
+    /// every other plugin hostage during a reload.
+    pub fn unload_library_checked(&mut self, path: &str, timeout: Duration) -> Result<()> {
+        self.suspend_library(path);
+        let started = Instant::now();
+        loop {
+            let borrowed = self
+                .libraries
+                .get(path)
+                .is_some_and(|handle| Arc::strong_count(handle) > 1);
+            if !borrowed {
+                break;
+            }
+            if started.elapsed() >= timeout {
+                return Err(QimenError::Runtime(format!(
+                    "dynamic plugin callback did not release library handle before timeout: {path}"
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        self.unload_library(path);
+        if self.libraries.contains_key(path) {
+            Err(QimenError::Runtime(format!(
+                "dynamic plugin unload did not complete for: {path}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Wait for borrowed handles, then unload every library. Loading remains suspended until the
     /// caller either rescans the stable directory or explicitly resumes it after an error.
     pub fn unload_all_checked(&mut self, timeout: Duration) -> Result<()> {
@@ -1009,6 +1070,36 @@ impl DynamicPluginRuntime {
 
     pub fn resume_loading(&mut self) {
         self.loading_suspended = false;
+    }
+
+    pub fn suspend_library(&mut self, path: &str) {
+        self.suspended_libraries.insert(path.to_string());
+    }
+
+    pub fn resume_library(&mut self, path: &str) {
+        self.suspended_libraries.remove(path);
+    }
+
+    pub fn mark_pending_unload(&mut self, path: &str) {
+        self.pending_unloads.insert(path.to_string());
+        self.suspend_library(path);
+    }
+
+    pub fn clear_pending_unload(&mut self, path: &str) {
+        self.pending_unloads.remove(path);
+    }
+
+    pub fn is_pending_unload(&self, path: &str) -> bool {
+        self.pending_unloads.contains(path)
+    }
+
+    pub fn clear_suspended_libraries(&mut self) {
+        self.suspended_libraries.clear();
+        self.pending_unloads.clear();
+    }
+
+    pub fn is_library_loaded(&self, path: &str) -> bool {
+        self.libraries.contains_key(path)
     }
 
     fn ensure_library(&mut self, path: &str) -> Result<()> {
@@ -1134,6 +1225,52 @@ mod lifecycle_tests {
         runtime
             .unload_all_checked(std::time::Duration::from_secs(1))
             .unwrap();
+    }
+
+    #[test]
+    fn suspending_one_library_does_not_block_an_unrelated_library() {
+        let mut runtime = DynamicPluginRuntime::new();
+        runtime.suspend_library(TEST_LIBRARY);
+        assert!(runtime.get_library(TEST_LIBRARY).is_err());
+        let init_handle = runtime
+            .get_library_for_initialization(TEST_LIBRARY)
+            .unwrap();
+        drop(init_handle);
+
+        #[cfg(target_os = "windows")]
+        let unrelated = "user32.dll";
+        #[cfg(target_os = "linux")]
+        let unrelated = "libm.so.6";
+        #[cfg(target_os = "macos")]
+        let unrelated = "/usr/lib/libm.dylib";
+
+        let handle = runtime.get_library(unrelated).unwrap();
+        drop(handle);
+        runtime.unload_library(unrelated);
+        runtime.resume_library(TEST_LIBRARY);
+    }
+
+    #[test]
+    fn checked_single_unload_keeps_unrelated_library_loaded() {
+        #[cfg(target_os = "windows")]
+        let unrelated = "user32.dll";
+        #[cfg(target_os = "linux")]
+        let unrelated = "libm.so.6";
+        #[cfg(target_os = "macos")]
+        let unrelated = "/usr/lib/libm.dylib";
+
+        let mut runtime = DynamicPluginRuntime::new();
+        drop(runtime.get_library(TEST_LIBRARY).unwrap());
+        drop(runtime.get_library(unrelated).unwrap());
+
+        runtime
+            .unload_library_checked(TEST_LIBRARY, Duration::from_secs(1))
+            .unwrap();
+
+        assert!(!runtime.is_library_loaded(TEST_LIBRARY));
+        assert!(runtime.is_library_loaded(unrelated));
+        drop(runtime.get_library(unrelated).unwrap());
+        runtime.unload_library(unrelated);
     }
 
     #[test]
@@ -1483,6 +1620,17 @@ pub fn scan_dynamic_plugins(dir: &str) -> Result<Vec<DynamicPluginReportEntry>> 
     }
 
     Ok(discovered)
+}
+
+/// Read one dynamic plugin descriptor without scanning or touching unrelated
+/// plugin files. The library is opened only for descriptor inspection and is
+/// dropped before this function returns.
+pub fn scan_dynamic_plugin(path: &str) -> Result<Option<DynamicPluginReportEntry>> {
+    let path = Path::new(path);
+    if !path.is_file() || !is_dynamic_library_path(path) {
+        return Ok(None);
+    }
+    load_dynamic_report_entry(path).map(Some)
 }
 
 fn is_dynamic_library_path(path: &Path) -> bool {

@@ -21,9 +21,11 @@ use error::AdminError;
 use futures_util::stream;
 use qimen_config::{AdminWebConfig, AppConfig};
 use qimen_host_types::{
-    MAX_PLUGIN_PRIORITY, PluginState, default_plugin_priority, load_plugin_state,
+    DynamicPluginReportEntry, MAX_PLUGIN_PRIORITY, PluginState, default_plugin_priority,
+    load_plugin_state,
 };
 use qimen_observability::{LogEntry, LogStore};
+use qimen_plugin_marketplace::{MarketplaceLock, MarketplacePaths};
 use qimen_runtime::dynamic_runtime::scan_dynamic_plugins;
 use qimen_runtime::{BotConnectionState, BotStatusSnapshot, Runtime};
 use qimen_update_protocol::{
@@ -50,6 +52,14 @@ struct AdminState {
     restart_required: Arc<AtomicBool>,
     marketplace_operations: Arc<tokio::sync::Mutex<()>>,
     plugin_operations: Arc<tokio::sync::Mutex<()>>,
+    dynamic_scan_cache: Arc<std::sync::Mutex<Option<DynamicScanCache>>>,
+}
+
+#[derive(Clone)]
+struct DynamicScanCache {
+    directory: String,
+    fingerprint: Vec<(String, u64, u128)>,
+    entries: Vec<DynamicPluginReportEntry>,
 }
 
 #[derive(Clone)]
@@ -78,6 +88,7 @@ impl AdminServer {
                 restart_required: Arc::new(AtomicBool::new(false)),
                 marketplace_operations: Arc::new(tokio::sync::Mutex::new(())),
                 plugin_operations: Arc::new(tokio::sync::Mutex::new(())),
+                dynamic_scan_cache: Arc::new(std::sync::Mutex::new(None)),
             },
             config: config.admin_web.clone(),
         }
@@ -113,7 +124,7 @@ impl AdminServer {
                 post(plugin_config::validate),
             )
             .route("/plugins/{id}/priority", put(update_plugin_priority))
-            .route("/plugins/{id}", put(toggle_plugin))
+            .route("/plugins/{id}", put(toggle_plugin).delete(uninstall_plugin))
             .route("/marketplace", get(marketplace::catalog))
             .route("/marketplace/refresh", post(marketplace::refresh))
             .route(
@@ -341,7 +352,7 @@ async fn update_general(
         .restart_required
         .store(restart_required, Ordering::Relaxed);
     let detail = match (command_changed, other_settings_changed) {
-        (true, false) => "command settings updated live; bot reconnect requested",
+        (true, false) => "command settings updated live; dispatcher snapshot refreshed",
         (true, true) => "command settings updated live; other host settings require restart",
         (false, true) => "general host settings updated; restart required",
         (false, false) => "general host settings saved without effective changes",
@@ -350,7 +361,7 @@ async fn update_general(
         .audit
         .record("config.update", "general", "success", detail)?;
     let message = match (command_changed, other_settings_changed, restart_required) {
-        (true, false, false) => "命令配置已保存，Bot 正在重连并应用新入口".to_string(),
+        (true, false, false) => "命令配置已保存，运行中的 Bot 已刷新命令入口".to_string(),
         (true, true, _) => "命令入口已动态应用；其余待处理配置仍需重启宿主".to_string(),
         (true, false, true) => "命令入口已动态应用；此前的修改仍在等待重启".to_string(),
         (false, true, _) => "配置已保存，重启宿主后全部生效".to_string(),
@@ -577,29 +588,52 @@ async fn toggle_plugin(
 ) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
     let _operation = state.plugin_operations.lock().await;
     let stored = state.config_store.read().await?;
-    let dynamic = scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)?
-        .into_iter()
-        .any(|plugin| plugin.plugin_id == plugin_id);
+    let dynamic_plugins =
+        scan_dynamic_plugins_cached(&state, &stored.config.official_host.plugin_bin_dir)
+            .await?
+            .into_iter()
+            .filter(|plugin| plugin.plugin_id == plugin_id)
+            .collect::<Vec<_>>();
+    if dynamic_plugins.len() > 1 {
+        return Err(AdminError::Conflict(format!(
+            "plugin directory contains multiple dynamic plugins with id '{}'",
+            plugin_id
+        )));
+    }
+    let dynamic = dynamic_plugins.first();
     let static_plugin = stored
         .config
         .official_host
         .plugin_modules
         .iter()
         .any(|id| id == &plugin_id);
-    if !dynamic && !static_plugin {
+    if dynamic.is_none() && !static_plugin {
         return Err(AdminError::NotFound(format!(
             "plugin '{}' was not found",
             plugin_id
         )));
     }
     let path = &stored.config.official_host.plugin_state_path;
-    let mut plugin_state = load_plugin_state(path)?;
-    plugin_state.set_enabled(plugin_id.clone(), request.enabled);
-    plugin_state.save_to_path(path)?;
-    let restart_required = if dynamic {
-        state.runtime.reload_dynamic_plugins().await?;
+    let previous_state = load_plugin_state(path)?;
+    let mut next_state = previous_state.clone();
+    next_state.set_enabled(plugin_id.clone(), request.enabled);
+    let restart_required = if let Some(dynamic) = dynamic {
+        let apply_state = next_state.clone();
+        let rollback_state = previous_state;
+        let state_path = path.clone();
+        let rollback_path = state_path.clone();
+        state
+            .runtime
+            .reload_dynamic_plugin_transaction(
+                &plugin_id,
+                Some(&dynamic.path),
+                move || apply_state.save_to_path(&state_path),
+                move || rollback_state.save_to_path(&rollback_path),
+            )
+            .await?;
         state.restart_required.load(Ordering::Relaxed)
     } else {
+        next_state.save_to_path(path)?;
         state.restart_required.store(true, Ordering::Relaxed);
         true
     };
@@ -611,7 +645,7 @@ async fn toggle_plugin(
         },
         format!("plugin:{}", plugin_id),
         "success",
-        if dynamic {
+        if dynamic.is_some() {
             "dynamic plugin state applied live"
         } else {
             "static plugin state saved; restart required"
@@ -620,11 +654,86 @@ async fn toggle_plugin(
     Ok(Json(ApiEnvelope::new(MutationResult {
         revision: None,
         restart_required,
-        message: if dynamic {
+        message: if dynamic.is_some() {
             "动态插件状态已即时应用".to_string()
         } else {
             "静态插件状态已保存，重启宿主后生效".to_string()
         },
+    })))
+}
+
+async fn uninstall_plugin(
+    State(state): State<AdminState>,
+    Path(plugin_id): Path<String>,
+) -> Result<Json<ApiEnvelope<MutationResult>>, AdminError> {
+    let _operation = state.plugin_operations.lock().await;
+    let stored = state.config_store.read().await?;
+    let marketplace_lock = MarketplaceLock::load(FsPath::new(&stored.config.marketplace.lock_path))
+        .map_err(|error| AdminError::BadRequest(format!("插件商城锁文件无效：{error}")))?;
+    if marketplace_lock.plugins.contains_key(&plugin_id) {
+        drop(marketplace_lock);
+        drop(stored);
+        drop(_operation);
+        return marketplace::uninstall(State(state), Path(plugin_id)).await;
+    }
+
+    let matches = scan_dynamic_plugins_cached(&state, &stored.config.official_host.plugin_bin_dir)
+        .await?
+        .into_iter()
+        .filter(|plugin| plugin.plugin_id == plugin_id)
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        return Err(AdminError::NotFound(format!(
+            "dynamic plugin '{}' was not found",
+            plugin_id
+        )));
+    }
+    if matches.len() > 1 {
+        return Err(AdminError::Conflict(format!(
+            "plugin directory contains multiple dynamic plugins with id '{}'",
+            plugin_id
+        )));
+    }
+
+    let plugin = &matches[0];
+    let paths = MarketplacePaths::new(
+        &stored.config.marketplace.cache_dir,
+        &stored.config.marketplace.lock_path,
+        &stored.config.official_host.plugin_bin_dir,
+    );
+    let transaction = paths
+        .prepare_unmanaged_uninstall(&plugin_id, FsPath::new(&plugin.path))
+        .map_err(|error| AdminError::BadRequest(error.to_string()))?;
+    state
+        .runtime
+        .reload_dynamic_plugin_transaction(
+            &plugin_id,
+            Some(&plugin.path),
+            || {
+                transaction
+                    .apply()
+                    .map_err(|error| qimen_error::QimenError::Runtime(error.to_string()))
+            },
+            || {
+                transaction
+                    .rollback()
+                    .map_err(|error| qimen_error::QimenError::Runtime(error.to_string()))
+            },
+        )
+        .await?;
+    if let Err(error) = transaction.finalize() {
+        tracing::warn!(plugin_id = %plugin_id, error = %error, "failed to remove unmanaged plugin uninstall transaction files");
+    }
+    state.audit.record(
+        "plugin.uninstall",
+        format!("plugin:{plugin_id}"),
+        "success",
+        "removed unmanaged dynamic plugin binary; configuration and data were preserved",
+    )?;
+    Ok(Json(ApiEnvelope::new(MutationResult {
+        revision: None,
+        restart_required: false,
+        message: format!("插件 {plugin_id} 已在线卸载，配置和数据仍然保留"),
     })))
 }
 
@@ -641,7 +750,8 @@ async fn update_plugin_priority(
     }
 
     let stored = state.config_store.read().await?;
-    let dynamic = scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)?
+    let dynamic = scan_dynamic_plugins_cached(&state, &stored.config.official_host.plugin_bin_dir)
+        .await?
         .into_iter()
         .any(|plugin| plugin.plugin_id == plugin_id);
     let available_modules = state
@@ -701,7 +811,7 @@ async fn update_plugin_priority(
         revision: None,
         restart_required: false,
         message: format!(
-            "插件优先级已更新为 {}；已启用 Bot 会重连并刷新命令路由",
+            "插件优先级已更新为 {}；运行中的 Bot 已刷新命令路由",
             request.priority
         ),
     })))
@@ -959,7 +1069,9 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             priority_custom,
         });
     }
-    for plugin in scan_dynamic_plugins(&stored.config.official_host.plugin_bin_dir)? {
+    for plugin in
+        scan_dynamic_plugins_cached(state, &stored.config.official_host.plugin_bin_dir).await?
+    {
         let (priority, priority_custom) =
             plugin_priority_view(&persisted, &plugin.plugin_id, "dynamic");
         let health = health_by_path.get(&plugin.path);
@@ -1025,6 +1137,70 @@ async fn plugin_views(state: &AdminState) -> Result<Vec<PluginView>, AdminError>
             .then(left.id.cmp(&right.id))
     });
     Ok(views)
+}
+
+/// Descriptor inspection opens every shared library, which is expensive on a
+/// large plugin directory. Cache the result until the directory fingerprint
+/// changes; marketplace replacements rename files and therefore invalidate the
+/// fingerprint automatically.
+pub(crate) async fn scan_dynamic_plugins_cached(
+    state: &AdminState,
+    directory: &str,
+) -> Result<Vec<DynamicPluginReportEntry>, AdminError> {
+    let cache = Arc::clone(&state.dynamic_scan_cache);
+    let directory = directory.to_string();
+    tokio::task::spawn_blocking(move || {
+        let fingerprint = dynamic_directory_fingerprint(&directory)?;
+        if let Ok(cache_guard) = cache.lock()
+            && let Some(cache) = cache_guard.as_ref()
+            && cache.directory == directory
+            && cache.fingerprint == fingerprint
+        {
+            return Ok(cache.entries.clone());
+        }
+
+        let entries = scan_dynamic_plugins(&directory)?;
+        if let Ok(mut cache_guard) = cache.lock() {
+            *cache_guard = Some(DynamicScanCache {
+                directory,
+                fingerprint,
+                entries: entries.clone(),
+            });
+        }
+        Ok(entries)
+    })
+    .await
+    .map_err(|error| AdminError::Internal(format!("dynamic plugin scan task failed: {error}")))?
+}
+
+fn dynamic_directory_fingerprint(directory: &str) -> Result<Vec<(String, u64, u128)>, AdminError> {
+    let path = FsPath::new(directory);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for item in std::fs::read_dir(path)? {
+        let item = item?;
+        let file = item.path();
+        let extension = file.extension().and_then(|value| value.to_str());
+        if !matches!(extension, Some("dll") | Some("so") | Some("dylib")) {
+            continue;
+        }
+        let metadata = std::fs::metadata(&file)?;
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        files.push((
+            file.to_string_lossy().into_owned(),
+            metadata.len(),
+            modified,
+        ));
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(files)
 }
 
 fn plugin_priority_view(state: &PluginState, plugin_id: &str, kind: &str) -> (u32, bool) {

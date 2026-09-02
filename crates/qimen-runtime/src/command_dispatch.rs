@@ -36,6 +36,7 @@ pub struct ParsedCommandInput {
     pub source_text: String,
 }
 
+#[derive(Clone)]
 pub struct CommandDispatcher {
     plugins: Vec<Arc<dyn CommandPlugin>>,
     dynamic_command_descriptors: Vec<DynamicCommandDescriptor>,

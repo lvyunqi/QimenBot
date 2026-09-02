@@ -505,6 +505,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ enabled }),
     }),
+  uninstallPlugin: (id: string) =>
+    request<MutationResult>("/plugins/" + encodeURIComponent(id), {
+      method: "DELETE",
+    }),
   updatePluginPriority: (id: string, priority: number) =>
     request<MutationResult>("/plugins/" + encodeURIComponent(id) + "/priority", {
       method: "PUT",
