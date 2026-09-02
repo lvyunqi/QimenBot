@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use chrono::{SecondsFormat, Utc};
 use qimen_error::QimenError;
 use qimen_host_types::{DynamicPluginConfigEntry, DynamicPluginReportEntry};
-use qimen_runtime::dynamic_runtime::{is_safe_plugin_config_id, scan_dynamic_plugins};
+use qimen_runtime::dynamic_runtime::is_safe_plugin_config_id;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -274,7 +274,8 @@ async fn configurable_plugin(
         .runtime
         .active_plugin_bin_dir()
         .unwrap_or(&stored.config.official_host.plugin_bin_dir);
-    let mut matches = scan_dynamic_plugins(plugin_bin_dir)?
+    let mut matches = crate::scan_dynamic_plugins_cached(state, plugin_bin_dir)
+        .await?
         .into_iter()
         .filter(|plugin| plugin.plugin_id == plugin_id)
         .collect::<Vec<_>>();
@@ -518,38 +519,14 @@ async fn apply_reload_config(
     let rollback = transaction.clone();
     state
         .runtime
-        .reload_dynamic_plugins_transaction(
+        .reload_dynamic_plugin_transaction(
+            plugin_id,
+            Some(&plugin.report.path),
             move || apply.apply_qimen(),
             move || rollback.rollback_qimen(),
         )
         .await?;
-    if plugin_is_loaded(state, plugin_id, &plugin.report.path) {
-        return Ok(());
-    }
-
-    // init 返回失败时运行时会跳过该插件，但整体扫描仍可能成功；这里显式恢复旧配置。
-    let restore = transaction.clone();
-    let restore_rollback = transaction.clone();
-    let restore_result = state
-        .runtime
-        .reload_dynamic_plugins_transaction(
-            move || restore.rollback_qimen(),
-            move || restore_rollback.apply_qimen(),
-        )
-        .await;
-    Err(AdminError::BadRequest(format!(
-        "新配置导致插件初始化失败，已恢复旧配置：{}",
-        result_summary(restore_result.map(|_| ()))
-    )))
-}
-
-fn plugin_is_loaded(state: &AdminState, plugin_id: &str, path: &str) -> bool {
-    state.runtime.host_plugin_report().is_some_and(|report| {
-        report
-            .dynamic_plugins
-            .iter()
-            .any(|plugin| plugin.plugin_id == plugin_id && plugin.path == path)
-    })
+    Ok(())
 }
 
 fn snapshot_json(snapshot: &PluginConfigSnapshot) -> Result<String, AdminError> {

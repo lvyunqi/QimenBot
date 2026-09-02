@@ -402,6 +402,61 @@ struct DynamicInterceptorAdapter {
     timeout: Duration,
 }
 
+/// Resumes the paths suspended by a single-plugin transaction even when an
+/// intermediate scan, gateway update, or lock acquisition fails. Without an
+/// unwind guard, one error could leave a plugin permanently invisible to the
+/// dispatcher until the whole process restarted.
+struct DynamicPluginResumeGuard {
+    runtime: Arc<std::sync::Mutex<dynamic_runtime::DynamicPluginRuntime>>,
+    paths: Vec<String>,
+}
+
+/// A timed-out FFI call cannot be cancelled safely because it runs inside a
+/// dynamic library. Keep its JoinHandle alive until the callback returns so
+/// the library Arc is eventually released and future reloads are not blocked
+/// forever by a detached task.
+fn reap_timed_out_dynamic_task<T>(
+    runtime: Arc<std::sync::Mutex<dynamic_runtime::DynamicPluginRuntime>>,
+    path: String,
+    task: tokio::task::JoinHandle<T>,
+    unload_after_return: bool,
+) where
+    T: Send + 'static,
+{
+    tokio::spawn(async move {
+        if let Err(error) = task.await {
+            tracing::warn!(path = %path, error = %error, "timed-out dynamic plugin task ended abnormally");
+        }
+        if let Ok(mut runtime) = runtime.lock() {
+            if unload_after_return
+                && let Err(error) = runtime.unload_library_checked(&path, Duration::ZERO)
+            {
+                tracing::warn!(
+                    path = %path,
+                    error = %error,
+                    "timed-out dynamic plugin cleanup could not unload library"
+                );
+            }
+            runtime.clear_pending_unload(&path);
+            runtime.resume_library(&path);
+        } else {
+            tracing::error!(path = %path, "dynamic runtime lock poisoned while reaping timed-out task");
+        }
+    });
+}
+
+impl Drop for DynamicPluginResumeGuard {
+    fn drop(&mut self) {
+        if let Ok(mut runtime) = self.runtime.lock() {
+            for path in &self.paths {
+                runtime.resume_library(path);
+            }
+        } else {
+            tracing::error!("dynamic runtime lock poisoned while resuming plugin paths");
+        }
+    }
+}
+
 impl DynamicInterceptorAdapter {
     fn build_request(
         bot_id: &str,
@@ -466,17 +521,10 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
         // Phase 2: spawn_blocking + timeout
         let timeout_dur = self.timeout;
         let runtime_for_timeout = Arc::clone(&self.dynamic_runtime);
-        let result = tokio::time::timeout(
-            timeout_dur,
-            tokio::task::spawn_blocking(move || {
-                DynamicPluginRuntime::execute_pre_handle_on_handle(
-                    &lib_handle,
-                    &descriptor,
-                    request,
-                )
-            }),
-        )
-        .await;
+        let mut task = tokio::task::spawn_blocking(move || {
+            DynamicPluginRuntime::execute_pre_handle_on_handle(&lib_handle, &descriptor, request)
+        });
+        let result = tokio::time::timeout(timeout_dur, &mut task).await;
 
         match result {
             Ok(Ok(Ok((allow, sends)))) => {
@@ -499,7 +547,9 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
                 tracing::warn!(plugin = %self.descriptor.plugin_id, "dynamic interceptor pre_handle timed out, allowing");
                 if let Ok(mut rt) = runtime_for_timeout.lock() {
                     rt.record_timeout(&lib_path);
+                    rt.mark_pending_unload(&lib_path);
                 }
+                reap_timed_out_dynamic_task(runtime_for_timeout, lib_path, task, false);
                 true
             }
         }
@@ -535,17 +585,14 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
         // Phase 2: spawn_blocking + timeout
         let timeout_dur = self.timeout;
         let runtime_for_timeout = Arc::clone(&self.dynamic_runtime);
-        let result = tokio::time::timeout(
-            timeout_dur,
-            tokio::task::spawn_blocking(move || {
-                DynamicPluginRuntime::execute_after_completion_on_handle(
-                    &lib_handle,
-                    &descriptor,
-                    request,
-                )
-            }),
-        )
-        .await;
+        let mut task = tokio::task::spawn_blocking(move || {
+            DynamicPluginRuntime::execute_after_completion_on_handle(
+                &lib_handle,
+                &descriptor,
+                request,
+            )
+        });
+        let result = tokio::time::timeout(timeout_dur, &mut task).await;
 
         match result {
             Ok(Ok(Ok(sends))) => {
@@ -565,7 +612,9 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
                 tracing::warn!(plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion timed out");
                 if let Ok(mut rt) = runtime_for_timeout.lock() {
                     rt.record_timeout(&lib_path);
+                    rt.mark_pending_unload(&lib_path);
                 }
+                reap_timed_out_dynamic_task(runtime_for_timeout, lib_path, task, false);
             }
         }
     }
@@ -578,6 +627,10 @@ pub struct Runtime {
     host_plugin_report: std::sync::RwLock<Option<HostPluginReport>>,
     plugin_priorities: std::sync::RwLock<BTreeMap<String, u32>>,
     command_config: std::sync::RwLock<CommandConfig>,
+    /// Immutable dispatcher snapshots let running Bot connections observe
+    /// plugin changes without tearing down and rebuilding every transport.
+    command_dispatcher: std::sync::RwLock<Option<CommandDispatcher>>,
+    system_dispatcher: std::sync::RwLock<Option<OneBotSystemDispatcher>>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
     plugin_config_dir: Option<String>,
@@ -613,6 +666,8 @@ impl Default for Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_priorities: std::sync::RwLock::new(BTreeMap::new()),
             command_config: std::sync::RwLock::new(CommandConfig::default()),
+            command_dispatcher: std::sync::RwLock::new(None),
+            system_dispatcher: std::sync::RwLock::new(None),
             plugin_state_path: None,
             plugin_bin_dir: None,
             plugin_config_dir: None,
@@ -798,13 +853,15 @@ impl Runtime {
             }
         };
 
-        Self {
+        let runtime = Self {
             bots,
             command_plugins: plugins.command_plugins,
             system_plugins: plugins.system_plugins,
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_priorities: std::sync::RwLock::new(plugin_priorities),
             command_config: std::sync::RwLock::new(config.official_host.commands.clone()),
+            command_dispatcher: std::sync::RwLock::new(None),
+            system_dispatcher: std::sync::RwLock::new(None),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
             plugin_config_dir: Some(config.official_host.plugin_config_dir.clone()),
@@ -828,13 +885,35 @@ impl Runtime {
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
             interceptor_pending_sends: Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
+        };
+        runtime.refresh_dispatchers();
+        runtime
     }
 
     pub fn with_host_plugin_report(self, report: HostPluginReport) -> Self {
         self.inject_dynamic_interceptors(&report);
         *self.host_plugin_report.write().unwrap() = Some(report);
+        self.refresh_dispatchers();
         self
+    }
+
+    fn refresh_dispatchers(&self) {
+        if let Ok(dispatcher) = self.build_command_dispatcher()
+            && let Ok(mut snapshot) = self.command_dispatcher.write()
+        {
+            *snapshot = Some(dispatcher);
+        }
+        if let Ok(mut snapshot) = self.system_dispatcher.write() {
+            *snapshot = Some(self.build_system_dispatcher());
+        }
+    }
+
+    fn current_command_dispatcher(&self) -> Option<CommandDispatcher> {
+        self.command_dispatcher.read().ok()?.clone()
+    }
+
+    fn current_system_dispatcher(&self) -> Option<OneBotSystemDispatcher> {
+        self.system_dispatcher.read().ok()?.clone()
     }
 
     /// Rebuild the interceptor chain: static interceptors + dynamic interceptors from the report.
@@ -932,7 +1011,7 @@ impl Runtime {
             .command_config
             .write()
             .map_err(|_| QimenError::Runtime("command config lock poisoned".to_string()))? = config;
-        self.reconnect_all_bots();
+        self.refresh_dispatchers();
         Ok(())
     }
 
@@ -954,7 +1033,7 @@ impl Runtime {
             .write()
             .map_err(|_| QimenError::Runtime("plugin priority lock poisoned".to_string()))?
             .insert(plugin_id.to_string(), priority);
-        self.reconnect_all_bots();
+        self.refresh_dispatchers();
         Ok(())
     }
 
@@ -1021,43 +1100,6 @@ impl Runtime {
         requested
     }
 
-    async fn reconnect_all_bots_after_dynamic_reload(&self) {
-        let requested = self.request_reconnect_all_bots();
-        if requested.is_empty() {
-            return;
-        }
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let pending = self
-                .bot_statuses
-                .read()
-                .map(|statuses| {
-                    requested
-                        .iter()
-                        .filter(|(bot_id, generation)| {
-                            statuses
-                                .get(bot_id)
-                                .is_none_or(|status| status.applied_generation < *generation)
-                        })
-                        .map(|(bot_id, _)| bot_id.clone())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_else(|_| requested.iter().map(|(bot_id, _)| bot_id.clone()).collect());
-            if pending.is_empty() {
-                return;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                tracing::warn!(
-                    bots = %pending.join(","),
-                    "dynamic plugin reload completed, but bot dispatchers did not acknowledge the new generation before timeout"
-                );
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
-
     /// 请求整个运行时进入统一优雅关闭流程。
     pub fn request_shutdown(&self) {
         if !*self.shutdown.borrow() {
@@ -1093,9 +1135,7 @@ impl Runtime {
     }
 
     pub async fn reload_dynamic_plugins(&self) -> Result<usize> {
-        let count = self.rescan_dynamic_plugins().await?;
-        self.reconnect_all_bots_after_dynamic_reload().await;
-        Ok(count)
+        self.rescan_dynamic_plugins().await
     }
 
     pub fn active_plugin_bin_dir(&self) -> Option<&str> {
@@ -1169,14 +1209,14 @@ impl Runtime {
         };
         let path = library_path.to_string();
         let path_for_timeout = path.clone();
-        let task = tokio::task::spawn_blocking(move || {
+        let mut task = tokio::task::spawn_blocking(move || {
             if apply {
                 DynamicPluginRuntime::execute_config_apply_on_handle(&handle, &path, request)
             } else {
                 DynamicPluginRuntime::execute_config_validation_on_handle(&handle, &path, request)
             }
         });
-        match tokio::time::timeout(self.dynamic_plugin_timeout, task).await {
+        match tokio::time::timeout(self.dynamic_plugin_timeout, &mut task).await {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => Err(QimenError::Runtime(format!(
                 "dynamic plugin config callback task panicked: {error}"
@@ -1184,7 +1224,14 @@ impl Runtime {
             Err(_) => {
                 if let Ok(mut runtime) = self.dynamic_runtime.lock() {
                     runtime.record_timeout(&path_for_timeout);
+                    runtime.mark_pending_unload(&path_for_timeout);
                 }
+                reap_timed_out_dynamic_task(
+                    Arc::clone(&self.dynamic_runtime),
+                    path_for_timeout.clone(),
+                    task,
+                    false,
+                );
                 Err(QimenError::Runtime(format!(
                     "dynamic plugin config callback timed out for '{path_for_timeout}'"
                 )))
@@ -1210,7 +1257,6 @@ impl Runtime {
         if let Err(apply_error) = apply() {
             let rollback_result = rollback();
             let reload_result = self.rescan_dynamic_plugins_unlocked().await;
-            self.reconnect_all_bots_after_dynamic_reload().await;
             return match (rollback_result, reload_result) {
                 (Ok(()), Ok(_)) => Err(apply_error),
                 (rollback_result, reload_result) => Err(QimenError::Runtime(format!(
@@ -1222,10 +1268,7 @@ impl Runtime {
         }
 
         match self.rescan_dynamic_plugins_unlocked().await {
-            Ok(count) => {
-                self.reconnect_all_bots_after_dynamic_reload().await;
-                Ok(count)
-            }
+            Ok(count) => Ok(count),
             Err(load_error) => {
                 let unload_result = self.unload_dynamic_plugins_checked();
                 let rollback_result = if unload_result.is_ok() {
@@ -1243,9 +1286,75 @@ impl Runtime {
                         "reload skipped because file rollback failed".to_string(),
                     ))
                 };
-                self.reconnect_all_bots_after_dynamic_reload().await;
                 Err(QimenError::Runtime(format!(
                     "replacement dynamic plugins failed to load: {load_error}; unload: {}; rollback: {}; previous-version reload: {}",
+                    result_summary(unload_result),
+                    result_summary(rollback_result),
+                    result_summary(reload_result)
+                )))
+            }
+        }
+    }
+
+    /// Atomically replace one dynamic plugin without stopping unrelated plugins.
+    ///
+    /// The plugin report is updated only after the replacement has initialized
+    /// successfully. This makes marketplace updates and online toggles safe to
+    /// retry, while avoiding the O(number of plugins) init/shutdown work of a
+    /// full rescan.
+    pub async fn reload_dynamic_plugin_transaction<Apply, Rollback>(
+        &self,
+        plugin_id: &str,
+        replacement_path: Option<&str>,
+        apply: Apply,
+        rollback: Rollback,
+    ) -> Result<usize>
+    where
+        Apply: FnOnce() -> Result<()>,
+        Rollback: FnOnce() -> Result<()>,
+    {
+        let _reload_guard = self.dynamic_reload_lock.lock().await;
+        self.pause_dynamic_plugin(plugin_id, replacement_path)?;
+
+        if let Err(apply_error) = apply() {
+            let rollback_result = rollback();
+            let reload_result = self.rescan_dynamic_plugin_unlocked(plugin_id, None).await;
+            return match (rollback_result, reload_result) {
+                (Ok(()), Ok(_)) => Err(apply_error),
+                (rollback_result, reload_result) => Err(QimenError::Runtime(format!(
+                    "dynamic plugin file transaction failed: {apply_error}; rollback: {}; reload: {}",
+                    result_summary(rollback_result),
+                    result_summary(reload_result.map(|_| ()))
+                ))),
+            };
+        }
+
+        match self
+            .rescan_dynamic_plugin_unlocked(plugin_id, replacement_path)
+            .await
+        {
+            Ok(count) => Ok(count),
+            Err(load_error) => {
+                let unload_result = self.pause_dynamic_plugin(plugin_id, replacement_path);
+                let rollback_result = if unload_result.is_ok() {
+                    rollback()
+                } else {
+                    Err(QimenError::Runtime(
+                        "rollback skipped because the replacement plugin is still executing"
+                            .to_string(),
+                    ))
+                };
+                let reload_result = if rollback_result.is_ok() {
+                    self.rescan_dynamic_plugin_unlocked(plugin_id, None)
+                        .await
+                        .map(|_| ())
+                } else {
+                    Err(QimenError::Runtime(
+                        "reload skipped because file rollback failed".to_string(),
+                    ))
+                };
+                Err(QimenError::Runtime(format!(
+                    "replacement dynamic plugin failed to load: {load_error}; unload: {}; rollback: {}; previous-version reload: {}",
                     result_summary(unload_result),
                     result_summary(rollback_result),
                     result_summary(reload_result)
@@ -1293,6 +1402,7 @@ impl Runtime {
                 report.dynamic_plugins = initialized_entries.clone();
             }
         }
+        self.refresh_dispatchers();
 
         if let Some(gateway) = &self.webhook_gateway {
             let count = gateway.install_entries(&initialized_entries)?;
@@ -1592,9 +1702,19 @@ impl Runtime {
         &self,
         entries: &[DynamicPluginReportEntry],
     ) -> Result<Vec<DynamicPluginReportEntry>> {
+        // Each plugin owns an independent library and lifecycle callback. Run
+        // initialization concurrently so a slow plugin does not serialize
+        // startup or a full rescan for every other plugin. Results are zipped
+        // back to the original order to keep command precedence deterministic.
+        let results = futures_util::future::join_all(
+            entries
+                .iter()
+                .map(|entry| self.initialize_dynamic_plugin(entry)),
+        )
+        .await;
         let mut initialized = Vec::with_capacity(entries.len());
-        for entry in entries {
-            if self.initialize_dynamic_plugin(entry).await? {
+        for (entry, result) in entries.iter().zip(results) {
+            if result? {
                 initialized.push(entry.clone());
             }
         }
@@ -1602,6 +1722,15 @@ impl Runtime {
     }
 
     async fn initialize_dynamic_plugin(&self, entry: &DynamicPluginReportEntry) -> Result<bool> {
+        self.initialize_dynamic_plugin_with_access(entry, false)
+            .await
+    }
+
+    async fn initialize_dynamic_plugin_with_access(
+        &self,
+        entry: &DynamicPluginReportEntry,
+        suspended_path: bool,
+    ) -> Result<bool> {
         if !dynamic_runtime::is_safe_plugin_config_id(&entry.plugin_id) {
             tracing::error!(plugin = %entry.plugin_id, "dynamic plugin id cannot be mapped to a config file");
             return Ok(false);
@@ -1634,7 +1763,11 @@ impl Runtime {
                 .dynamic_runtime
                 .lock()
                 .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
-            let handle = match runtime.get_library(&entry.path) {
+            let handle = match if suspended_path {
+                runtime.get_library_for_initialization(&entry.path)
+            } else {
+                runtime.get_library(&entry.path)
+            } {
                 Ok(handle) => handle,
                 Err(err) => {
                     tracing::error!(
@@ -1664,20 +1797,20 @@ impl Runtime {
         let path = entry.path.clone();
         let plugin_id = entry.plugin_id.clone();
         let timeout = self.dynamic_plugin_timeout * 2;
-        let result = tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking(move || {
-                DynamicPluginRuntime::execute_init_on_handle(
-                    &lib_handle,
-                    &path,
-                    &plugin_id,
-                    &config_json,
-                    &plugin_dir,
-                    ".",
-                )
-            }),
-        )
-        .await;
+        let mut init_task = tokio::task::spawn_blocking(move || {
+            DynamicPluginRuntime::execute_init_on_handle(
+                &lib_handle,
+                &path,
+                &plugin_id,
+                &config_json,
+                &plugin_dir,
+                ".",
+            )
+        });
+        // Poll the JoinHandle by reference so a timeout can hand ownership to
+        // a reaper task. Dropping a blocking JoinHandle would otherwise leave
+        // the library Arc alive forever and make every later update fail.
+        let result = tokio::time::timeout(timeout, &mut init_task).await;
 
         match result {
             Ok(Ok(Ok(()))) => {
@@ -1708,7 +1841,14 @@ impl Runtime {
                 );
                 if let Ok(mut runtime) = self.dynamic_runtime.lock() {
                     runtime.record_timeout(&entry.path);
+                    runtime.mark_pending_unload(&entry.path);
                 }
+                reap_timed_out_dynamic_task(
+                    Arc::clone(&self.dynamic_runtime),
+                    entry.path.clone(),
+                    init_task,
+                    true,
+                );
                 Ok(false)
             }
         }
@@ -1736,6 +1876,7 @@ impl Runtime {
                 .lock()
                 .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
             runtime.unload_all();
+            runtime.clear_suspended_libraries();
             runtime.resume_loading();
         }
 
@@ -1798,9 +1939,192 @@ impl Runtime {
         } else {
             drop(report_guard);
         }
+        self.refresh_dispatchers();
 
         tracing::info!(count = count, "dynamic plugin rescan complete");
         Ok(count)
+    }
+
+    fn pause_dynamic_plugin(&self, plugin_id: &str, replacement_path: Option<&str>) -> Result<()> {
+        let mut paths = self
+            .host_plugin_report()
+            .map(|report| {
+                report
+                    .dynamic_plugins
+                    .into_iter()
+                    .filter(|entry| entry.plugin_id == plugin_id)
+                    .map(|entry| entry.path)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(path) = replacement_path
+            && !paths.iter().any(|existing| existing == path)
+        {
+            paths.push(path.to_string());
+        }
+
+        let mut runtime = self
+            .dynamic_runtime
+            .lock()
+            .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))?;
+        for path in &paths {
+            if runtime.is_pending_unload(path) {
+                return Err(QimenError::Runtime(format!(
+                    "dynamic plugin callback is still finishing; retry plugin operation later: {path}"
+                )));
+            }
+            if let Err(error) = runtime.unload_library_checked(path, self.dynamic_plugin_timeout) {
+                // Keep the timed-out path isolated until the reaper observes
+                // the callback return. Re-enabling it here would allow a
+                // replacement transaction to race the old library image and
+                // recreate the "updated version did not change" failure.
+                runtime.mark_pending_unload(path);
+                for suspended_path in &paths {
+                    if suspended_path != path {
+                        runtime.resume_library(suspended_path);
+                    }
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    async fn rescan_dynamic_plugin_unlocked(
+        &self,
+        plugin_id: &str,
+        preferred_path: Option<&str>,
+    ) -> Result<usize> {
+        // Install the unwind guard before reading any optional configuration:
+        // the caller has already suspended these paths, and even a missing
+        // directory/state file must not strand them in that state.
+        let mut paths_to_resume = self
+            .host_plugin_report()
+            .map(|report| {
+                report
+                    .dynamic_plugins
+                    .into_iter()
+                    .filter(|entry| entry.plugin_id == plugin_id)
+                    .map(|entry| entry.path)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(path) = preferred_path
+            && !paths_to_resume.iter().any(|existing| existing == path)
+        {
+            paths_to_resume.push(path.to_string());
+        }
+        let _resume_guard = DynamicPluginResumeGuard {
+            runtime: Arc::clone(&self.dynamic_runtime),
+            paths: paths_to_resume.clone(),
+        };
+
+        let dir = self.plugin_bin_dir.as_deref().ok_or_else(|| {
+            QimenError::Runtime("dynamic plugin directory is not configured".to_string())
+        })?;
+        let state_path = self.plugin_state_path.as_deref().ok_or_else(|| {
+            QimenError::Runtime("plugin state path is not configured".to_string())
+        })?;
+        let state = load_plugin_state(state_path)?;
+        let mut replacement = Vec::new();
+        if state.is_enabled(plugin_id) {
+            let reported_path = paths_to_resume
+                .iter()
+                .find(|path| std::path::Path::new(path).is_file())
+                .cloned();
+            let direct_path = preferred_path
+                .filter(|path| std::path::Path::new(path).is_file())
+                .or_else(|| {
+                    reported_path
+                        .as_deref()
+                        .filter(|path| std::path::Path::new(path).is_file())
+                });
+            if let Some(path) = direct_path {
+                if let Some(entry) = dynamic_runtime::scan_dynamic_plugin(path)? {
+                    if entry.plugin_id != plugin_id {
+                        return Err(QimenError::Runtime(format!(
+                            "dynamic plugin file '{path}' exports id '{}', expected '{plugin_id}'",
+                            entry.plugin_id
+                        )));
+                    }
+                    replacement.push(entry);
+                }
+            } else {
+                replacement = dynamic_runtime::scan_dynamic_plugins(dir)?
+                    .into_iter()
+                    .filter(|entry| entry.plugin_id == plugin_id)
+                    .collect();
+            }
+        }
+
+        if replacement.len() > 1 {
+            return Err(QimenError::Runtime(format!(
+                "multiple dynamic plugin files found for '{plugin_id}'"
+            )));
+        }
+
+        let initialized = if let Some(entry) = replacement.pop() {
+            // Keep the path suspended while init runs. This prevents a message
+            // or interceptor callback from observing a library whose lifecycle
+            // has not completed yet. It is resumed only after the report and
+            // interceptor chain below have been published.
+            let initialized = self
+                .initialize_dynamic_plugin_with_access(&entry, true)
+                .await?;
+            if !initialized {
+                let cleanup = self
+                    .dynamic_runtime
+                    .lock()
+                    .map_err(|_| QimenError::Runtime("dynamic runtime lock poisoned".to_string()))
+                    .and_then(|mut runtime| {
+                        runtime.unload_library_checked(&entry.path, Duration::ZERO)
+                    });
+                return Err(QimenError::Runtime(format!(
+                    "dynamic plugin '{plugin_id}' failed to initialize; cleanup: {}",
+                    result_summary(cleanup)
+                )));
+            }
+            Some(entry)
+        } else {
+            None
+        };
+
+        let report_clone = {
+            let report = self
+                .host_plugin_report
+                .read()
+                .map_err(|_| QimenError::Runtime("host plugin report lock poisoned".to_string()))?;
+            let mut next = report.clone().unwrap_or_else(|| HostPluginReport {
+                builtin_modules: Vec::new(),
+                configured_plugins: Vec::new(),
+                available_modules: Vec::new(),
+                persisted_states: BTreeMap::new(),
+                dynamic_plugins: Vec::new(),
+            });
+            next.dynamic_plugins
+                .retain(|entry| entry.plugin_id != plugin_id);
+            if let Some(entry) = initialized {
+                next.dynamic_plugins.push(entry);
+            }
+            next
+        };
+        if let Some(gateway) = &self.webhook_gateway {
+            gateway.install_entries(&report_clone.dynamic_plugins)?;
+        }
+        let mut report = self
+            .host_plugin_report
+            .write()
+            .map_err(|_| QimenError::Runtime("host plugin report lock poisoned".to_string()))?;
+        *report = Some(report_clone.clone());
+        drop(report);
+        self.inject_dynamic_interceptors(&report_clone);
+        self.refresh_dispatchers();
+        Ok(usize::from(
+            report_clone
+                .dynamic_plugins
+                .iter()
+                .any(|entry| entry.plugin_id == plugin_id),
+        ))
     }
 
     fn unload_dynamic_plugins_checked(&self) -> Result<()> {
@@ -2333,6 +2657,10 @@ impl Runtime {
             adapter,
             client,
         };
+        let current_system_dispatcher = self.current_system_dispatcher();
+        let system_dispatcher = current_system_dispatcher
+            .as_ref()
+            .unwrap_or(system_dispatcher);
         if let Some(signal) = system_dispatcher
             .dispatch(Self::build_system_event_context(
                 bot,
@@ -2470,6 +2798,11 @@ impl Runtime {
             "received QQ official event"
         );
 
+        let current_system_dispatcher = self.current_system_dispatcher();
+        let system_dispatcher = current_system_dispatcher
+            .as_ref()
+            .unwrap_or(system_dispatcher);
+
         if let Some(interaction_id) = qqbot_interaction_ack_target(&event)
             && let Err(err) = api_client.acknowledge_interaction(interaction_id, 0).await
         {
@@ -2574,6 +2907,10 @@ impl Runtime {
     ) -> Result<SessionSignal> {
         let mut event = event;
         attach_qimen_context(&mut event.raw_json, bot);
+        let current_command_dispatcher = self.current_command_dispatcher();
+        let command_dispatcher = current_command_dispatcher
+            .as_ref()
+            .unwrap_or(command_dispatcher);
         if let Some(message_id) = event.message_id_str() {
             let dedup_key = runtime_ctx.dedup_key(&event, &message_id);
             if !self.dedup.check_and_mark(&dedup_key).await {
@@ -2634,10 +2971,9 @@ impl Runtime {
         let outcome = self
             .handle_command_signal(&event, command_dispatcher, command_result, runtime_ctx)
             .await?;
-        let (reply, reconnect_after_completion) = match outcome {
-            NormalizedCommandOutcome::Reply(reply) => (Some(reply), false),
-            NormalizedCommandOutcome::ReplyAndReconnect(reply) => (Some(reply), true),
-            NormalizedCommandOutcome::None => (None, false),
+        let reply = match outcome {
+            NormalizedCommandOutcome::Reply(reply) => Some(reply),
+            NormalizedCommandOutcome::None => None,
         };
 
         if let Some(reply) = reply {
@@ -2656,10 +2992,6 @@ impl Runtime {
             if !sends.is_empty() {
                 runtime_ctx.process_dynamic_sends(sends).await?;
             }
-        }
-
-        if reconnect_after_completion {
-            self.reconnect_all_bots();
         }
 
         Ok(SessionSignal::EventHandled)
@@ -2714,9 +3046,9 @@ impl Runtime {
             }
             Some(CommandDispatchSignal::Builtin(BuiltinCommandAction::PluginsReload)) => {
                 match self.rescan_dynamic_plugins().await {
-                    Ok(count) => NormalizedCommandOutcome::ReplyAndReconnect(Message::text(
-                        format!("dynamic plugins reloaded: {count} plugin(s); bots will reconnect"),
-                    )),
+                    Ok(count) => NormalizedCommandOutcome::Reply(Message::text(format!(
+                        "dynamic plugins reloaded: {count} plugin(s); command routes refreshed"
+                    ))),
                     Err(error) => NormalizedCommandOutcome::Reply(Message::text(format!(
                         "plugin reload failed: {error}"
                     ))),
@@ -2778,23 +3110,20 @@ impl Runtime {
         let timeout_dur = self.dynamic_plugin_timeout;
         let descriptor_clone = descriptor.clone();
 
-        let ffi_result = tokio::time::timeout(
-            timeout_dur,
-            tokio::task::spawn_blocking(move || {
-                DynamicPluginRuntime::execute_command_on_handle(
-                    &lib_handle,
-                    &descriptor_clone,
-                    &args,
-                    &sender_id,
-                    &group_id_str,
-                    &raw_json,
-                    &sender_nickname,
-                    &message_id_str,
-                    timestamp,
-                )
-            }),
-        )
-        .await;
+        let mut task = tokio::task::spawn_blocking(move || {
+            DynamicPluginRuntime::execute_command_on_handle(
+                &lib_handle,
+                &descriptor_clone,
+                &args,
+                &sender_id,
+                &group_id_str,
+                &raw_json,
+                &sender_nickname,
+                &message_id_str,
+                timestamp,
+            )
+        });
+        let ffi_result = tokio::time::timeout(timeout_dur, &mut task).await;
 
         let (dyn_response, sends) = match ffi_result {
             Ok(Ok(inner)) => inner?,
@@ -2806,7 +3135,14 @@ impl Runtime {
             Err(_) => {
                 if let Ok(mut runtime) = self.dynamic_runtime.lock() {
                     runtime.record_timeout(&lib_path);
+                    runtime.mark_pending_unload(&lib_path);
                 }
+                reap_timed_out_dynamic_task(
+                    Arc::clone(&self.dynamic_runtime),
+                    lib_path.clone(),
+                    task,
+                    false,
+                );
                 return Err(QimenError::Runtime(format!(
                     "dynamic plugin command timed out after {}s for '{}'",
                     timeout_dur.as_secs(),
@@ -3769,8 +4105,8 @@ impl Runtime {
         }
 
         match self.rescan_dynamic_plugins().await {
-            Ok(count) => NormalizedCommandOutcome::ReplyAndReconnect(Message::text(format!(
-                "{}; {count} dynamic plugin(s) loaded; bots will reconnect",
+            Ok(count) => NormalizedCommandOutcome::Reply(Message::text(format!(
+                "{}; {count} dynamic plugin(s) loaded; command routes refreshed",
                 update.message
             ))),
             Err(error) => NormalizedCommandOutcome::Reply(Message::text(format!(
@@ -3989,20 +4325,17 @@ impl Runtime {
 
         // Phase 2: spawn_blocking + timeout
         let timeout_dur = self.dynamic_plugin_timeout;
-        let ffi_result = tokio::time::timeout(
-            timeout_dur,
-            tokio::task::spawn_blocking(move || {
-                DynamicPluginRuntime::execute_route_on_handle(
-                    &lib_handle,
-                    &library_path,
-                    &callback_symbol,
-                    route_str,
-                    kind,
-                    &raw_json,
-                )
-            }),
-        )
-        .await;
+        let mut task = tokio::task::spawn_blocking(move || {
+            DynamicPluginRuntime::execute_route_on_handle(
+                &lib_handle,
+                &library_path,
+                &callback_symbol,
+                route_str,
+                kind,
+                &raw_json,
+            )
+        });
+        let ffi_result = tokio::time::timeout(timeout_dur, &mut task).await;
 
         match ffi_result {
             Ok(Ok(inner)) => Ok(Some(inner?)),
@@ -4012,7 +4345,14 @@ impl Runtime {
             Err(_) => {
                 if let Ok(mut runtime) = self.dynamic_runtime.lock() {
                     runtime.record_timeout(&lib_path);
+                    runtime.mark_pending_unload(&lib_path);
                 }
+                reap_timed_out_dynamic_task(
+                    Arc::clone(&self.dynamic_runtime),
+                    lib_path.clone(),
+                    task,
+                    false,
+                );
                 Err(QimenError::Runtime(format!(
                     "dynamic plugin system route timed out after {}s",
                     timeout_dur.as_secs()
@@ -4108,7 +4448,6 @@ enum SessionSignal {
 
 enum NormalizedCommandOutcome {
     Reply(Message),
-    ReplyAndReconnect(Message),
     None,
 }
 
@@ -5425,7 +5764,7 @@ path = "/onebot/reverse"
     }
 
     #[tokio::test]
-    async fn dynamic_reload_waits_until_bot_dispatchers_apply_the_new_generation() {
+    async fn dynamic_reload_does_not_require_bot_reconnect() {
         let config: AppConfig = toml::from_str(
             r#"
 [runtime]
@@ -5457,14 +5796,8 @@ path = "/onebot/reverse"
 
         let reload = async {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tokio::time::timeout(
-                Duration::from_millis(500),
-                runtime.reconnect_all_bots_after_dynamic_reload(),
-            )
-            .await
-            .expect("dispatcher generation should be acknowledged without waiting for timeout");
-
             let expected = runtime.bot_controls["reverse-bot"].borrow().generation;
+            runtime.refresh_dispatchers();
             let applied = runtime.bot_statuses.read().unwrap()["reverse-bot"].applied_generation;
             assert_eq!(applied, expected);
         };

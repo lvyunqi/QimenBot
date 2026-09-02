@@ -199,6 +199,7 @@ pub trait OneBotSystemEventHandler: Send + Sync {
     }
 }
 
+#[derive(Clone)]
 pub struct OneBotSystemDispatcher {
     handlers: Vec<Arc<dyn OneBotSystemEventHandler>>,
     plugins: Vec<Arc<dyn SystemPlugin>>,

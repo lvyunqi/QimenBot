@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react"
+import * as AlertDialog from "@radix-ui/react-alert-dialog"
 import {
   AlertTriangle,
   ArrowDownWideNarrow,
@@ -14,6 +15,7 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Trash2,
   Webhook,
   LoaderCircle,
 } from "lucide-react"
@@ -56,6 +58,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
   const [sort, setSort] = useState<PluginSort>("priority")
   const [query, setQuery] = useState("")
   const [configPlugin, setConfigPlugin] = useState<PluginView | null>(null)
+  const [uninstallPlugin, setUninstallPlugin] = useState<PluginView | null>(null)
 
   const load = async () => {
     setPlugins(await api.plugins())
@@ -155,6 +158,20 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
     }
   }
 
+  const uninstall = async (plugin: PluginView) => {
+    setBusy(true)
+    try {
+      const result = await api.uninstallPlugin(plugin.id)
+      setUninstallPlugin(null)
+      toast.success(result.message)
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "插件卸载失败")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <>
     <main className="page-shell">
@@ -230,6 +247,7 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
             onToggle={toggle}
             onOpenConfig={onOpenConfig}
             onConfigure={setConfigPlugin}
+            onUninstall={setUninstallPlugin}
             onPriorityChange={updatePriority}
             rank={rankById.get(plugin.id)}
             key={plugin.kind + plugin.id}
@@ -257,6 +275,34 @@ export function PluginsPage({ onOpenConfig }: { onOpenConfig?: () => void }) {
         />
       </Suspense>
     )}
+    <AlertDialog.Root open={Boolean(uninstallPlugin)} onOpenChange={(open) => { if (!open && !busy) setUninstallPlugin(null) }}>
+      <AlertDialog.Portal>
+        <AlertDialog.Overlay className="marketplace-dialog-overlay" />
+        <AlertDialog.Content className="marketplace-dialog">
+          <span className="marketplace-dialog-icon is-danger"><Trash2 /></span>
+          <AlertDialog.Title>卸载 {uninstallPlugin?.name || uninstallPlugin?.id}</AlertDialog.Title>
+          <AlertDialog.Description>
+            宿主会先停止并卸载这个动态插件，再移除活动二进制。插件配置和数据目录会保留。
+          </AlertDialog.Description>
+          <div className="marketplace-dialog-facts">
+            <span><small>插件 ID</small><strong>{uninstallPlugin?.id}</strong></span>
+            <span><small>当前版本</small><strong>{uninstallPlugin?.version || "未声明"}</strong></span>
+          </div>
+          <div className="marketplace-dialog-actions">
+            <AlertDialog.Cancel asChild><Button variant="outline" disabled={busy}>取消</Button></AlertDialog.Cancel>
+            <AlertDialog.Action asChild>
+              <Button variant="destructive" disabled={busy} onClick={(event) => {
+                event.preventDefault()
+                if (uninstallPlugin) void uninstall(uninstallPlugin)
+              }}>
+                {busy ? <LoaderCircle className="animate-spin-slow" /> : <Trash2 />}
+                确认卸载
+              </Button>
+            </AlertDialog.Action>
+          </div>
+        </AlertDialog.Content>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
     </>
   )
 }
@@ -267,6 +313,7 @@ function PluginCard({
   onToggle,
   onOpenConfig,
   onConfigure,
+  onUninstall,
   onPriorityChange,
   rank,
   delay,
@@ -276,6 +323,7 @@ function PluginCard({
   onToggle: (plugin: PluginView, enabled: boolean) => Promise<void>
   onOpenConfig?: () => void
   onConfigure: (plugin: PluginView) => void
+  onUninstall: (plugin: PluginView) => void
   onPriorityChange: (plugin: PluginView, priority: number) => Promise<void>
   rank?: number
   delay: number
@@ -373,6 +421,18 @@ function PluginCard({
               <Button variant="outline" size="sm" onClick={() => onConfigure(plugin)} disabled={busy}>
                 <Settings2 />
                 {plugin.config_file_exists ? "配置" : "设置"}
+              </Button>
+            )}
+            {plugin.kind === "dynamic" && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => onUninstall(plugin)}
+                disabled={busy}
+                title={`卸载 ${plugin.id}`}
+                aria-label={`卸载 ${plugin.id}`}
+              >
+                <Trash2 />
               </Button>
             )}
             <div className="plugin-switch">
