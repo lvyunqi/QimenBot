@@ -1,0 +1,32 @@
+schema_version = 1
+version = "0.1.1"
+released_at = "2026-09-02T16:05:10Z"
+release_tag = "v0.1.1"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 258
+rollback_safe = true
+changelog = "Web 管理端全面重构：shadcn/ui 界面、青碧主题（默认亮色）、58 页资源全量接入，关联选择器与 JSON 构建器替代手填参数，批量操作、图表视图与大表虚拟滚动；管理端随插件内嵌发布，构建全部由流水线完成。"
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at"]
+events = ["message"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_xianchen-x86_64-pc-windows-msvc.dll"
+sha256 = "51e96f21bd3dc923269e23deecf2f4c7b6660a39e839d92763a7d3a3a92f5a44"
+size_bytes = 27509760
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_xianchen-x86_64-unknown-linux-gnu.so"
+sha256 = "55b6d48d0caec435a9839f9a343a3da0730cc1eea2cb4519d5b2d2c3ee4b8fad"
+size_bytes = 26334824
+min_glibc = "2.31"
+github_attestation = true
