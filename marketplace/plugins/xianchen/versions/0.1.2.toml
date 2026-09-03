@@ -1,0 +1,32 @@
+schema_version = 1
+version = "0.1.2"
+released_at = "2026-09-03T03:56:14Z"
+release_tag = "v0.1.2"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 258
+rollback_safe = true
+changelog = "数据库与后台全面治理：内置调度器（保留期清理/VACUUM 备份/排行刷新），目录种子降容与老库样板清理（新库体积大幅下降），公告板上限；数据层收口为仓储接口（生产直查清零）；管理后台白屏修复（vite base 与 MIME）与视觉重制（青玉×鎏金主题、Outfit/JetBrains Mono 本地字体、真数据仪表盘+七日趋势图、Ctrl+K 命令面板）；新增单令牌登录鉴权（admin.token 配置，数据目录 admin-token.txt 热更新）。"
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at"]
+events = ["message"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_xianchen-x86_64-pc-windows-msvc.dll"
+sha256 = "7f8266d6df84fdd66ac55eb220027268154826305c1f718f470d466838583592"
+size_bytes = 27734528
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_xianchen-x86_64-unknown-linux-gnu.so"
+sha256 = "364e4f60fbaceab17a66eb1f478bdb2dcd5dc76408179ea176e0673bbac49f0b"
+size_bytes = 26560640
+min_glibc = "2.31"
+github_attestation = true
