@@ -1,0 +1,32 @@
+schema_version = 1
+version = "0.1.3"
+released_at = "2026-09-04T00:00:00Z"
+release_tag = "v0.1.3"
+channel = "stable"
+qimenbot = ">=0.1.18, <0.2.0"
+dynamic_api = "0.6"
+yanked = false
+data_schema_version = 258
+rollback_safe = true
+changelog = "管理后台全面重构：分级可折叠侧边栏、图标文字同排、响应式移动端布局与标准 shadcn/ui 中性色主题；修复竞技场保留期和每日任务重置问题。"
+
+[[drivers]]
+driver = "qq-official"
+scenes = ["private", "group-at"]
+events = ["message"]
+outbound = ["reply", "proactive", "rich-message"]
+
+[[assets]]
+target = "x86_64-pc-windows-msvc"
+asset_name = "qimen_dynamic_plugin_xianchen-x86_64-pc-windows-msvc.dll"
+sha256 = "abe8ae783f369b86765368e80ab717d623ee1c3824d07232956de1fc06cb80e4"
+size_bytes = 27751424
+github_attestation = true
+
+[[assets]]
+target = "x86_64-unknown-linux-gnu"
+asset_name = "libqimen_dynamic_plugin_xianchen-x86_64-unknown-linux-gnu.so"
+sha256 = "3fc10c5781d17c0b5bee20f8b63832036f3932c82853d1e106bf7b23c002903f"
+size_bytes = 26576976
+min_glibc = "2.31"
+github_attestation = true
