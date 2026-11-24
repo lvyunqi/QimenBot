@@ -2,8 +2,11 @@ use qimen_host_types::{
     BUILTIN_PLUGIN_PRIORITY, DYNAMIC_PLUGIN_PRIORITY, DynamicCommandDescriptor,
     STATIC_PLUGIN_PRIORITY,
 };
-use qimen_plugin_api::{CommandDefinition, CommandPlugin, CommandRole, CommandScope};
-use std::collections::{BTreeMap, HashMap};
+use qimen_plugin_api::{
+    CommandDefinition, CommandPlugin, CommandRole, CommandScope, MessageFilter,
+};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 const BUILTIN_DECLARED_PRIORITY: i32 = 10;
@@ -18,17 +21,124 @@ pub struct CommandRegistryDiagnostic {
 
 #[derive(Clone)]
 pub struct CommandRegistryEntry {
-    pub definition: CommandDefinition,
+    definition: RegistryDefinition,
     pub plugin: Option<Arc<dyn CommandPlugin>>,
-    pub dynamic_descriptor: Option<DynamicCommandDescriptor>,
     pub source_label: String,
     pub priority: u32,
+}
+
+#[derive(Clone)]
+enum RegistryDefinition {
+    Static(CommandDefinition),
+    Dynamic {
+        descriptor: DynamicCommandDescriptor,
+        required_role: CommandRole,
+        scope: CommandScope,
+    },
+}
+
+/// A command description borrowed from a registry entry or a static plugin definition.
+#[derive(Debug, Clone)]
+pub struct RegisteredCommandDefinition<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub aliases: Cow<'a, [&'a str]>,
+    pub examples: &'static [&'static str],
+    pub category: &'a str,
+    pub hidden: bool,
+    pub required_role: &'a CommandRole,
+    pub scope: &'a CommandScope,
+    pub filter: Option<&'a MessageFilter>,
+}
+
+impl<'a> From<&'a CommandDefinition> for RegisteredCommandDefinition<'a> {
+    fn from(definition: &'a CommandDefinition) -> Self {
+        Self {
+            name: definition.name,
+            description: definition.description,
+            aliases: Cow::Borrowed(definition.aliases),
+            examples: definition.examples,
+            category: definition.category,
+            hidden: definition.hidden,
+            required_role: &definition.required_role,
+            scope: &definition.scope,
+            filter: definition.filter.as_ref(),
+        }
+    }
+}
+
+impl RegisteredCommandDefinition<'_> {
+    pub fn keys(&self) -> impl Iterator<Item = &str> + '_ {
+        std::iter::once(self.name).chain(self.aliases.iter().copied())
+    }
+}
+
+impl CommandRegistryEntry {
+    pub fn name(&self) -> &str {
+        match &self.definition {
+            RegistryDefinition::Static(definition) => definition.name,
+            RegistryDefinition::Dynamic { descriptor, .. } => &descriptor.command_name,
+        }
+    }
+
+    pub fn static_definition(&self) -> Option<&CommandDefinition> {
+        match &self.definition {
+            RegistryDefinition::Static(definition) => Some(definition),
+            RegistryDefinition::Dynamic { .. } => None,
+        }
+    }
+
+    pub fn dynamic_descriptor(&self) -> Option<&DynamicCommandDescriptor> {
+        match &self.definition {
+            RegistryDefinition::Static(_) => None,
+            RegistryDefinition::Dynamic { descriptor, .. } => Some(descriptor),
+        }
+    }
+
+    pub fn role_and_scope(&self) -> (&CommandRole, &CommandScope) {
+        match &self.definition {
+            RegistryDefinition::Static(definition) => {
+                (&definition.required_role, &definition.scope)
+            }
+            RegistryDefinition::Dynamic {
+                required_role,
+                scope,
+                ..
+            } => (required_role, scope),
+        }
+    }
+
+    pub fn definition(&self) -> RegisteredCommandDefinition<'_> {
+        match &self.definition {
+            RegistryDefinition::Static(definition) => definition.into(),
+            RegistryDefinition::Dynamic {
+                descriptor,
+                required_role,
+                scope,
+            } => RegisteredCommandDefinition {
+                name: &descriptor.command_name,
+                description: &descriptor.command_description,
+                aliases: Cow::Owned(descriptor.aliases.iter().map(String::as_str).collect()),
+                examples: &[],
+                category: if descriptor.category.is_empty() {
+                    "dynamic"
+                } else {
+                    &descriptor.category
+                },
+                hidden: false,
+                required_role,
+                scope,
+                filter: None,
+            },
+        }
+    }
 }
 
 #[derive(Default, Clone)]
 pub struct CommandRegistry {
     entries: Vec<CommandRegistryEntry>,
     index: HashMap<String, Vec<usize>>,
+    key_lengths: BTreeSet<usize>,
     diagnostics: Vec<CommandRegistryDiagnostic>,
     plugin_priorities: BTreeMap<String, u32>,
 }
@@ -47,9 +157,8 @@ impl CommandRegistry {
 
     pub fn add_builtin(&mut self, definition: CommandDefinition) {
         self.insert_entry(CommandRegistryEntry {
-            definition,
+            definition: RegistryDefinition::Static(definition),
             plugin: None,
-            dynamic_descriptor: None,
             source_label: "builtin".to_string(),
             priority: BUILTIN_PLUGIN_PRIORITY,
         });
@@ -68,9 +177,8 @@ impl CommandRegistry {
             STATIC_PLUGIN_PRIORITY
         };
         self.insert_entry(CommandRegistryEntry {
-            definition,
+            definition: RegistryDefinition::Static(definition),
             plugin: Some(plugin),
-            dynamic_descriptor: None,
             source_label,
             priority: self
                 .plugin_priorities
@@ -81,7 +189,7 @@ impl CommandRegistry {
     }
 
     pub fn add_dynamic_descriptor(&mut self, descriptor: DynamicCommandDescriptor) {
-        let role = match descriptor.required_role.as_str() {
+        let required_role = match descriptor.required_role.as_str() {
             "admin" => CommandRole::Admin,
             "owner" => CommandRole::Owner,
             _ => CommandRole::Anyone,
@@ -91,48 +199,28 @@ impl CommandRegistry {
             "private" => CommandScope::Private,
             _ => CommandScope::All,
         };
-        let category = if descriptor.category.is_empty() {
-            "dynamic"
-        } else {
-            Box::leak(descriptor.category.clone().into_boxed_str())
-        };
-        let aliases: &'static [&'static str] = if descriptor.aliases.is_empty() {
-            &[]
-        } else {
-            let leaked: Vec<&'static str> = descriptor
-                .aliases
-                .iter()
-                .map(|a| &*Box::leak(a.clone().into_boxed_str()))
-                .collect();
-            Box::leak(leaked.into_boxed_slice())
-        };
+        let priority = self
+            .plugin_priorities
+            .get(&descriptor.plugin_id)
+            .copied()
+            .unwrap_or(DYNAMIC_PLUGIN_PRIORITY);
+        let source_label = format!("dynamic-descriptor:{}", descriptor.plugin_id);
         self.insert_entry(CommandRegistryEntry {
-            definition: CommandDefinition {
-                name: Box::leak(descriptor.command_name.clone().into_boxed_str()),
-                description: Box::leak(descriptor.command_description.clone().into_boxed_str()),
-                aliases,
-                examples: &[],
-                category,
-                hidden: false,
-                required_role: role,
+            definition: RegistryDefinition::Dynamic {
+                descriptor,
+                required_role,
                 scope,
-                filter: None,
             },
             plugin: None,
-            dynamic_descriptor: Some(descriptor.clone()),
-            source_label: format!("dynamic-descriptor:{}", descriptor.plugin_id),
-            priority: self
-                .plugin_priorities
-                .get(&descriptor.plugin_id)
-                .copied()
-                .unwrap_or(DYNAMIC_PLUGIN_PRIORITY),
+            source_label,
+            priority,
         });
     }
 
-    pub fn describe(&self) -> Vec<(CommandDefinition, String)> {
+    pub fn describe(&self) -> Vec<(RegisteredCommandDefinition<'_>, String)> {
         self.entries
             .iter()
-            .map(|entry| (entry.definition.clone(), entry.source_label.clone()))
+            .map(|entry| (entry.definition(), entry.source_label.clone()))
             .collect()
     }
 
@@ -155,34 +243,23 @@ impl CommandRegistry {
         &self,
         input: &'a str,
     ) -> Option<(&CommandRegistryEntry, &'a str)> {
-        let mut best: Option<(&CommandRegistryEntry, &'a str, usize)> = None;
-
-        for (key, positions) in &self.index {
-            if input.starts_with(key.as_str()) && key.len() < input.len() {
-                let rest = &input[key.len()..];
-                // 仅在剩余部分不以空格开头时才算前缀匹配
-                // (有空格的情况已被 split_whitespace 正确处理)
-                // Only count as prefix match if rest doesn't start with whitespace
-                // (whitespace cases are already handled by split_whitespace)
-                if !rest.starts_with(char::is_whitespace)
-                    && let Some(entry) = positions.first().and_then(|idx| self.entries.get(*idx))
-                {
-                    let key_len = key.len();
-                    if best
-                        .as_ref()
-                        .is_none_or(|(_, _, prev_len)| key_len > *prev_len)
-                    {
-                        best = Some((entry, rest, key_len));
-                    }
+        // Try registered byte lengths in descending order and reuse the exact-match index.
+        self.key_lengths
+            .range(..input.len())
+            .rev()
+            .find_map(|&len| {
+                let (key, rest) = input.split_at_checked(len)?;
+                if rest.starts_with(char::is_whitespace) {
+                    return None;
                 }
-            }
-        }
-
-        best.map(|(entry, rest, _)| (entry, rest))
+                self.match_command(key).map(|entry| (entry, rest))
+            })
     }
 
-    pub fn grouped_describe(&self) -> BTreeMap<String, Vec<(CommandDefinition, String)>> {
-        let mut groups: BTreeMap<String, Vec<(CommandDefinition, String)>> = BTreeMap::new();
+    pub fn grouped_describe(
+        &self,
+    ) -> BTreeMap<String, Vec<(RegisteredCommandDefinition<'_>, String)>> {
+        let mut groups = BTreeMap::<_, Vec<_>>::new();
         for (definition, source) in self.describe() {
             groups
                 .entry(definition.category.to_string())
@@ -212,14 +289,10 @@ impl CommandRegistry {
 
     fn insert_entry(&mut self, entry: CommandRegistryEntry) {
         let position = self.entries.len();
-        let keys = std::iter::once(entry.definition.name.to_string())
-            .chain(
-                entry
-                    .definition
-                    .aliases
-                    .iter()
-                    .map(|alias| alias.to_string()),
-            )
+        let keys = entry
+            .definition()
+            .keys()
+            .map(str::to_owned)
             .collect::<Vec<_>>();
 
         for key in &keys {
@@ -239,9 +312,10 @@ impl CommandRegistry {
             }
         }
 
-        self.entries.push(entry.clone());
+        self.entries.push(entry);
 
         for key in keys {
+            self.key_lengths.insert(key.len());
             let bucket = self.index.entry(key).or_default();
             bucket.push(position);
             bucket.sort_by(|left_index, right_index| {
@@ -263,7 +337,7 @@ fn declared_priority(entry: &CommandRegistryEntry) -> i32 {
         .as_ref()
         .map(|plugin| plugin.priority())
         .unwrap_or_else(|| {
-            if entry.dynamic_descriptor.is_some() {
+            if entry.dynamic_descriptor().is_some() {
                 DYNAMIC_DESCRIPTOR_DECLARED_PRIORITY
             } else {
                 BUILTIN_DECLARED_PRIORITY
@@ -302,7 +376,7 @@ mod tests {
         let entry = registry.match_command("ping");
         assert!(entry.is_some());
         let entry = entry.unwrap();
-        assert_eq!(entry.definition.name, "ping");
+        assert_eq!(entry.name(), "ping");
         assert_eq!(entry.source_label, "builtin");
     }
 
@@ -322,7 +396,7 @@ mod tests {
         assert!(registry.match_command("?").is_some());
 
         let by_alias = registry.match_command("h").unwrap();
-        assert_eq!(by_alias.definition.name, "help");
+        assert_eq!(by_alias.name(), "help");
     }
 
     #[test]
@@ -335,9 +409,8 @@ mod tests {
 
         // Insert a higher-priority entry manually via insert_entry
         registry.insert_entry(CommandRegistryEntry {
-            definition: make_definition("echo", &[], "plugin"),
+            definition: RegistryDefinition::Static(make_definition("echo", &[], "plugin")),
             plugin: None,
-            dynamic_descriptor: None,
             source_label: "override".to_string(),
             priority: 50,
         });
@@ -401,9 +474,8 @@ mod tests {
 
         // Insert high priority first
         registry.insert_entry(CommandRegistryEntry {
-            definition: make_definition("cmd", &[], "general"),
+            definition: RegistryDefinition::Static(make_definition("cmd", &[], "general")),
             plugin: None,
-            dynamic_descriptor: None,
             source_label: "high".to_string(),
             priority: 100,
         });
@@ -476,14 +548,14 @@ mod tests {
         let result = registry.prefix_match_command("创建角色小明-男");
         assert!(result.is_some());
         let (entry, rest) = result.unwrap();
-        assert_eq!(entry.definition.name, "创建角色");
+        assert_eq!(entry.name(), "创建角色");
         assert_eq!(rest, "小明-男");
 
         // 别名也能前缀匹配
         let result = registry.prefix_match_command("新建角色小红-女");
         assert!(result.is_some());
         let (entry, rest) = result.unwrap();
-        assert_eq!(entry.definition.name, "创建角色");
+        assert_eq!(entry.name(), "创建角色");
         assert_eq!(rest, "小红-女");
     }
 
@@ -497,7 +569,7 @@ mod tests {
         let result = registry.prefix_match_command("创建角色小明-男");
         assert!(result.is_some());
         let (entry, rest) = result.unwrap();
-        assert_eq!(entry.definition.name, "创建角色");
+        assert_eq!(entry.name(), "创建角色");
         assert_eq!(rest, "小明-男");
     }
 
