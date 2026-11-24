@@ -57,9 +57,13 @@ export function OverviewPage({ snapshot, loading, error, onRefresh, onNavigate, 
     <main className="page-shell overview-page">
       <div className="page-heading enter-item">
         <div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h1>运行总览</h1>
             <span className="environment-tag">{snapshot?.server.environment ?? "LIVE"}</span>
+            <span className={"overview-api-state" + (error ? " is-error" : snapshot ? " is-online" : " is-pending")} aria-live="polite">
+              <span aria-hidden="true" />
+              {error ? "API 连接异常" : snapshot ? "API 已连接" : "连接中"}
+            </span>
             {snapshot?.server.restart_required && <Badge variant="warning">重启后应用全部配置</Badge>}
           </div>
           <p>{snapshot ? "版本 " + snapshot.server.version + " · " + snapshot.server.config_revision : "连接本机管理 API"}</p>
@@ -93,7 +97,7 @@ export function OverviewPage({ snapshot, loading, error, onRefresh, onNavigate, 
               <div className="min-w-0">
                 <p className="metric-label">{metric.label}</p>
                 <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <strong className="metric-value">{metric.value}</strong>
+                  <strong className="metric-value metric-value-updated" key={metric.value}>{metric.value}</strong>
                   <span className={"metric-detail is-" + metric.tone}>{metric.detail}</span>
                 </div>
               </div>
@@ -194,7 +198,7 @@ function BotSummary({
           <span aria-hidden="true" />
         </div>
         {bots.map((bot, index) => (
-          <div className="bot-table-row" role="row" key={bot.id} style={{ animationDelay: 160 + index * 45 + "ms" }}>
+          <div className="bot-table-row" role="row" key={bot.id} style={{ animationDelay: Math.min(160 + index * 45, 220) + "ms" }}>
             <div className="bot-instance-cell" role="cell">
               <div className="bot-mark">
                 <Bot />

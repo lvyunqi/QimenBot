@@ -200,6 +200,7 @@ function App() {
           collapsed={collapsed}
           logoUrl={logoUrl}
           snapshot={snapshot}
+          error={error}
           onNavigate={(page) => setActive(page as Page)}
           onCollapse={() => setCollapsed((value) => !value)}
         />

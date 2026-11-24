@@ -78,6 +78,10 @@
   --topbar-height: 57px;
   --page-gap: 20px;
   --motion-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-fast-duration: 140ms;
+  --motion-standard-duration: 180ms;
+  --motion-enter-duration: 220ms;
 }
 
 .dark {
@@ -266,6 +270,14 @@ h3 {
   justify-content: center;
 }
 
+.nav-item-icon {
+  transition: color var(--motion-standard-duration) var(--motion-standard), transform var(--motion-enter-duration) var(--motion-enter);
+}
+
+.nav-item-active .nav-item-icon {
+  transform: scale(1.06);
+}
+
 .app-content {
   min-width: 0;
 }
@@ -295,7 +307,7 @@ h3 {
   background: var(--surface);
   padding: 0 9px;
   box-shadow: 0 1px 1px rgba(25, 26, 23, 0.025);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition: border-color var(--motion-fast-duration) var(--motion-standard), box-shadow var(--motion-fast-duration) var(--motion-standard);
 }
 
 .topbar-search:focus-within,
@@ -305,7 +317,7 @@ h3 {
 }
 
 .page-transition {
-  animation: page-in 230ms var(--motion-standard) both;
+  animation: page-in var(--motion-enter-duration) var(--motion-enter) both;
 }
 
 .page-shell {
@@ -366,7 +378,7 @@ h3 {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(25, 26, 23, 0.025);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--foreground) 4%, transparent), 0 1px 2px rgba(25, 26, 23, 0.025);
 }
 
 .metric-cell {
@@ -376,6 +388,7 @@ h3 {
   align-items: center;
   gap: 12px;
   padding: 16px;
+  transition: background-color var(--motion-standard-duration) var(--motion-standard);
 }
 
 .metric-cell.is-anchor {
@@ -400,6 +413,7 @@ h3 {
   border-radius: 7px;
   background: var(--muted);
   color: var(--muted-foreground);
+  transition: border-color var(--motion-standard-duration) var(--motion-standard), background-color var(--motion-standard-duration) var(--motion-standard), color var(--motion-standard-duration) var(--motion-standard), transform var(--motion-enter-duration) var(--motion-enter);
 }
 
 .metric-icon svg {
@@ -441,6 +455,11 @@ h3 {
   line-height: 1.2;
 }
 
+.metric-value-updated {
+  display: inline-block;
+  animation: metric-value-in var(--motion-enter-duration) var(--motion-enter) both;
+}
+
 .metric-detail {
   font-size: 9px;
   font-weight: 700;
@@ -476,7 +495,8 @@ h3 {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(25, 26, 23, 0.025);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--foreground) 4%, transparent), 0 1px 2px rgba(25, 26, 23, 0.025);
+  transition: border-color var(--motion-standard-duration) var(--motion-standard), box-shadow var(--motion-standard-duration) var(--motion-standard);
 }
 
 .panel-header {
@@ -525,6 +545,65 @@ h3 {
   font-weight: 750;
 }
 
+.live-indicator::before {
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  animation: signal-pulse 1.8s ease-in-out infinite;
+}
+
+.overview-api-state {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.overview-api-state > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.overview-api-state.is-online { border-color: color-mix(in srgb, var(--success) 24%, var(--border)); color: var(--success-foreground); }
+.overview-api-state.is-error { border-color: color-mix(in srgb, var(--destructive) 24%, var(--border)); color: var(--destructive); }
+.overview-api-state.is-pending { border-color: color-mix(in srgb, var(--warning) 24%, var(--border)); color: var(--warning-foreground); }
+
+.host-status-orb {
+  position: relative;
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+}
+
+.host-status-orb-pulse,
+.host-status-orb-core {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.host-status-orb-pulse { width: 100%; height: 100%; opacity: 0.24; animation: signal-pulse 1.8s ease-in-out infinite; }
+.host-status-orb-core { width: 6px; height: 6px; }
+.host-status-orb.is-error { color: var(--destructive); }
+.host-status-orb.is-pending { color: var(--warning); }
+.host-status-orb.is-error .host-status-orb-pulse { animation: none; opacity: 0.2; }
+
 .event-list {
   height: 255px;
   overflow: hidden;
@@ -538,7 +617,7 @@ h3 {
   gap: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   padding: 8px 13px;
-  animation: event-in 260ms var(--motion-standard) both;
+  animation: event-in var(--motion-enter-duration) var(--motion-enter) both;
 }
 
 .event-row:last-child {
@@ -601,8 +680,8 @@ h3 {
   min-height: 106px;
   grid-template-rows: 65px minmax(40px, auto);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  animation: row-in 320ms var(--motion-standard) both;
-  transition: background-color 140ms ease;
+  animation: row-in var(--motion-enter-duration) var(--motion-enter) both;
+  transition: background-color var(--motion-fast-duration) var(--motion-standard);
 }
 
 .bot-table-row:last-child {
@@ -5355,32 +5434,58 @@ h3 {
   grid-template-rows: 54px minmax(35px, auto);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .metric-cell:hover {
+    background: color-mix(in srgb, var(--primary) 4%, var(--surface));
+  }
+
+  .metric-cell:hover .metric-icon {
+    border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+    transform: translateY(-2px) rotate(-3deg);
+  }
+
+  .panel:hover {
+    border-color: color-mix(in srgb, var(--primary) 18%, var(--border));
+    box-shadow: 0 16px 34px color-mix(in srgb, var(--foreground) 7%, transparent), 0 1px 2px rgba(25, 26, 23, 0.035);
+  }
+}
+
 .animate-spin-slow {
   animation: spin 1.8s linear infinite;
 }
 
 .enter-item,
 .enter-panel {
-  animation: enter-up 420ms var(--motion-standard) both;
+  animation: enter-up var(--motion-enter-duration) var(--motion-enter) both;
 }
 
 .reduce-motion *,
 .reduce-motion *::before,
 .reduce-motion *::after {
   scroll-behavior: auto !important;
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.01ms !important;
+  animation: none !important;
+  transition-property: color, background-color, border-color, box-shadow, opacity !important;
+  transition-duration: 120ms !important;
 }
 
 @keyframes page-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; filter: blur(3px); transform: translateY(7px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes enter-up {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; filter: blur(2px); transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes metric-value-in {
+  from { opacity: 0.42; filter: blur(1px); transform: translateY(4px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@keyframes signal-pulse {
+  0%, 100% { opacity: 0.22; transform: scale(0.86); }
+  50% { opacity: 0.62; transform: scale(1.16); }
 }
 
 @keyframes event-in {
@@ -6152,8 +6257,8 @@ h3 {
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition-property: color, background-color, border-color, box-shadow, opacity !important;
+    transition-duration: 120ms !important;
   }
 }

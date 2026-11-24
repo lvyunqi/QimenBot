@@ -40,7 +40,7 @@ export function BotTable() {
         {bots.map((bot, index) => {
           const status = statusMeta[bot.status]
           return (
-            <div className="bot-table-row" role="row" key={bot.id} style={{ animationDelay: `${160 + index * 45}ms` }}>
+            <div className="bot-table-row" role="row" key={bot.id} style={{ animationDelay: `${Math.min(160 + index * 45, 220)}ms` }}>
               <div className="flex min-w-0 items-center gap-3" role="cell">
                 <div className="bot-mark">
                   <Bot />
