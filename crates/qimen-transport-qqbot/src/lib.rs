@@ -21,7 +21,7 @@ pub const OP_HELLO: i64 = 10;
 pub const OP_HEARTBEAT_ACK: i64 = 11;
 
 const TOKEN_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
-const PROD_BASE_URL: &str = "https://api.sgroup.qq.com";
+const PROD_BASE_URL: &str = "https://api.bot.qq.com";
 const SANDBOX_BASE_URL: &str = "https://sandbox.api.sgroup.qq.com";
 const MAX_UPLOAD_BYTES: u64 = 200_000_000;
 const MD5_10M_BYTES: usize = 10_002_432;
@@ -1923,7 +1923,7 @@ mod tests {
     #[test]
     fn config_selects_sandbox_base_url() {
         let mut config = QqBotOpenApiConfig::new("appid", "secret");
-        assert_eq!(config.base_url(), PROD_BASE_URL);
+        assert_eq!(config.base_url(), "https://api.bot.qq.com");
         config.sandbox = true;
         assert_eq!(config.base_url(), SANDBOX_BASE_URL);
     }
@@ -1946,7 +1946,7 @@ mod tests {
             msg_seq: Some(1),
             event_id: None,
             is_wakeup: Some(false),
-            markdown: Some(json!({ "content": "# Title" })),
+            markdown: Some(json!({ "content": "# Title", "force_verify_image_resource": true })),
             keyboard: Some(json!({ "id": "keyboard-template" })),
             ark: Some(json!({ "template_id": 37 })),
             embed: Some(json!({ "title": "embed" })),
@@ -1967,7 +1967,7 @@ mod tests {
                 "msg_id": "msg-1",
                 "msg_seq": 1,
                 "is_wakeup": false,
-                "markdown": { "content": "# Title" },
+                "markdown": { "content": "# Title", "force_verify_image_resource": true },
                 "keyboard": { "id": "keyboard-template" },
                 "ark": { "template_id": 37 },
                 "embed": { "title": "embed" },

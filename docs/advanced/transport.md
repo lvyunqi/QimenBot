@@ -232,7 +232,7 @@ sandbox = false
 intents = ["GROUP_AND_C2C_EVENT", "PUBLIC_GUILD_MESSAGES", "DIRECT_MESSAGE"]
 ```
 
-`appid` 和 `secret` 应通过环境变量注入。`sandbox = true` 时，OpenAPI 基地址改为官方沙箱地址；Gateway URL 仍由 `/gateway/bot` 动态获取。
+`appid` 和 `secret` 应通过环境变量注入。生产 OpenAPI 使用 `https://api.bot.qq.com`，`sandbox = true` 时使用 `https://sandbox.api.sgroup.qq.com`。Gateway URL 由 `/gateway/bot` 动态获取。见[官方 API 调用指南](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/api-call-guide.html)。
 
 ### 建立连接的顺序
 
@@ -395,11 +395,13 @@ QQ 群和 C2C 请求使用 `msg_type`：
 | `2` | Markdown | QQ 群、C2C |
 | `6` | Input notify | C2C |
 | `7` | 媒体 `file_info` | QQ 群、C2C |
-| `8` | Card | QQ 群 |
+| `8` | 图文卡片 | QQ 群、C2C |
 
 频道和 DMS 使用各自的消息结构，不发送 `msg_type`。编码器还会执行以下检查：
 
 - `msg_type = 2` 必须带 `markdown`，同时移除普通 `content`。
+- 群和 C2C 的 `markdown.force_verify_image_resource` 接受布尔值。设为 `true` 时，QQ 平台转存图片失败会拒绝发送。
+- QQ 群文本和直接填写内容的 Markdown 支持 `@全体成员`，适配器将 `at("all")` 消息段编码为 `<qqbot-at-everyone />`。机器人须是该群管理员，每个群每天最多发送一次。
 - `msg_type = 6` 必须带 `input_notify`。
 - `msg_type = 7` 必须带已上传的 `media` 或可上传 URL。
 - `msg_type = 8` 必须带 `card`。
