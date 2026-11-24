@@ -72,39 +72,31 @@ pub fn match_command_input(
         });
     }
 
-    if let Some(command_text) = strip_prefixed_command_text(message, policy.prefixes) {
+    let source_text = message.plain_text();
+    let trimmed = source_text.trim();
+    if let Some(command_text) = strip_configured_prefix(trimmed, policy.prefixes) {
         return Some(MatchedCommandInput {
             trigger: CommandTrigger::Prefix,
-            command_text,
-            source_text: message.plain_text(),
+            command_text: command_text.to_owned(),
+            source_text,
         });
     }
 
-    if event.is_group() && policy.group_bare_enabled {
-        let source_text = message.plain_text();
-        let command_text = source_text.trim().to_string();
-        if !command_text.is_empty() {
-            return Some(MatchedCommandInput {
-                trigger: CommandTrigger::Group,
-                command_text,
-                source_text,
-            });
-        }
+    if trimmed.is_empty() {
+        return None;
     }
-
-    if event.is_private() && policy.private_bare_enabled {
-        let source_text = message.plain_text();
-        let command_text = source_text.trim().to_string();
-        if !command_text.is_empty() {
-            return Some(MatchedCommandInput {
-                trigger: CommandTrigger::Private,
-                command_text,
-                source_text,
-            });
-        }
-    }
-
-    None
+    let trigger = if event.is_group() && policy.group_bare_enabled {
+        CommandTrigger::Group
+    } else if event.is_private() && policy.private_bare_enabled {
+        CommandTrigger::Private
+    } else {
+        return None;
+    };
+    Some(MatchedCommandInput {
+        trigger,
+        command_text: trimmed.to_owned(),
+        source_text,
+    })
 }
 
 pub fn strip_command_name_and_args(input: &str) -> Option<(&str, Vec<String>)> {
@@ -119,11 +111,6 @@ pub fn strip_command_name_and_args(input: &str) -> Option<(&str, Vec<String>)> {
     Some((name, args))
 }
 
-fn strip_prefixed_command_text(message: &Message, prefixes: &[String]) -> Option<String> {
-    let text = message.plain_text();
-    strip_configured_prefix(text.trim(), prefixes).map(str::to_string)
-}
-
 fn strip_mention_command_text(
     event: &NormalizedEvent,
     message: &Message,
@@ -134,11 +121,7 @@ fn strip_mention_command_text(
     }
     let self_id = event.self_id_str();
     let remaining = strip_leading_self_mentions(&message.segments, self_id.as_deref())?;
-    let text = remaining
-        .iter()
-        .filter_map(segment_text)
-        .collect::<Vec<_>>()
-        .join("");
+    let text: String = remaining.iter().filter_map(Segment::get_text).collect();
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
@@ -149,11 +132,7 @@ fn strip_mention_command_text(
 
 fn strip_reply_command_text(message: &Message, prefixes: &[String]) -> Option<String> {
     let remaining = strip_leading_reply_segments(&message.segments)?;
-    let text = remaining
-        .iter()
-        .filter_map(segment_text)
-        .collect::<Vec<_>>()
-        .join("");
+    let text: String = remaining.iter().filter_map(Segment::get_text).collect();
     let trimmed = text.trim();
     if trimmed.is_empty() {
         None
@@ -249,10 +228,6 @@ fn is_whitespace_text_segment(segment: &Segment) -> bool {
     segment
         .get_text()
         .is_some_and(|text| text.trim().is_empty())
-}
-
-fn segment_text(segment: &Segment) -> Option<&str> {
-    segment.get_text()
 }
 
 #[cfg(test)]

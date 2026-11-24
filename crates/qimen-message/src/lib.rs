@@ -145,21 +145,7 @@ impl Message {
     }
 
     pub fn plain_text(&self) -> String {
-        self.segments
-            .iter()
-            .filter_map(|segment| {
-                if segment.kind == "text" {
-                    segment
-                        .data
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("")
+        self.segments.iter().filter_map(Segment::get_text).collect()
     }
 
     /// Check if message contains an @all segment

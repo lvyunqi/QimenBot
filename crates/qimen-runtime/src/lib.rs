@@ -39,7 +39,7 @@ use qimen_host_types::{
     DynamicCommandDescriptor, DynamicInterceptorDescriptor, DynamicPluginReportEntry,
     HostPluginReport, MAX_PLUGIN_PRIORITY, default_plugin_priority, load_plugin_state,
 };
-use qimen_message::Message;
+use qimen_message::{Message, Segment};
 use qimen_plugin_api::{
     BuiltinCommandAction, CommandPlugin, OwnedTaskFuture, PluginBundle, RateLimiterConfig,
     RuntimeBotContext, SystemPlugin, TaskHandle,
@@ -629,8 +629,8 @@ pub struct Runtime {
     command_config: std::sync::RwLock<CommandConfig>,
     /// Immutable dispatcher snapshots let running Bot connections observe
     /// plugin changes without tearing down and rebuilding every transport.
-    command_dispatcher: std::sync::RwLock<Option<CommandDispatcher>>,
-    system_dispatcher: std::sync::RwLock<Option<OneBotSystemDispatcher>>,
+    command_dispatcher: std::sync::RwLock<Option<Arc<CommandDispatcher>>>,
+    system_dispatcher: std::sync::RwLock<Option<Arc<OneBotSystemDispatcher>>>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
     plugin_config_dir: Option<String>,
@@ -901,18 +901,18 @@ impl Runtime {
         if let Ok(dispatcher) = self.build_command_dispatcher()
             && let Ok(mut snapshot) = self.command_dispatcher.write()
         {
-            *snapshot = Some(dispatcher);
+            *snapshot = Some(Arc::new(dispatcher));
         }
         if let Ok(mut snapshot) = self.system_dispatcher.write() {
-            *snapshot = Some(self.build_system_dispatcher());
+            *snapshot = Some(Arc::new(self.build_system_dispatcher()));
         }
     }
 
-    fn current_command_dispatcher(&self) -> Option<CommandDispatcher> {
+    fn current_command_dispatcher(&self) -> Option<Arc<CommandDispatcher>> {
         self.command_dispatcher.read().ok()?.clone()
     }
 
-    fn current_system_dispatcher(&self) -> Option<OneBotSystemDispatcher> {
+    fn current_system_dispatcher(&self) -> Option<Arc<OneBotSystemDispatcher>> {
         self.system_dispatcher.read().ok()?.clone()
     }
 
@@ -1479,8 +1479,13 @@ impl Runtime {
             }
 
             self.set_bot_connection_state(&bot.id, BotConnectionState::Starting, None);
-            let system_dispatcher = self.build_system_dispatcher();
-            let command_dispatcher = self.build_command_dispatcher()?;
+            let system_dispatcher = self
+                .current_system_dispatcher()
+                .unwrap_or_else(|| Arc::new(self.build_system_dispatcher()));
+            let command_dispatcher = match self.current_command_dispatcher() {
+                Some(dispatcher) => dispatcher,
+                None => Arc::new(self.build_command_dispatcher()?),
+            };
             self.update_bot_status(&bot.id, |status| {
                 status.applied_generation = desired.generation;
             });
@@ -1541,8 +1546,8 @@ impl Runtime {
         &self,
         bot: &BotRuntimeInfo,
         limiter: &TokenBucketLimiter,
-        system_dispatcher: OneBotSystemDispatcher,
-        command_dispatcher: CommandDispatcher,
+        system_dispatcher: Arc<OneBotSystemDispatcher>,
+        command_dispatcher: Arc<CommandDispatcher>,
     ) -> Result<()> {
         if matches!(bot.protocol, ProtocolId::OneBot11)
             && matches!(bot.transport, TransportMode::WsForward)
@@ -2659,7 +2664,7 @@ impl Runtime {
         };
         let current_system_dispatcher = self.current_system_dispatcher();
         let system_dispatcher = current_system_dispatcher
-            .as_ref()
+            .as_deref()
             .unwrap_or(system_dispatcher);
         if let Some(signal) = system_dispatcher
             .dispatch(Self::build_system_event_context(
@@ -2798,11 +2803,6 @@ impl Runtime {
             "received QQ official event"
         );
 
-        let current_system_dispatcher = self.current_system_dispatcher();
-        let system_dispatcher = current_system_dispatcher
-            .as_ref()
-            .unwrap_or(system_dispatcher);
-
         if let Some(interaction_id) = qqbot_interaction_ack_target(&event)
             && let Err(err) = api_client.acknowledge_interaction(interaction_id, 0).await
         {
@@ -2815,6 +2815,10 @@ impl Runtime {
         }
 
         if !matches!(event.kind, EventKind::Message) {
+            let current_system_dispatcher = self.current_system_dispatcher();
+            let system_dispatcher = current_system_dispatcher
+                .as_deref()
+                .unwrap_or(system_dispatcher);
             self.handle_qqbot_system_event(bot, system_dispatcher, &runtime_ctx, event)
                 .await?;
             return Ok(SessionSignal::EventHandled);
@@ -2907,10 +2911,6 @@ impl Runtime {
     ) -> Result<SessionSignal> {
         let mut event = event;
         attach_qimen_context(&mut event.raw_json, bot);
-        let current_command_dispatcher = self.current_command_dispatcher();
-        let command_dispatcher = current_command_dispatcher
-            .as_ref()
-            .unwrap_or(command_dispatcher);
         if let Some(message_id) = event.message_id_str() {
             let dedup_key = runtime_ctx.dedup_key(&event, &message_id);
             if !self.dedup.check_and_mark(&dedup_key).await {
@@ -2929,7 +2929,12 @@ impl Runtime {
             return Ok(SessionSignal::EventHandled);
         };
 
-        if message.plain_text().trim().is_empty() {
+        if !message
+            .segments
+            .iter()
+            .filter_map(Segment::get_text)
+            .any(|text| !text.trim().is_empty())
+        {
             return Ok(SessionSignal::EventHandled);
         }
 
@@ -2961,6 +2966,10 @@ impl Runtime {
         }
 
         let permission = PermissionResolver::resolve(bot, &event);
+        let current_command_dispatcher = self.current_command_dispatcher();
+        let command_dispatcher = current_command_dispatcher
+            .as_deref()
+            .unwrap_or(command_dispatcher);
         let command_result = command_dispatcher
             .dispatch(&bot.id, &event, runtime_ctx)
             .with_roles(permission.is_admin, permission.is_owner)

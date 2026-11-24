@@ -1,4 +1,4 @@
-use qimen_command_registry::CommandRegistry;
+use qimen_command_registry::{CommandRegistry, RegisteredCommandDefinition};
 use qimen_config::CommandConfig;
 use qimen_host_types::DynamicCommandDescriptor;
 use qimen_message::Message;
@@ -83,21 +83,18 @@ impl CommandDispatcher {
         &self.registry
     }
 
-    pub fn describe_commands(&self) -> Vec<(CommandDefinition, String)> {
+    pub fn describe_commands(&self) -> Vec<(RegisteredCommandDefinition<'_>, String)> {
         let mut effective_entries = BTreeSet::new();
         let mut descriptions = Vec::new();
 
         for (definition, _) in self.registry.describe() {
-            for key in std::iter::once(definition.name).chain(definition.aliases.iter().copied()) {
+            for key in definition.keys() {
                 let Some(entry) = self.registry.match_command(key) else {
                     continue;
                 };
-                let identity = (
-                    entry.source_label.clone(),
-                    entry.definition.name.to_string(),
-                );
+                let identity = (entry.source_label.as_str(), entry.name());
                 if effective_entries.insert(identity) {
-                    descriptions.push((entry.definition.clone(), entry.source_label.clone()));
+                    descriptions.push((entry.definition(), entry.source_label.clone()));
                 }
             }
         }
@@ -106,7 +103,7 @@ impl CommandDispatcher {
     }
 
     pub fn render_help(&self, page: usize) -> String {
-        render_help_page(
+        render_registered_help_page(
             &self.describe_commands(),
             page,
             self.command_config.help_page_size,
@@ -188,7 +185,7 @@ impl<'a> CommandDispatch<'a> {
                 new_args.extend(parsed.args);
                 let new_parsed = ParsedCommandInput {
                     trigger: parsed.trigger,
-                    name: entry.definition.name.to_string(),
+                    name: entry.name().to_string(),
                     args: new_args,
                     source_text: parsed.source_text,
                 };
@@ -198,30 +195,30 @@ impl<'a> CommandDispatch<'a> {
             };
 
         if let Some(entry) = matched_entry {
-            if !role_allowed(
-                &entry.definition.required_role,
-                self.is_admin,
-                self.is_owner,
-            ) {
+            let (required_role, scope) = entry.role_and_scope();
+            if !role_allowed(required_role, self.is_admin, self.is_owner) {
                 return Some(CommandDispatchSignal::Reply(Message::text(
                     "permission denied for this command",
                 )));
             }
 
-            match &entry.definition.scope {
+            match scope {
                 CommandScope::Group if !self.event.is_group() => return None,
                 CommandScope::Private if !self.event.is_private() => return None,
                 _ => {}
             }
 
-            if let Some(filter) = &entry.definition.filter {
+            let static_definition = entry.static_definition();
+            if let Some(filter) =
+                static_definition.and_then(|definition| definition.filter.as_ref())
+            {
                 let result = crate::message_filter::filter_matches(filter, self.event);
                 if !result.matched {
                     return None;
                 }
             }
 
-            if let Some(plugin) = &entry.plugin {
+            if let (Some(plugin), Some(definition)) = (&entry.plugin, static_definition) {
                 // Check plugin ACL before dispatching to static plugin
                 if let Some(acl) = self.plugin_acl {
                     let plugin_id = plugin.metadata().id;
@@ -234,7 +231,7 @@ impl<'a> CommandDispatch<'a> {
                 }
 
                 let invocation = CommandInvocation {
-                    definition: entry.definition.clone(),
+                    definition: definition.clone(),
                     args: parsed.args.clone(),
                     source_text: parsed.source_text.clone(),
                 };
@@ -271,7 +268,7 @@ impl<'a> CommandDispatch<'a> {
                 }
             }
 
-            if let Some(descriptor) = &entry.dynamic_descriptor {
+            if let Some(descriptor) = entry.dynamic_descriptor() {
                 tracing::info!(
                     bot_id = %self.bot_id,
                     plugin = %descriptor.plugin_id,
@@ -280,12 +277,12 @@ impl<'a> CommandDispatch<'a> {
                 );
                 return Some(CommandDispatchSignal::DynamicCommand {
                     descriptor: descriptor.clone(),
-                    args: parsed.args.clone(),
+                    args: parsed.args,
                 });
             }
 
             if entry.source_label == "builtin" {
-                return dispatch_builtin_action(entry.definition.name, &parsed.args);
+                return dispatch_builtin_action(entry.name(), &parsed.args);
             }
         }
 
@@ -421,10 +418,27 @@ pub fn render_help_page(
     page_size: usize,
     prefixes: &[String],
 ) -> String {
+    let entries = registry_entries
+        .iter()
+        .map(|(definition, source)| {
+            (
+                RegisteredCommandDefinition::from(definition),
+                source.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    render_registered_help_page(&entries, requested_page, page_size, prefixes)
+}
+
+fn render_registered_help_page(
+    registry_entries: &[(RegisteredCommandDefinition<'_>, String)],
+    requested_page: usize,
+    page_size: usize,
+    prefixes: &[String],
+) -> String {
     let mut entries = registry_entries
         .iter()
         .filter(|(definition, _)| !definition.hidden)
-        .cloned()
         .collect::<Vec<_>>();
     entries.sort_by(
         |(left_definition, left_source), (right_definition, right_source)| {
@@ -462,11 +476,14 @@ pub fn render_help_page(
     lines.join("\n")
 }
 
-fn render_command_groups(entries: &[(CommandDefinition, String)], prefix: &str) -> Vec<String> {
-    let mut grouped = BTreeMap::<String, Vec<(&CommandDefinition, &String)>>::new();
-    for (definition, source) in entries.iter().filter(|(definition, _)| !definition.hidden) {
+fn render_command_groups(
+    entries: &[&(RegisteredCommandDefinition<'_>, String)],
+    prefix: &str,
+) -> Vec<String> {
+    let mut grouped = BTreeMap::<_, Vec<_>>::new();
+    for (definition, source) in entries.iter().copied() {
         grouped
-            .entry(definition.category.to_string())
+            .entry(definition.category)
             .or_default()
             .push((definition, source));
     }
@@ -485,7 +502,7 @@ fn render_command_groups(entries: &[(CommandDefinition, String)], prefix: &str) 
                 [example] => (*example).to_string(),
                 [example, rest @ ..] => format!("{example} (+{} more)", rest.len()),
             };
-            let scope = match &definition.scope {
+            let scope = match definition.scope {
                 CommandScope::Group => "group",
                 CommandScope::Private => "private",
                 _ => "all",
@@ -496,7 +513,7 @@ fn render_command_groups(entries: &[(CommandDefinition, String)], prefix: &str) 
                 definition.name,
                 definition.description,
                 render_source(source),
-                render_command_role(&definition.required_role),
+                render_command_role(definition.required_role),
                 scope,
                 aliases,
                 examples
@@ -539,6 +556,7 @@ mod tests {
     use async_trait::async_trait;
     use qimen_config::CommandConfig;
     use qimen_error::{QimenError, Result};
+    use qimen_host_types::DynamicCommandDescriptor;
     use qimen_message::Message;
     use qimen_plugin_api::{
         BuiltinCommandAction, CommandDefinition, CommandInvocation, CommandPlugin,
@@ -874,6 +892,48 @@ mod tests {
         assert_eq!(plugin_descriptions.len(), 1);
         assert_eq!(plugin_descriptions[0].0.name, "primary");
         assert_eq!(plugin_descriptions[0].1, "static-plugin:alias-winner");
+    }
+
+    #[tokio::test]
+    async fn dynamic_alias_routes_and_updates_with_its_descriptor() {
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
+        let mut descriptor = DynamicCommandDescriptor {
+            plugin_id: "dynamic-sample".to_owned(),
+            command_name: "search".to_owned(),
+            command_description: "Search once".to_owned(),
+            callback_symbol: "search_callback".to_owned(),
+            library_path: "example.so".to_owned(),
+            aliases: vec!["查询".to_owned()],
+            category: String::new(),
+            required_role: "admin".to_owned(),
+            scope: "private".to_owned(),
+        };
+        dispatcher.set_dynamic_command_descriptors(vec![descriptor.clone()]);
+
+        let event = sample_event("/查询小明 other");
+        let signal = dispatcher
+            .dispatch("qq-main", &event, &TEST_RUNTIME)
+            .with_roles(true, false)
+            .execute()
+            .await;
+        let Some(CommandDispatchSignal::DynamicCommand {
+            descriptor: matched,
+            args,
+        }) = signal
+        else {
+            panic!("expected the dynamic alias to match");
+        };
+        assert_eq!(matched.command_name, "search");
+        assert_eq!(args, ["小明", "other"]);
+        let help = dispatcher.render_help(1);
+        assert!(help.contains("<dynamic>"));
+        assert!(help.contains("aliases: 查询"));
+
+        descriptor.aliases = vec!["搜寻".to_owned()];
+        dispatcher.set_dynamic_command_descriptors(vec![descriptor]);
+        assert!(dispatcher.registry().match_command("查询").is_none());
+        assert!(dispatcher.registry().match_command("搜寻").is_some());
+        assert!(dispatcher.render_help(1).contains("aliases: 搜寻"));
     }
 
     fn sample_event(text: &str) -> NormalizedEvent {
