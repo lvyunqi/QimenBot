@@ -29,6 +29,7 @@ interface SidebarProps {
   collapsed: boolean
   logoUrl: string
   snapshot?: AdminSnapshot
+  error?: string | null
   onNavigate: (id: string) => void
   onCollapse: () => void
 }
@@ -51,14 +52,14 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group relative flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-sm font-semibold outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring",
+        "group relative flex h-10 w-full items-center gap-3 rounded-md px-2.5 text-sm font-semibold outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 focus-visible:ring-ring",
         active
-          ? "bg-sidebar-active text-sidebar-active-foreground"
+          ? "nav-item-active bg-sidebar-active text-sidebar-active-foreground"
           : "text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-foreground",
         collapsed && "justify-center px-0",
       )}
     >
-      <Icon className={cn("size-[17px] shrink-0", active && "text-primary")} strokeWidth={1.9} />
+      <Icon className={cn("nav-item-icon size-[17px] shrink-0", active && "text-primary")} strokeWidth={1.9} />
       {!collapsed && <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>}
       {!collapsed && item.count && (
         <span className="min-w-5 rounded-full bg-sidebar-count px-1.5 py-0.5 text-center font-mono text-[10px] font-semibold text-sidebar-muted">
@@ -78,7 +79,8 @@ function NavButton({
   )
 }
 
-export function Sidebar({ active, collapsed, logoUrl, snapshot, onNavigate, onCollapse }: SidebarProps) {
+export function Sidebar({ active, collapsed, logoUrl, snapshot, error, onNavigate, onCollapse }: SidebarProps) {
+  const hostStatus = error ? "is-error" : snapshot ? "is-online" : "is-pending"
   const primaryNav: NavItem[] = [
     { id: "overview", label: "总览", icon: LayoutDashboard },
     { id: "bots", label: "机器人", icon: Bot, count: snapshot ? String(snapshot.metrics.configured_bots) : undefined },
@@ -106,7 +108,7 @@ export function Sidebar({ active, collapsed, logoUrl, snapshot, onNavigate, onCo
 
       <nav className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 py-4" aria-label="主导航">
         <div className="space-y-1">
-          {!collapsed && <p className="mb-2 px-2.5 text-[10px] font-bold uppercase text-sidebar-label">Workspace</p>}
+          {!collapsed && <p className="mb-2 px-2.5 text-[10px] font-bold text-sidebar-label">工作台</p>}
           {primaryNav.map((item) => (
             <NavButton
               key={item.id}
@@ -118,7 +120,7 @@ export function Sidebar({ active, collapsed, logoUrl, snapshot, onNavigate, onCo
           ))}
         </div>
         <div className="space-y-1">
-          {!collapsed && <p className="mb-2 px-2.5 text-[10px] font-bold uppercase text-sidebar-label">System</p>}
+          {!collapsed && <p className="mb-2 px-2.5 text-[10px] font-bold text-sidebar-label">系统管理</p>}
           {secondaryNav.map((item) => (
             <NavButton
               key={item.id}
@@ -133,15 +135,15 @@ export function Sidebar({ active, collapsed, logoUrl, snapshot, onNavigate, onCo
 
       <div className="border-t border-sidebar-border p-2">
         <div className={cn("mb-2 flex items-center gap-2 rounded-md bg-sidebar-inset p-2", collapsed && "justify-center")}>
-          <span className="relative flex size-2.5 shrink-0">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-35" />
-            <span className="relative inline-flex size-2.5 rounded-full bg-success" />
+          <span className={cn("host-status-orb", hostStatus)} aria-hidden="true">
+            <span className="host-status-orb-pulse" />
+            <span className="host-status-orb-core" />
           </span>
           {!collapsed && (
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-sidebar-foreground">{snapshot ? "宿主运行中" : "连接中"}</div>
+              <div className="text-xs font-bold text-sidebar-foreground">{error ? "API 连接异常" : snapshot ? "宿主运行中" : "连接中"}</div>
               <div className="font-mono text-[10px] text-sidebar-muted">
-                {snapshot ? snapshot.server.version + " · " + formatUptime(snapshot.server.uptime_secs) : "waiting"}
+                {snapshot ? snapshot.server.version + " · " + formatUptime(snapshot.server.uptime_secs) : "CONTROL PLANE"}
               </div>
             </div>
           )}
