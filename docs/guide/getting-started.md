@@ -47,13 +47,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/lvyunqi/QimenBot/main/deploy
 
 脚本会询问 AppID 和 Secret，自动生成管理 Token，并创建配置、插件和日志目录。NAS、Portainer、OneBot 以及自定义数据盘的步骤见[Docker Compose 部署](/guide/deployment#手动使用-docker-compose)。
 
-### 方式二：下载预编译版本（推荐新手）
+### 方式二：Release 二进制（推荐）
 
-前往 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载对应平台的压缩包，解压即可运行。
+前往 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases) 下载对应平台的完整压缩包并解压。使用预编译版本不需要安装 Rust 或 Node.js。
 
 支持平台：Linux x86_64/ARM64、macOS x86_64/ARM64、Windows x86_64。
 
-下载后保留完整目录。普通用户只运行根目录的 `qimenbot`，不要单独运行 `runtime/qimenbotd`。然后跳到[修改配置](#修改配置)继续。
+二进制包内的 `qimenbot` 负责启动和管理核心程序。按[启动步骤](#启动)运行它，不要直接启动 `runtime/qimenbotd`。下载时遇到 GitHub 连接问题，可按[部署指南中的说明](/guide/deployment#github-下载代理)配置下载代理。
 
 ### 方式三：从源码编译
 
@@ -130,7 +130,7 @@ owners    = ["管理员QQ号"]           # ← 具有最高权限的 QQ 号
 
 ## 启动
 
-下载预编译版本时启动 QimenBot：
+Release 用户用包内的启动器运行 QimenBot：
 
 ```bash
 # Linux / macOS

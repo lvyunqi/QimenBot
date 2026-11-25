@@ -66,7 +66,7 @@ QimenBot 是一个用 Rust 编写的模块化、可扩展的聊天机器人框�
 | 方式 | 适合场景 | 额外要求 |
 | --- | --- | --- |
 | Docker Compose | Linux 服务器、NAS、Portainer | Docker Engine、Compose v2 |
-| Release 二进制 | Windows、macOS、普通 Linux 主机 | 无需 Rust 和 Node.js |
+| Release 二进制 | Windows、macOS、普通 Linux 主机 | 无需 Rust 和 Node.js，使用 `qimenbot` 启动器管理核心程序 |
 | 源码构建 | 修改框架、开发静态插件 | Rust 1.89+、Node.js 22 |
 
 接入官方 QQ Bot 不需要 OneBot 实现端。凭据、事件权限和群内 @ 测试见[官方 QQ Bot 接入](docs/guide/qq-official-quickstart.md)。接入 OneBot 11 时，需要先准备 [Lagrange.OneBot](https://github.com/LagrangeDev/Lagrange.Core)、[NapCat](https://github.com/NapNeko/NapCatQQ) 等实现。
@@ -106,7 +106,7 @@ chmod +x qimenbot
 ./qimenbot run
 ```
 
-Windows PowerShell 使用 `.\qimenbot.exe run`。生产环境只注册 `qimenbot`，不要单独启动 `runtime/qimenbotd`。
+Windows PowerShell 使用 `.\qimenbot.exe run`。安装和在线更新代理配置见[部署指南](docs/guide/deployment.md)。服务只需运行 `qimenbot`，不要单独启动 `runtime/qimenbotd`。
 
 > 需要动态插件时，Linux 必须下载与 CPU 对应的 `*-unknown-linux-gnu` 包，或使用 Docker。静态链接的 `x86_64-unknown-linux-musl` 包不能加载 `.so` 动态插件。
 
