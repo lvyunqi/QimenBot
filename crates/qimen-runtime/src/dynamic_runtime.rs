@@ -162,13 +162,14 @@ impl DynamicPluginRuntime {
         &mut self,
         handle: &LibraryHandle,
         library_path: &str,
+        plugin_id: &str,
         hub: ProactiveSendHub,
     ) -> Result<()> {
         if self.host_api_bindings.contains_key(library_path) {
             return Ok(());
         }
 
-        let mut context = Box::new(ProactiveHostContext::new(hub));
+        let mut context = Box::new(ProactiveHostContext::new(hub, plugin_id));
         let api = HostApiV1 {
             abi_version: HOST_API_V1_ABI_VERSION,
             context: context.as_context_ptr(),

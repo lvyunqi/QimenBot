@@ -1945,6 +1945,21 @@ h3 {
   background: color-mix(in srgb, var(--muted) 28%, var(--surface));
 }
 
+.bot-plugin-mode {
+  display: grid;
+  gap: 7px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: 10px;
+}
+
+.bot-plugin-mode small {
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
 .intent-picker-summary {
   display: flex;
   min-width: 0;

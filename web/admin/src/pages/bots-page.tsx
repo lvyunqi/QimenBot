@@ -3,7 +3,7 @@ import type React from "react"
 import { Check, Plus, RefreshCw, Save, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, type BotView, type ConfigView } from "@/lib/api"
+import { api, type BotView, type ConfigView, type PluginView } from "@/lib/api"
 import { botToMutation, defaultBot, formatNumber, listToText, relativeTime, textToList } from "@/lib/format"
 import { botStatusLabel, botStatusVariant } from "@/lib/status"
 import { Badge } from "@/components/ui/badge"
@@ -75,6 +75,7 @@ const builtinModuleLabels: Record<string, string> = {
 
 export function BotsPage({ snapshotBots, onRefreshSnapshot }: BotsPageProps) {
   const [config, setConfig] = useState<ConfigView | null>(null)
+  const [pluginCatalog, setPluginCatalog] = useState<PluginView[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<BotView | null>(null)
   const [accessToken, setAccessToken] = useState("")
@@ -82,7 +83,15 @@ export function BotsPage({ snapshotBots, onRefreshSnapshot }: BotsPageProps) {
   const [busy, setBusy] = useState(false)
 
   const load = async () => {
-    setConfig(await api.config())
+    const [nextConfig, nextPlugins] = await Promise.all([
+      api.config(),
+      api.plugins().catch((error) => {
+        toast.warning(error instanceof Error ? "插件列表暂不可用：" + error.message : "插件列表暂不可用")
+        return []
+      }),
+    ])
+    setConfig(nextConfig)
+    setPluginCatalog(nextPlugins)
   }
 
   useEffect(() => {
@@ -91,13 +100,22 @@ export function BotsPage({ snapshotBots, onRefreshSnapshot }: BotsPageProps) {
 
   const bots = useMemo(() => {
     const status = new Map(snapshotBots.map((bot) => [bot.id, bot]))
-    return (config?.bots ?? snapshotBots).map((bot) => ({ ...bot, ...(status.get(bot.id) ?? {}) }))
+    return (config?.bots ?? snapshotBots).map((bot) => ({
+      ...bot,
+      ...(status.get(bot.id) ?? {}),
+      enabled_plugins: bot.enabled_plugins,
+    }))
   }, [config?.bots, snapshotBots])
 
   const availableModules = useMemo(() => {
     if (!config) return []
     return Array.from(new Set([...config.general.builtin_modules, ...config.general.plugin_modules]))
   }, [config])
+
+  const availablePlugins = useMemo(
+    () => pluginCatalog.filter((plugin) => plugin.kind === "static" || plugin.kind === "dynamic"),
+    [pluginCatalog],
+  )
 
   const selectBot = (bot: BotView) => {
     setSelectedId(bot.id)
@@ -259,6 +277,7 @@ export function BotsPage({ snapshotBots, onRefreshSnapshot }: BotsPageProps) {
               onAction={(command) => void action(draft, command)}
               actionDisabled={busy || !selectedId}
               availableModules={availableModules}
+              availablePlugins={availablePlugins}
             />
           ) : (
             <div className="empty-panel">从左侧选择机器人，或新建一个配置。</div>
@@ -279,6 +298,7 @@ function BotEditor({
   onAction,
   actionDisabled,
   availableModules,
+  availablePlugins,
 }: {
   bot: BotView
   setBot: (bot: BotView) => void
@@ -289,6 +309,7 @@ function BotEditor({
   onAction: (action: "start" | "stop" | "reconnect") => void
   actionDisabled: boolean
   availableModules: string[]
+  availablePlugins: PluginView[]
 }) {
   const patch = (next: Partial<BotView>) => setBot({ ...bot, ...next })
 
@@ -363,6 +384,18 @@ function BotEditor({
           options={availableModules}
           values={bot.enabled_modules}
           onChange={(enabled_modules) => patch({ enabled_modules })}
+        />
+      </Field>
+      <Field
+        label="Bot 插件权限"
+        hint="插件须在宿主全局启用。保存后重启宿主生效。"
+        wide
+        controlGroup
+      >
+        <BotPluginSelector
+          options={availablePlugins}
+          values={bot.enabled_plugins ?? null}
+          onChange={(enabled_plugins) => patch({ enabled_plugins })}
         />
       </Field>
 
@@ -510,6 +543,79 @@ function BotModuleSelector({
         {options.length === 0 && <span className="module-picker-empty">宿主配置中还没有可选模块</span>}
       </div>
       <UnknownSelections values={unknown} onRemove={(value) => onChange(values.filter((item) => item !== value))} />
+    </div>
+  )
+}
+
+function BotPluginSelector({
+  options,
+  values,
+  onChange,
+}: {
+  options: PluginView[]
+  values: string[] | null
+  onChange: (values: string[] | null) => void
+}) {
+  const selectedValues = values ?? []
+  const unknown = selectedValues.filter((value) => !options.some((option) => option.id === value))
+
+  const toggle = (id: string) => {
+    onChange(
+      selectedValues.includes(id)
+        ? selectedValues.filter((value) => value !== id)
+        : [...selectedValues, id],
+    )
+  }
+
+  return (
+    <div className="bot-module-picker">
+      <div className="bot-plugin-mode">
+        <Select aria-label="Bot 插件权限模式" value={values === null ? "inherit" : "custom"} onChange={(event) => onChange(event.target.value === "inherit" ? null : [])}>
+          <option value="inherit">继承全局已启用插件</option>
+          <option value="custom">为此 Bot 自定义</option>
+        </Select>
+        <small>
+          {values === null
+            ? "此 Bot 会使用宿主全局启用的插件，包括以后启用的插件。"
+            : "勾选此 Bot 可以使用的插件。留空时禁用全部插件。"}
+        </small>
+      </div>
+      {values !== null && (
+        <>
+          <div className="module-picker-summary">
+            <span><strong>{selectedValues.length}</strong> 个已允许</span>
+          </div>
+          <div className="module-choice-grid" role="group" aria-label="Bot 可用插件">
+            {options.map((plugin) => {
+              const selected = selectedValues.includes(plugin.id)
+              const available = plugin.available !== false
+              return (
+                <button
+                  type="button"
+                  key={plugin.kind + plugin.id}
+                  className={(selected ? "is-selected " : "") + (!available ? "is-unavailable" : "")}
+                  aria-pressed={selected}
+                  onClick={() => toggle(plugin.id)}
+                >
+                  <span className="module-choice-mark">{selected && <Check />}</span>
+                  <span className="module-choice-copy">
+                    <span>
+                      <strong>{plugin.name || plugin.id}</strong>
+                      <Badge variant={!available ? "warning" : plugin.enabled ? "success" : "neutral"}>
+                        {!available ? "当前不可用" : plugin.enabled ? "全局已启用" : "全局未启用"}
+                      </Badge>
+                    </span>
+                    <code>{plugin.id}</code>
+                    <small>{plugin.description || (plugin.kind === "dynamic" ? "动态插件" : "静态插件模块")}</small>
+                  </span>
+                </button>
+              )
+            })}
+            {options.length === 0 && <div className="module-choice-empty">当前没有发现静态或动态插件</div>}
+          </div>
+          <UnknownSelections values={unknown} onRemove={(value) => onChange(selectedValues.filter((item) => item !== value))} />
+        </>
+      )}
     </div>
   )
 }

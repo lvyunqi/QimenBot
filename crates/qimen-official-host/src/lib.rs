@@ -77,10 +77,11 @@ pub async fn run_official_host(config_path: &str) -> Result<()> {
     print_host_startup_report(&report);
     modules.load_all().await?;
 
-    let plugins = modules.collect_plugins();
+    let plugins = modules.collect_plugin_registrations();
 
     let runtime = Arc::new(
-        Runtime::from_config_with_plugins(&config, plugins).with_host_plugin_report(report),
+        Runtime::from_config_with_plugin_registrations(&config, plugins)
+            .with_host_plugin_report(report),
     );
     tracing::info!(bots = runtime.bots().len(), "official host initialized");
     let update_control = managed_update_dir().map(|update_dir| {

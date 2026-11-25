@@ -271,12 +271,18 @@ enabled = true                 # 是否启用（false 则跳过）
 # 留空 = 使用 builtin_modules 全部
 enabled_modules = ["command", "admin", "scheduler"]
 
+# 可选 Bot 级插件白名单
+# 留空（不配置）时继承全局启用状态；[] 表示此 Bot 不触发插件
+# enabled_plugins = ["example-basic"]
+
 # 所有者 ID 列表（最高权限：重启、插件管理、所有命令）
 owners = ["123456"]
 
 # 管理员 ID 列表（管理权限：禁言、踢人等 role = "admin" 的命令）
 admins = ["789012"]
 ```
+
+`enabled_plugins` 可按 Bot 隔离插件的消息、系统事件、拦截器和动态主动发送能力。静态插件填写 Module ID，动态插件填写插件 ID，且插件仍需在宿主全局加载或启用。
 
 > `[official_host].builtin_modules` 和 `[[bots]].enabled_modules` 的关系：
 > - `builtin_modules` 决定"框架加载哪些模块代码"（全局）
@@ -647,7 +653,7 @@ mod push_example {
 
 `BotApi::for_bot("qq-main")` 和 `.bot("qq-main")` 仍然可用，适合必须精确选择某个部署实例的场景；一般业务插件优先使用稳定账号，这样部署侧修改 `id` 后无需重新编译插件。
 
-`Accepted` 仅表示宿主已复制请求并接受入队，不表示网络发送已经成功。`try_send()` 还可能返回 `HostUnavailable`、`InvalidRequest`、`BotNotFound`、`BotDisabled`、`QueueFull` 或 `HostShuttingDown`。实时接口支持私聊、群聊、频道和频道私信；OneBot 频道目标通过 `SendBuilder::guild_id(...)` 补充 `guild_id`。
+`Accepted` 表示宿主已复制请求并接受入队。`try_send()` 还可能返回 `HostUnavailable`、`InvalidRequest`、`BotNotFound`、`BotDisabled`、`QueueFull`、`HostShuttingDown` 或 `PluginNotAllowed`。实时接口支持私聊、群聊、频道和频道私信。OneBot 频道目标通过 `SendBuilder::guild_id(...)` 补充 `guild_id`。
 
 宿主默认给每个启用 Bot 建立容量为 `256` 的独立队列，离线请求最多等待 `60` 秒：
 

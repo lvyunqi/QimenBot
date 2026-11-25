@@ -82,6 +82,7 @@ pub struct BotView {
     pub reconnect_count: u64,
     pub last_error: Option<String>,
     pub enabled_modules: Vec<String>,
+    pub enabled_plugins: Option<Vec<String>>,
     pub owners: Vec<String>,
     pub admins: Vec<String>,
     pub auto_approve_friend_requests: bool,
@@ -237,6 +238,8 @@ pub struct BotMutation {
     pub sandbox: bool,
     pub enabled: bool,
     pub enabled_modules: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_plugin_selection")]
+    pub enabled_plugins: Option<Option<Vec<String>>>,
     pub owners: Vec<String>,
     pub admins: Vec<String>,
     pub auto_approve_friend_requests: bool,
@@ -244,6 +247,16 @@ pub struct BotMutation {
     pub auto_reply_poke_enabled: bool,
     pub auto_reply_poke_message: Option<String>,
     pub limiter: RateLimiterView,
+}
+
+// Omission preserves the stored policy, while null explicitly restores inheritance.
+fn deserialize_plugin_selection<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<Vec<String>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Deserialize)]
@@ -418,6 +431,7 @@ pub fn configured_bot_view(bot: &BotConfig) -> BotView {
         reconnect_count: 0,
         last_error: None,
         enabled_modules: bot.enabled_modules.clone(),
+        enabled_plugins: bot.enabled_plugins.clone(),
         owners: bot.owners.clone(),
         admins: bot.admins.clone(),
         auto_approve_friend_requests: bot.auto_approve_friend_requests,

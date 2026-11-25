@@ -1,3 +1,4 @@
+use crate::plugin_access::plugin_allowed;
 use abi_stable_host_api::{
     PROACTIVE_BOT_ACCOUNT_SELECTOR_PREFIX, ProactiveSendRequest, SendEnqueueStatus,
 };
@@ -182,6 +183,14 @@ impl ProactiveSendHub {
     }
 
     pub fn enqueue_from_ffi(&self, request: &ProactiveSendRequest) -> SendEnqueueStatus {
+        self.enqueue_from_ffi_for_plugin(None, request)
+    }
+
+    pub fn enqueue_from_ffi_for_plugin(
+        &self,
+        plugin_id: Option<&str>,
+        request: &ProactiveSendRequest,
+    ) -> SendEnqueueStatus {
         if self.inner.shutting_down.load(Ordering::SeqCst) {
             return SendEnqueueStatus::HostShuttingDown;
         }
@@ -218,6 +227,12 @@ impl ProactiveSendHub {
                 None => return SendEnqueueStatus::BotNotFound,
             }
         };
+
+        if plugin_id.is_some_and(|plugin_id| {
+            !plugin_allowed(state.bot.enabled_plugins.as_deref(), plugin_id)
+        }) {
+            return SendEnqueueStatus::PluginNotAllowed;
+        }
 
         request.bot_id.clone_from(&state.bot.id);
 
@@ -826,11 +841,15 @@ async fn execute_qq_official_packet(
 
 pub(crate) struct ProactiveHostContext {
     hub: ProactiveSendHub,
+    plugin_id: String,
 }
 
 impl ProactiveHostContext {
-    pub(crate) fn new(hub: ProactiveSendHub) -> Self {
-        Self { hub }
+    pub(crate) fn new(hub: ProactiveSendHub, plugin_id: &str) -> Self {
+        Self {
+            hub,
+            plugin_id: plugin_id.to_string(),
+        }
     }
 
     pub(crate) fn as_context_ptr(&mut self) -> *mut c_void {
@@ -851,7 +870,10 @@ pub(crate) unsafe extern "C" fn host_enqueue_send(
         let context = unsafe { &*(context.cast::<ProactiveHostContext>()) };
         // SAFETY: The plugin-side submit call passes a valid pointer for this callback.
         let request = unsafe { &*request };
-        context.hub.enqueue_from_ffi(request).code()
+        context
+            .hub
+            .enqueue_from_ffi_for_plugin(Some(&context.plugin_id), request)
+            .code()
     }));
 
     result.unwrap_or_else(|_| SendEnqueueStatus::HostUnavailable.code())
@@ -922,6 +944,7 @@ mod tests {
             intents: Vec::new(),
             sandbox: false,
             enabled,
+            enabled_plugins: None,
             owners: Vec::new(),
             admins: Vec::new(),
             auto_approve_friend_requests: false,
@@ -942,6 +965,29 @@ mod tests {
             auto_reply_poke_message: None,
             limiter_config: RateLimiterConfig::default(),
         }
+    }
+
+    #[test]
+    fn dynamic_send_respects_bot_plugin_allowlist() {
+        let mut bot = test_bot("bot-a", true, ProtocolId::OneBot11);
+        bot.enabled_plugins = Some(vec!["allowed-plugin".to_string()]);
+        let hub = ProactiveSendHub::new(
+            &[bot],
+            ProactiveSendSettings {
+                queue_capacity: 4,
+                offline_ttl: Duration::from_secs(60),
+            },
+        );
+        let request = text_request("bot-a", "group", "123");
+
+        assert_eq!(
+            hub.enqueue_from_ffi_for_plugin(Some("blocked-plugin"), &request),
+            SendEnqueueStatus::PluginNotAllowed
+        );
+        assert_eq!(
+            hub.enqueue_from_ffi_for_plugin(Some("allowed-plugin"), &request),
+            SendEnqueueStatus::Accepted
+        );
     }
 
     fn text_request(bot_id: &str, target_kind: &str, target_id: &str) -> ProactiveSendRequest {

@@ -219,7 +219,7 @@ plugin_modules = ["my-plugin"]  # ← 添加插件 module id
 `"my-plugin"` 对应 `#[module(id = "my-plugin")]` 中声明的 id。
 
 ::: tip Bot 级别的模块控制
-每个 Bot 实例可通过 `enabled_modules` 选择模块。该字段为空时，实例使用 `official_host.builtin_modules` 中的全部内置模块。列入 `plugin_modules` 的插件模块对所有 Bot 生效。
+每个 Bot 实例可通过 `enabled_modules` 选择内置模块，通过 `enabled_plugins` 限制允许处理该 Bot 消息和事件的插件。`enabled_plugins` 未配置时继承全局插件状态，配置为空数组时不触发任何插件。静态插件仍需列入全局 `plugin_modules`，动态插件仍需全局启用。Bot 白名单可填写静态插件 Module ID 或动态插件 ID。
 :::
 
 ### 第 4 步：编译运行

@@ -1,12 +1,20 @@
 //! Ordered chain of [`MessageEventInterceptor`]s for pre/post event processing.
 
+use crate::plugin_access::plugin_allowed;
 use qimen_plugin_api::MessageEventInterceptor;
 use qimen_protocol_core::NormalizedEvent;
 use std::sync::Arc;
 
 /// An ordered chain of interceptors that run before and after message event dispatch.
+#[derive(Clone)]
 pub struct InterceptorChain {
-    interceptors: Vec<Arc<dyn MessageEventInterceptor>>,
+    interceptors: Vec<InterceptorEntry>,
+}
+
+#[derive(Clone)]
+struct InterceptorEntry {
+    plugin_id: Option<String>,
+    interceptor: Arc<dyn MessageEventInterceptor>,
 }
 
 impl InterceptorChain {
@@ -17,12 +25,38 @@ impl InterceptorChain {
     }
 
     pub fn add(&mut self, interceptor: Arc<dyn MessageEventInterceptor>) {
-        self.interceptors.push(interceptor);
+        self.interceptors.push(InterceptorEntry {
+            plugin_id: None,
+            interceptor,
+        });
+    }
+
+    pub fn add_for_plugin(
+        &mut self,
+        plugin_id: impl Into<String>,
+        interceptor: Arc<dyn MessageEventInterceptor>,
+    ) {
+        self.interceptors.push(InterceptorEntry {
+            plugin_id: Some(plugin_id.into()),
+            interceptor,
+        });
     }
 
     pub async fn pre_handle(&self, bot_id: &str, event: &NormalizedEvent) -> bool {
-        for interceptor in &self.interceptors {
-            if !interceptor.pre_handle(bot_id, event).await {
+        self.pre_handle_for_plugins(bot_id, event, None).await
+    }
+
+    pub async fn pre_handle_for_plugins(
+        &self,
+        bot_id: &str,
+        event: &NormalizedEvent,
+        enabled_plugins: Option<&[String]>,
+    ) -> bool {
+        for entry in &self.interceptors {
+            if !interceptor_is_enabled(entry, enabled_plugins) {
+                continue;
+            }
+            if !entry.interceptor.pre_handle(bot_id, event).await {
                 return false;
             }
         }
@@ -30,9 +64,27 @@ impl InterceptorChain {
     }
 
     pub async fn after_completion(&self, bot_id: &str, event: &NormalizedEvent) {
-        for interceptor in self.interceptors.iter().rev() {
-            interceptor.after_completion(bot_id, event).await;
+        self.after_completion_for_plugins(bot_id, event, None).await;
+    }
+
+    pub async fn after_completion_for_plugins(
+        &self,
+        bot_id: &str,
+        event: &NormalizedEvent,
+        enabled_plugins: Option<&[String]>,
+    ) {
+        for entry in self.interceptors.iter().rev() {
+            if interceptor_is_enabled(entry, enabled_plugins) {
+                entry.interceptor.after_completion(bot_id, event).await;
+            }
         }
+    }
+}
+
+fn interceptor_is_enabled(entry: &InterceptorEntry, enabled_plugins: Option<&[String]>) -> bool {
+    match entry.plugin_id.as_deref() {
+        Some(plugin_id) => plugin_allowed(enabled_plugins, plugin_id),
+        None => enabled_plugins.is_none(),
     }
 }
 
@@ -120,5 +172,33 @@ mod tests {
         chain.after_completion("test", &event).await;
         assert!(p1.completed.load(Ordering::SeqCst));
         assert!(p2.completed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn bot_allowlist_skips_unselected_plugin_interceptors() {
+        let selected = Arc::new(PassthroughInterceptor {
+            completed: AtomicBool::new(false),
+        });
+        let unselected = Arc::new(PassthroughInterceptor {
+            completed: AtomicBool::new(false),
+        });
+        let mut chain = InterceptorChain::new();
+        chain.add_for_plugin("selected-plugin", selected.clone());
+        chain.add_for_plugin("other-plugin", unselected.clone());
+        chain.add_for_plugin("blocking-plugin", Arc::new(BlockingInterceptor));
+
+        let event = sample_event();
+        let enabled = ["selected-plugin".to_string()];
+        assert!(
+            chain
+                .pre_handle_for_plugins("test", &event, Some(&enabled))
+                .await
+        );
+        chain
+            .after_completion_for_plugins("test", &event, Some(&enabled))
+            .await;
+
+        assert!(selected.completed.load(Ordering::SeqCst));
+        assert!(!unselected.completed.load(Ordering::SeqCst));
     }
 }
