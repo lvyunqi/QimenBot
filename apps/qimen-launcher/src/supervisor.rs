@@ -316,6 +316,7 @@ fn github_client(config: &ResolvedConfig) -> Result<GithubClient, DynError> {
         &config.raw.update.repository,
         config.raw.update.channel,
         Duration::from_secs(config.raw.update.request_timeout_secs),
+        config.github_proxy.clone(),
     )
 }
 

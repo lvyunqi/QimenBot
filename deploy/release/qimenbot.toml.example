@@ -18,6 +18,10 @@ enabled = true
 repository = "lvyunqi/QimenBot"
 channel = "stable"
 
+# 可选的 HTTPS 下载代理。需支持在地址后拼接完整 GitHub URL。
+# 留空时直连 GitHub。代理会提供 Release 列表、制品和 SHA256 校验文件，请使用可信服务。
+# github_proxy = "https://gh-proxy.com/"
+
 # 默认只提示新版本，由用户在面板确认；确认稳定后可改为 true。
 auto_install = false
 check_interval_secs = 21600
