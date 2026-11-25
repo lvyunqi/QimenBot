@@ -12,6 +12,8 @@ use serde_json::{Map, Value, json};
 #[derive(Debug, Default)]
 pub struct QqBotAdapter;
 
+const QQBOT_AT_EVERYONE: &str = "<qqbot-at-everyone />";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayDispatch {
     #[serde(rename = "op")]
@@ -39,6 +41,7 @@ pub struct QqBotUser {
     pub user_openid: Option<String>,
     pub member_openid: Option<String>,
     pub member_role: Option<String>,
+    pub member_nickname: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -68,6 +71,7 @@ pub struct QqBotMessagePayload {
     pub channel_id: Option<String>,
     pub guild_id: Option<String>,
     pub group_openid: Option<String>,
+    pub union_group_openid: Option<String>,
     pub author: Option<QqBotUser>,
     pub member: Option<QqBotMember>,
     pub message_type: Option<i64>,
@@ -783,6 +787,7 @@ fn copy_qqbot_context_extensions(data: &Value, extensions: &mut Map<String, Valu
         "guild_id",
         "channel_id",
         "group_openid",
+        "union_group_openid",
         "openid",
         "user_openid",
         "group_member_openid",
@@ -807,6 +812,7 @@ fn copy_qqbot_context_fields(data: &Value, raw: &mut Map<String, Value>) {
         "guild_id",
         "channel_id",
         "group_openid",
+        "union_group_openid",
         "openid",
         "user_openid",
         "group_member_openid",
@@ -902,16 +908,27 @@ fn actor_from_message(payload: &QqBotMessagePayload, kind: QqBotMessageKind) -> 
         | QqBotMessageKind::Channel => author.id.as_deref(),
     }?;
 
-    let display_name = payload
-        .member
-        .as_ref()
-        .and_then(|member| member.nick.clone())
-        .or_else(|| author.username.clone());
-
     Some(ActorRef {
         id: id.to_string(),
-        display_name,
+        display_name: qqbot_sender_nickname(payload, author).map(str::to_owned),
     })
+}
+
+fn qqbot_sender_nickname<'a>(
+    payload: &'a QqBotMessagePayload,
+    author: &'a QqBotUser,
+) -> Option<&'a str> {
+    author
+        .member_nickname
+        .as_deref()
+        .filter(|nickname| !nickname.is_empty())
+        .or_else(|| {
+            payload
+                .member
+                .as_ref()
+                .and_then(|member| member.nick.as_deref())
+        })
+        .or(author.username.as_deref())
 }
 
 fn chat_from_message(payload: &QqBotMessagePayload, kind: QqBotMessageKind) -> Option<ChatRef> {
@@ -1157,6 +1174,7 @@ fn enrich_qqbot_mention_segment(segment: &mut Segment, mention: &QqBotUser, targ
     for (key, value) in [
         ("id", mention.id.as_ref()),
         ("username", mention.username.as_ref()),
+        ("member_nickname", mention.member_nickname.as_ref()),
         ("scope", mention.scope.as_ref()),
         ("member_openid", mention.member_openid.as_ref()),
         ("user_openid", mention.user_openid.as_ref()),
@@ -1242,6 +1260,12 @@ fn qqbot_raw_message_json(
     if let Some(group_openid) = payload.group_openid.clone() {
         raw.insert("group_openid".to_string(), Value::String(group_openid));
     }
+    if let Some(union_group_openid) = payload.union_group_openid.clone() {
+        raw.insert(
+            "union_group_openid".to_string(),
+            Value::String(union_group_openid),
+        );
+    }
     if let Some(channel_id) = payload.channel_id.clone() {
         raw.insert("channel_id".to_string(), Value::String(channel_id));
     }
@@ -1283,7 +1307,8 @@ fn qqbot_raw_message_json(
         raw.insert(
             "sender".to_string(),
             json!({
-                "nickname": payload.member.as_ref().and_then(|member| member.nick.clone()).or_else(|| author.username.clone()),
+                "nickname": qqbot_sender_nickname(payload, author),
+                "avatar": author.avatar,
                 "openid": author.user_openid.clone().or_else(|| author.member_openid.clone()),
                 "id": author.id,
                 "role": author.member_role,
@@ -1310,6 +1335,12 @@ fn qqbot_extensions(
     }
     if let Some(group_openid) = payload.group_openid.clone() {
         extensions.insert("group_openid".to_string(), Value::String(group_openid));
+    }
+    if let Some(union_group_openid) = payload.union_group_openid.clone() {
+        extensions.insert(
+            "union_group_openid".to_string(),
+            Value::String(union_group_openid),
+        );
     }
     if let Some(channel_id) = payload.channel_id.clone() {
         extensions.insert("channel_id".to_string(), Value::String(channel_id));
@@ -1497,9 +1528,9 @@ fn build_qqbot_send_payload(
             }
         }
         "c2c_message" => {
-            if message.ark.is_some() || message.embed.is_some() || message.card.is_some() {
+            if message.ark.is_some() || message.embed.is_some() {
                 return Err(QimenError::Protocol(
-                    "qqbot c2c messages support text, markdown, input notification, and media payloads"
+                    "qqbot c2c messages support text, markdown, input notification, media, and card payloads"
                         .to_string(),
                 ));
             }
@@ -1508,7 +1539,7 @@ fn build_qqbot_send_payload(
                     "qqbot c2c image messages require a supported media source".to_string(),
                 ));
             }
-            if !matches!(msg_type, Some(0 | 2 | 6 | 7)) {
+            if !matches!(msg_type, Some(0 | 2 | 6 | 7 | 8)) {
                 return Err(QimenError::Protocol(format!(
                     "unsupported qqbot c2c msg_type {}",
                     msg_type.unwrap_or_default()
@@ -1561,6 +1592,48 @@ fn build_qqbot_send_payload(
         }
         _ if message.markdown.is_some() => message.content = None,
         _ => {}
+    }
+
+    if let Some(offset) = message.at_all_offset {
+        match (route, msg_type) {
+            ("group_message", Some(0)) if message.markdown.is_none() => {
+                let content = message.content.get_or_insert_with(String::new);
+                if !content.contains(QQBOT_AT_EVERYONE) {
+                    content.insert_str(offset, QQBOT_AT_EVERYONE);
+                }
+            }
+            ("group_message", Some(2)) => {
+                let Some(Value::String(content)) = message
+                    .markdown
+                    .as_mut()
+                    .and_then(|markdown| markdown.get_mut("content"))
+                else {
+                    return Err(QimenError::Protocol(
+                        "qqbot @all requires direct markdown.content".to_string(),
+                    ));
+                };
+                if !content.contains(QQBOT_AT_EVERYONE) {
+                    *content = format!("{QQBOT_AT_EVERYONE}\n{content}");
+                }
+            }
+            _ => {
+                return Err(QimenError::Protocol(
+                    "qqbot @all is only supported in group text or Markdown messages".to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(verify) = message
+        .markdown
+        .as_ref()
+        .and_then(|markdown| markdown.get("force_verify_image_resource"))
+        && (!group_or_c2c || msg_type != Some(2) || !verify.is_boolean())
+    {
+        return Err(QimenError::Protocol(
+            "qqbot markdown.force_verify_image_resource must be a boolean on group or C2C Markdown messages"
+                .to_string(),
+        ));
     }
 
     let srv_send_msg = req.params.get("srv_send_msg").and_then(Value::as_bool);
@@ -1673,6 +1746,7 @@ fn build_qqbot_send_payload(
 struct EncodedActionMessage {
     msg_type: Option<i64>,
     content: Option<String>,
+    at_all_offset: Option<usize>,
     markdown: Option<Value>,
     keyboard: Option<Value>,
     ark: Option<Value>,
@@ -1699,6 +1773,9 @@ struct EncodedMediaUpload {
 
 impl EncodedActionMessage {
     fn merge_missing(&mut self, other: Self) {
+        if let Some(offset) = other.at_all_offset {
+            self.at_all_offset = Some(self.content.as_ref().map_or(offset, String::len));
+        }
         if self.msg_type.is_none() {
             self.msg_type = other.msg_type;
         }
@@ -1867,14 +1944,16 @@ fn encode_message_segments(message: &Message) -> EncodedActionMessage {
                     }
                 }
             }
-            "at" => {
-                let target = segment
-                    .at_target()
-                    .map(|value| format!("@{value}"))
-                    .unwrap_or_else(|| "@".to_string());
-                append_fallback_text(&mut content, &target);
-                encoded.unsupported_segments.push(segment.kind.clone());
-            }
+            "at" => match segment.at_target().as_deref() {
+                Some("all") => {
+                    encoded.at_all_offset.get_or_insert(content.len());
+                }
+                target => {
+                    let fallback = format!("@{}", target.unwrap_or_default());
+                    append_fallback_text(&mut content, &fallback);
+                    encoded.unsupported_segments.push(segment.kind.clone());
+                }
+            },
             "face" => {
                 let label = segment
                     .data_lossless("id")
@@ -1937,7 +2016,13 @@ fn infer_official_msg_type(encoded: &mut EncodedActionMessage) {
 
 fn markdown_segment_payload(segment: &Segment) -> Value {
     match segment.data.get("content") {
-        Some(Value::String(content)) => json!({ "content": content }),
+        Some(Value::String(content)) => {
+            let mut markdown = json!({ "content": content });
+            if let Some(verify) = segment.data.get("force_verify_image_resource") {
+                markdown["force_verify_image_resource"] = verify.clone();
+            }
+            markdown
+        }
         _ => Value::Object(segment.data.clone()),
     }
 }
@@ -2301,18 +2386,23 @@ mod tests {
                     "id": "msg-full-group",
                     "content": "/ping",
                     "group_openid": "group-openid",
+                    "union_group_openid": "union-group-openid",
                     "author": {
                         "id": "member-openid",
                         "member_openid": "member-openid",
                         "member_role": "admin",
+                        "member_nickname": "Group nickname",
+                        "username": "Account nickname",
+                        "avatar": "https://example.invalid/avatar.png",
                         "union_openid": "union-openid"
                     },
+                    "member": {"nick": "Legacy nickname"},
                     "message_type": 0,
                     "message_scene": {
                         "source": "default",
                         "ext": ["msg_idx=message-index", "auth_token=token"]
                     },
-                    "mentions": [{"member_openid": "mentioned-member"}],
+                    "mentions": [{"member_openid": "mentioned-member", "member_nickname": "Mention nickname"}],
                     "attachments": [{
                         "content_type": "voice",
                         "filename": "voice.silk",
@@ -2333,9 +2423,26 @@ mod tests {
         assert_eq!(event.chat.as_ref().unwrap().kind, "group");
         assert_eq!(event.chat.as_ref().unwrap().id, "group-openid");
         assert_eq!(event.sender_id(), Some("member-openid"));
+        assert_eq!(
+            event.actor.as_ref().unwrap().display_name.as_deref(),
+            Some("Group nickname")
+        );
+        assert_eq!(event.raw_json["sender"]["nickname"], "Group nickname");
+        assert_eq!(
+            event.raw_json["sender"]["avatar"],
+            "https://example.invalid/avatar.png"
+        );
+        assert_eq!(event.raw_json["union_group_openid"], "union-group-openid");
+        assert_eq!(event.extensions["union_group_openid"], "union-group-openid");
         let message = event.message.as_ref().unwrap();
         assert_eq!(message.plain_text(), "/ping");
         assert_eq!(message.at_list(), vec!["mentioned-member"]);
+        assert!(
+            message
+                .segments
+                .iter()
+                .any(|segment| { segment.data_str("member_nickname") == Some("Mention nickname") })
+        );
         assert!(message.has_record());
         assert!(event.is_group_admin_or_owner());
         assert!(event.time.is_some());
@@ -2505,7 +2612,11 @@ mod tests {
                 "d": {
                     "id": "msg-2",
                     "content": "hello",
-                    "author": {"user_openid": "user-openid"},
+                    "author": {
+                        "user_openid": "user-openid",
+                        "username": "Account nickname",
+                        "avatar": "https://example.invalid/avatar.png"
+                    },
                     "msg_seq": 1
                 }
             })))
@@ -2516,6 +2627,11 @@ mod tests {
         assert_eq!(chat.kind, "private");
         assert_eq!(chat.id, "user-openid");
         assert_eq!(event.sender_id(), Some("user-openid"));
+        assert_eq!(event.raw_json["sender"]["nickname"], "Account nickname");
+        assert_eq!(
+            event.raw_json["sender"]["avatar"],
+            "https://example.invalid/avatar.png"
+        );
     }
 
     #[tokio::test]
@@ -2584,6 +2700,7 @@ mod tests {
                     "id": "member-event",
                     "d": {
                         "group_openid": "group-openid",
+                        "union_group_openid": "union-group-openid",
                         "member_openid": "member-openid",
                         "user_openid": "user-openid",
                         "timestamp": 1784276757
@@ -2597,6 +2714,8 @@ mod tests {
             assert_eq!(event.chat.as_ref().unwrap().id, "group-openid");
             assert_eq!(event.sender_id(), Some("member-openid"));
             assert_eq!(event.time, Some(1784276757));
+            assert_eq!(event.raw_json["union_group_openid"], "union-group-openid");
+            assert_eq!(event.extensions["union_group_openid"], "union-group-openid");
             assert_eq!(
                 event.raw_json.get("notice_type").and_then(Value::as_str),
                 Some(notice_type)
@@ -2817,6 +2936,115 @@ mod tests {
                 .and_then(Value::as_str),
             Some("# Title")
         );
+    }
+
+    #[tokio::test]
+    async fn encode_group_at_all_in_text_and_direct_markdown() {
+        let text = Message::builder()
+            .text("公告 ")
+            .at_all()
+            .text(" 请查看")
+            .build();
+        let markdown = Message::builder().markdown("# 公告").at_all().build();
+        for (message, msg_type, content_path, content) in [
+            (text, 0, "/content", "公告 <qqbot-at-everyone /> 请查看"),
+            (
+                markdown,
+                2,
+                "/markdown/content",
+                "<qqbot-at-everyone />\n# 公告",
+            ),
+        ] {
+            let request = action(
+                "send_group_msg",
+                json!({"group_openid": "group-openid", "message": message.to_onebot_value()}),
+            );
+            let packet = QqBotAdapter.encode_action(&request).await.unwrap();
+            assert_eq!(packet.payload["msg_type"], msg_type);
+            assert_eq!(
+                packet.payload.pointer(content_path).and_then(Value::as_str),
+                Some(content)
+            );
+            assert!(packet.payload.get("unsupported_segments").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_at_all_for_c2c_cards_and_markdown_templates() {
+        let message = Message::builder().at_all().build().to_onebot_value();
+        for (action_name, params, error) in [
+            (
+                "send_private_msg",
+                json!({"openid": "user-openid", "message": message}),
+                "only supported in group text or Markdown",
+            ),
+            (
+                "send_group_msg",
+                json!({"group_openid": "group-openid", "message": message, "card": {"type": "tuwen"}}),
+                "only supported in group text or Markdown",
+            ),
+            (
+                "send_group_msg",
+                json!({"group_openid": "group-openid", "message": message, "markdown": {"template_id": 1}}),
+                "requires direct markdown.content",
+            ),
+        ] {
+            let result = QqBotAdapter
+                .encode_action(&action(action_name, params))
+                .await;
+            assert!(matches!(result, Err(QimenError::Protocol(reason)) if reason.contains(error)));
+        }
+    }
+
+    #[tokio::test]
+    async fn encode_markdown_image_verification_inside_markdown() {
+        let group = action(
+            "send_group_msg",
+            json!({"group_openid": "group-openid", "message": [{
+                "type": "markdown",
+                "data": {"content": "# Group", "force_verify_image_resource": true}
+            }]}),
+        );
+        let c2c = action(
+            "send_private_msg",
+            json!({"openid": "user-openid", "markdown": {
+                "content": "# Private", "force_verify_image_resource": false
+            }}),
+        );
+        for (request, verify) in [(group, true), (c2c, false)] {
+            let packet = QqBotAdapter.encode_action(&request).await.unwrap();
+            assert_eq!(packet.payload["msg_type"], 2);
+            assert_eq!(
+                packet.payload["markdown"]["force_verify_image_resource"],
+                verify
+            );
+            assert!(packet.payload.get("force_verify_image_resource").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_markdown_image_verification_for_invalid_types_and_scenes() {
+        for (action_name, params) in [
+            (
+                "send_private_msg",
+                json!({"openid": "user-openid", "markdown": {
+                    "content": "# Private", "force_verify_image_resource": "true"
+                }}),
+            ),
+            (
+                "send_channel_msg",
+                json!({"channel_id": "channel-id", "markdown": {
+                    "content": "# Channel", "force_verify_image_resource": true
+                }}),
+            ),
+        ] {
+            let result = QqBotAdapter
+                .encode_action(&action(action_name, params))
+                .await;
+            assert!(
+                matches!(result, Err(QimenError::Protocol(reason)) if reason.contains("markdown.force_verify_image_resource"))
+            );
+        }
     }
 
     #[tokio::test]
@@ -3292,6 +3520,24 @@ mod tests {
                 .and_then(Value::as_i64),
             Some(30)
         );
+    }
+
+    #[tokio::test]
+    async fn encode_c2c_image_card() {
+        let card = json!({"type": "tuwen", "content": {
+            "title": "Title",
+            "description": "Description",
+            "url": "https://example.invalid",
+            "pic_url": "https://example.invalid/image.png"
+        }});
+        let request = action(
+            "send_private_msg",
+            json!({"openid": "user-openid", "card": card, "msg_id": "message-id"}),
+        );
+        let packet = QqBotAdapter.encode_action(&request).await.unwrap();
+        assert_eq!(packet.payload["msg_type"], 8);
+        assert_eq!(packet.payload["card"], card);
+        assert!(packet.payload.get("content").is_none());
     }
 
     #[tokio::test]

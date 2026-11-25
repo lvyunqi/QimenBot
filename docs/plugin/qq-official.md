@@ -196,10 +196,16 @@ async fn help_me(&self) -> Message {
 
 | 场景 | 回复窗口 | 同一来信最多回复 |
 |------|----------|------------------|
-| QQ 群 | 5 分钟 | 5 条 |
+| QQ 群 | 60 分钟 | 5 条。机器人账号的管理员同时是该群群主或管理员时，为 50 条 |
 | C2C | 60 分钟 | 4 条 |
 
+使用群消息的 `msg_id` 单聊回复发送者时，发送者须是机器人的好友。单聊回复沿用原群消息的有效期，并与群内回复共享次数。见[官方群聊消息接口](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_messages.post.html)。
+
 这些是 QQ 平台限制，不是 QimenBot 的限流器配置。插件处理长任务时应先快速回复，再使用已获准的主动消息能力发送后续结果。
+
+### 群聊 @全体成员
+
+使用 `Message::builder().at_all().text(" 请查看群公告").build()` 发送群文本，并用 `Message::builder().at_all().markdown("# 群公告").build()` 发送直接填写内容的 Markdown。适配器会把 `@全体成员` 标签放在 Markdown 正文开头。机器人须是该群管理员，每个群每天最多发送一次。见[官方 API 变更记录](https://bot.q.qq.com/wiki/develop/api-v2/changelog.html)。
 
 ## Markdown 和 Keyboard
 
@@ -238,6 +244,19 @@ async fn buttons(&self) -> Message {
 
 群和 C2C 的 Markdown 会使用 `msg_type = 2`，并且不会同时发送普通 `content`。模板 Markdown 和模板 Keyboard 要使用开放平台中有效且获准使用的模板 ID。
 
+群和 C2C 的 Markdown 可开启图片转存校验。QQ 平台转存图片失败时，发送请求会返回错误。通过消息段发送时，在 Markdown 段中填写布尔值：
+
+```rust
+use qimen_message::{Message, Segment};
+
+let message = Message::builder()
+    .segment(Segment::markdown("![示例图](https://example.org/image.png)")
+        .with("force_verify_image_resource", serde_json::Value::Bool(true)))
+    .build();
+```
+
+直接构造发送动作时，将开关放在 `markdown.force_verify_image_resource`。默认值为 `false`。
+
 ## 富消息支持矩阵
 
 不同场景不能共用所有官方消息结构：
@@ -250,7 +269,7 @@ async fn buttons(&self) -> Message {
 | 图片 URL | 先上传媒体 | 先上传媒体 | 使用频道 `image` 字段 | URL 必须能由 QQ 服务器访问 |
 | 本地图片 / Base64 | 分片上传 | 分片上传 | `multipart/form-data` 的 `file_image` | 频道和 DMS 只接受图片 |
 | 本地语音、视频、文件 | 分片上传 | 分片上传 | 不支持 | 群/C2C 使用 `msg_type=7` |
-| Card | 支持，`msg_type=8` | 不支持 | 当前不发送群专用 Card | 以官方能力开放为准 |
+| 图文卡片 | 支持，`msg_type=8` | 支持，`msg_type=8` | 不支持 | `type` 为 `tuwen`，`content` 含 `title`、`description`、HTTPS `url` 和 `pic_url` |
 | Input notify | 不支持 | 支持，`msg_type=6` | 不支持 | C2C 输入状态通知 |
 | Ark | 不支持 | 不支持 | 支持 | 不能与 Embed 同时发送 |
 | Embed | 不支持 | 不支持 | 支持 | 不能与 Ark 同时发送 |
@@ -381,6 +400,9 @@ let payload = ctx.event.raw_json.get("qqbot_payload");
 | `event.extensions["sequence"]` | Gateway dispatch 序号 |
 | `event.extensions["msg_idx"]` | 全量消息投递索引，可用时存在 |
 | `event.extensions["message_scene"]` | 官方消息场景对象 |
+| `event.extensions["union_group_openid"]` | QQ 群跨应用标识。平台下发时可从群消息和群成员变更等事件中读取 |
+| `event.raw_json["sender"]["nickname"]` | 发送者昵称。群聊优先使用 `author.member_nickname` |
+| `event.raw_json["sender"]["avatar"]` | 发送者头像 URL，取自 `author.avatar` |
 | `event.raw_json["qqbot_payload"]` | 原始 Gateway `d` 对象 |
 
 `raw_json` 还提供 `post_type`、`message_type`、`message_id`、`user_id`、`group_id` 等归一化字段，便于通用插件读取。原始对象的结构仍由 QQ 开放平台定义；访问深层字段时必须处理字段缺失和类型变化。
