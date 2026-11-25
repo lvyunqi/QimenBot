@@ -8,6 +8,7 @@ pub mod interceptor;
 pub mod message_filter;
 pub mod onebot11_dispatch;
 pub mod permission;
+mod plugin_access;
 pub mod plugin_acl;
 pub mod proactive_send;
 pub mod rate_limiter;
@@ -18,6 +19,7 @@ use self::dynamic_runtime::{DynamicPluginRuntime, DynamicResponse};
 use self::interceptor::InterceptorChain;
 use self::onebot11_dispatch::{OneBotSystemDispatchSignal, OneBotSystemDispatcher};
 use self::permission::PermissionResolver;
+use self::plugin_access::plugin_allowed;
 use self::proactive_send::{ProactiveSendHub, ProactiveSendSettings};
 use self::rate_limiter::TokenBucketLimiter;
 use self::webhook_gateway::WebhookGateway;
@@ -41,8 +43,8 @@ use qimen_host_types::{
 };
 use qimen_message::{Message, Segment};
 use qimen_plugin_api::{
-    BuiltinCommandAction, CommandPlugin, OwnedTaskFuture, PluginBundle, RateLimiterConfig,
-    RuntimeBotContext, SystemPlugin, TaskHandle,
+    BuiltinCommandAction, CommandPlugin, OwnedTaskFuture, PluginBundle, PluginRegistration,
+    RateLimiterConfig, RuntimeBotContext, SystemPlugin, TaskHandle,
 };
 use qimen_protocol_core::{
     ActionMeta, ActionStatus, CapabilitySet, EventKind, IncomingPacket, NormalizedActionRequest,
@@ -221,6 +223,7 @@ pub struct BotRuntimeInfo {
     pub intents: Vec<String>,
     pub sandbox: bool,
     pub enabled: bool,
+    pub enabled_plugins: Option<Vec<String>>,
     pub owners: Vec<String>,
     pub admins: Vec<String>,
     pub auto_approve_friend_requests: bool,
@@ -382,9 +385,10 @@ impl RuntimeMetrics {
     }
 }
 
-/// Shared buffer for send actions queued by dynamic interceptors.
-/// Drained by the main event loop after each interceptor chain call.
-type PendingSendBuffer = Arc<std::sync::Mutex<Vec<SendAction>>>;
+tokio::task_local! {
+    // Legacy sends belong to the event that invoked the interceptor.
+    static INTERCEPTOR_SENDS: std::cell::RefCell<Vec<SendAction>>;
+}
 
 #[derive(Debug, Clone, Copy)]
 struct QqBotReplySequence {
@@ -396,8 +400,6 @@ struct QqBotReplySequence {
 struct DynamicInterceptorAdapter {
     descriptor: DynamicInterceptorDescriptor,
     dynamic_runtime: Arc<std::sync::Mutex<DynamicPluginRuntime>>,
-    /// Shared buffer — same instance held by [`Runtime`] for draining.
-    pending_sends: PendingSendBuffer,
     /// Timeout for FFI calls.
     timeout: Duration,
 }
@@ -528,11 +530,7 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
 
         match result {
             Ok(Ok(Ok((allow, sends)))) => {
-                if !sends.is_empty()
-                    && let Ok(mut pending) = self.pending_sends.lock()
-                {
-                    pending.extend(sends);
-                }
+                INTERCEPTOR_SENDS.with(|pending| pending.borrow_mut().extend(sends));
                 allow
             }
             Ok(Ok(Err(e))) => {
@@ -596,11 +594,7 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
 
         match result {
             Ok(Ok(Ok(sends))) => {
-                if !sends.is_empty()
-                    && let Ok(mut pending) = self.pending_sends.lock()
-                {
-                    pending.extend(sends);
-                }
+                INTERCEPTOR_SENDS.with(|pending| pending.borrow_mut().extend(sends));
             }
             Ok(Ok(Err(e))) => {
                 tracing::warn!(error = %e, plugin = %self.descriptor.plugin_id, "dynamic interceptor after_completion failed");
@@ -622,14 +616,14 @@ impl qimen_plugin_api::MessageEventInterceptor for DynamicInterceptorAdapter {
 
 pub struct Runtime {
     bots: Vec<BotRuntimeInfo>,
-    command_plugins: Vec<std::sync::Arc<dyn CommandPlugin>>,
-    system_plugins: Vec<std::sync::Arc<dyn SystemPlugin>>,
+    command_plugins: Vec<(&'static str, Arc<dyn CommandPlugin>)>,
+    system_plugins: Vec<(&'static str, Arc<dyn SystemPlugin>)>,
     host_plugin_report: std::sync::RwLock<Option<HostPluginReport>>,
     plugin_priorities: std::sync::RwLock<BTreeMap<String, u32>>,
     command_config: std::sync::RwLock<CommandConfig>,
     /// Immutable dispatcher snapshots let running Bot connections observe
     /// plugin changes without tearing down and rebuilding every transport.
-    command_dispatcher: std::sync::RwLock<Option<Arc<CommandDispatcher>>>,
+    bot_command_dispatchers: std::sync::RwLock<HashMap<String, Arc<CommandDispatcher>>>,
     system_dispatcher: std::sync::RwLock<Option<Arc<OneBotSystemDispatcher>>>,
     plugin_state_path: Option<String>,
     plugin_bin_dir: Option<String>,
@@ -639,7 +633,7 @@ pub struct Runtime {
     /// Timeout for dynamic plugin FFI calls.
     dynamic_plugin_timeout: Duration,
     /// Static interceptors from compiled plugin bundles (preserved across rescan).
-    static_interceptors: Vec<Arc<dyn qimen_plugin_api::MessageEventInterceptor>>,
+    static_interceptors: InterceptorChain,
     interceptor_chain: std::sync::RwLock<InterceptorChain>,
     rate_limiters: Vec<TokenBucketLimiter>,
     bot_controls: HashMap<String, watch::Sender<BotControl>>,
@@ -653,8 +647,6 @@ pub struct Runtime {
     pub dedup: Arc<MessageDedup>,
     pub group_event_filter: Arc<GroupEventFilter>,
     pub plugin_acl: Arc<PluginAclManager>,
-    /// Shared buffer for send actions queued by dynamic interceptors.
-    interceptor_pending_sends: PendingSendBuffer,
 }
 
 impl Default for Runtime {
@@ -666,7 +658,7 @@ impl Default for Runtime {
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_priorities: std::sync::RwLock::new(BTreeMap::new()),
             command_config: std::sync::RwLock::new(CommandConfig::default()),
-            command_dispatcher: std::sync::RwLock::new(None),
+            bot_command_dispatchers: std::sync::RwLock::new(HashMap::new()),
             system_dispatcher: std::sync::RwLock::new(None),
             plugin_state_path: None,
             plugin_bin_dir: None,
@@ -674,7 +666,7 @@ impl Default for Runtime {
             dynamic_runtime: Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new())),
             dynamic_reload_lock: tokio::sync::Mutex::new(()),
             dynamic_plugin_timeout: Duration::from_secs(30),
-            static_interceptors: Vec::new(),
+            static_interceptors: InterceptorChain::new(),
             interceptor_chain: std::sync::RwLock::new(InterceptorChain::new()),
             rate_limiters: Vec::new(),
             bot_controls: HashMap::new(),
@@ -694,7 +686,6 @@ impl Default for Runtime {
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
-            interceptor_pending_sends: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 }
@@ -718,6 +709,57 @@ impl Runtime {
     }
 
     pub fn from_config_with_plugins(config: &AppConfig, plugins: PluginBundle) -> Self {
+        let mut interceptors = InterceptorChain::new();
+        for interceptor in plugins.interceptors {
+            interceptors.add(interceptor);
+        }
+        let command_plugins = plugins
+            .command_plugins
+            .into_iter()
+            .map(|plugin| (plugin.metadata().id, plugin))
+            .collect();
+        let system_plugins = plugins
+            .system_plugins
+            .into_iter()
+            .map(|plugin| (plugin.metadata().id, plugin))
+            .collect();
+        Self::with_static_plugins(config, command_plugins, system_plugins, interceptors)
+    }
+
+    pub fn from_config_with_plugin_registrations(
+        config: &AppConfig,
+        plugins: Vec<PluginRegistration>,
+    ) -> Self {
+        let mut command_plugins = Vec::new();
+        let mut system_plugins = Vec::new();
+        let mut interceptors = InterceptorChain::new();
+        for registration in plugins {
+            let module_id = registration.module_id;
+            command_plugins.extend(
+                registration
+                    .command_plugins
+                    .into_iter()
+                    .map(|plugin| (module_id, plugin)),
+            );
+            system_plugins.extend(
+                registration
+                    .system_plugins
+                    .into_iter()
+                    .map(|plugin| (module_id, plugin)),
+            );
+            for interceptor in registration.interceptors {
+                interceptors.add_for_plugin(module_id, interceptor);
+            }
+        }
+        Self::with_static_plugins(config, command_plugins, system_plugins, interceptors)
+    }
+
+    fn with_static_plugins(
+        config: &AppConfig,
+        command_plugins: Vec<(&'static str, Arc<dyn CommandPlugin>)>,
+        system_plugins: Vec<(&'static str, Arc<dyn SystemPlugin>)>,
+        static_interceptors: InterceptorChain,
+    ) -> Self {
         let bots = config
             .bots
             .iter()
@@ -736,6 +778,7 @@ impl Runtime {
                 intents: bot.intents.clone(),
                 sandbox: bot.sandbox,
                 enabled: bot.enabled,
+                enabled_plugins: bot.enabled_plugins.clone(),
                 owners: bot.owners.clone(),
                 admins: bot.admins.clone(),
                 auto_approve_friend_requests: bot.auto_approve_friend_requests,
@@ -832,11 +875,7 @@ impl Runtime {
             },
         );
 
-        let static_interceptors = plugins.interceptors;
-        let mut interceptor_chain = InterceptorChain::new();
-        for interceptor in &static_interceptors {
-            interceptor_chain.add(interceptor.clone());
-        }
+        let interceptor_chain = static_interceptors.clone();
 
         let dynamic_runtime = Arc::new(std::sync::Mutex::new(DynamicPluginRuntime::new()));
         let webhook_gateway = config.official_host.webhook.enabled.then(|| {
@@ -855,12 +894,12 @@ impl Runtime {
 
         let runtime = Self {
             bots,
-            command_plugins: plugins.command_plugins,
-            system_plugins: plugins.system_plugins,
+            command_plugins,
+            system_plugins,
             host_plugin_report: std::sync::RwLock::new(None),
             plugin_priorities: std::sync::RwLock::new(plugin_priorities),
             command_config: std::sync::RwLock::new(config.official_host.commands.clone()),
-            command_dispatcher: std::sync::RwLock::new(None),
+            bot_command_dispatchers: std::sync::RwLock::new(HashMap::new()),
             system_dispatcher: std::sync::RwLock::new(None),
             plugin_state_path: Some(config.official_host.plugin_state_path.clone()),
             plugin_bin_dir: Some(config.official_host.plugin_bin_dir.clone()),
@@ -884,7 +923,6 @@ impl Runtime {
             dedup: Arc::new(MessageDedup::new(60, 10000)),
             group_event_filter: Arc::new(GroupEventFilter::disabled()),
             plugin_acl: Arc::new(PluginAclManager::new()),
-            interceptor_pending_sends: Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         runtime.refresh_dispatchers();
         runtime
@@ -898,18 +936,34 @@ impl Runtime {
     }
 
     fn refresh_dispatchers(&self) {
-        if let Ok(dispatcher) = self.build_command_dispatcher()
-            && let Ok(mut snapshot) = self.command_dispatcher.write()
-        {
-            *snapshot = Some(Arc::new(dispatcher));
+        if let Ok(dispatcher) = self.build_command_dispatcher() {
+            let dispatcher = Arc::new(dispatcher);
+            let snapshots = self
+                .bots
+                .iter()
+                .map(|bot| {
+                    let commands = match &bot.enabled_plugins {
+                        Some(enabled) => Arc::new(dispatcher.for_enabled_plugins(enabled)),
+                        None => Arc::clone(&dispatcher),
+                    };
+                    (bot.id.clone(), commands)
+                })
+                .collect();
+            if let Ok(mut current) = self.bot_command_dispatchers.write() {
+                *current = snapshots;
+            }
         }
         if let Ok(mut snapshot) = self.system_dispatcher.write() {
             *snapshot = Some(Arc::new(self.build_system_dispatcher()));
         }
     }
 
-    fn current_command_dispatcher(&self) -> Option<Arc<CommandDispatcher>> {
-        self.command_dispatcher.read().ok()?.clone()
+    fn current_command_dispatcher(&self, bot_id: &str) -> Option<Arc<CommandDispatcher>> {
+        self.bot_command_dispatchers
+            .read()
+            .ok()?
+            .get(bot_id)
+            .cloned()
     }
 
     fn current_system_dispatcher(&self) -> Option<Arc<OneBotSystemDispatcher>> {
@@ -918,12 +972,7 @@ impl Runtime {
 
     /// Rebuild the interceptor chain: static interceptors + dynamic interceptors from the report.
     fn inject_dynamic_interceptors(&self, report: &HostPluginReport) {
-        let mut chain = InterceptorChain::new();
-
-        // Re-add static interceptors
-        for interceptor in &self.static_interceptors {
-            chain.add(interceptor.clone());
-        }
+        let mut chain = self.static_interceptors.clone();
 
         // Add dynamic interceptors
         for entry in &report.dynamic_plugins {
@@ -948,10 +997,9 @@ impl Runtime {
                 let adapter = Arc::new(DynamicInterceptorAdapter {
                     descriptor,
                     dynamic_runtime: Arc::clone(&self.dynamic_runtime),
-                    pending_sends: Arc::clone(&self.interceptor_pending_sends),
                     timeout: self.dynamic_plugin_timeout,
                 });
-                chain.add(adapter);
+                chain.add_for_plugin(entry.plugin_id.clone(), adapter);
             }
         }
 
@@ -1482,9 +1530,15 @@ impl Runtime {
             let system_dispatcher = self
                 .current_system_dispatcher()
                 .unwrap_or_else(|| Arc::new(self.build_system_dispatcher()));
-            let command_dispatcher = match self.current_command_dispatcher() {
+            let command_dispatcher = match self.current_command_dispatcher(&bot.id) {
                 Some(dispatcher) => dispatcher,
-                None => Arc::new(self.build_command_dispatcher()?),
+                None => {
+                    let dispatcher = self.build_command_dispatcher()?;
+                    Arc::new(match &bot.enabled_plugins {
+                        Some(enabled) => dispatcher.for_enabled_plugins(enabled),
+                        None => dispatcher,
+                    })
+                }
             };
             self.update_bot_status(&bot.id, |status| {
                 status.applied_generation = desired.generation;
@@ -1612,8 +1666,8 @@ impl Runtime {
 
     fn build_system_dispatcher(&self) -> OneBotSystemDispatcher {
         let mut system_dispatcher = OneBotSystemDispatcher::with_default_handlers();
-        for plugin in &self.system_plugins {
-            system_dispatcher.register_plugin(plugin.clone());
+        for (module_id, plugin) in &self.system_plugins {
+            system_dispatcher.register_plugin_for_module(plugin.clone(), module_id);
         }
         let report_guard = self.host_plugin_report.read().unwrap();
         if let Some(report) = report_guard.as_ref() {
@@ -1676,8 +1730,8 @@ impl Runtime {
     fn build_command_dispatcher(&self) -> Result<CommandDispatcher> {
         let mut command_dispatcher =
             CommandDispatcher::with_config(self.plugin_priorities(), self.command_config());
-        for plugin in &self.command_plugins {
-            command_dispatcher.register_plugin(plugin.clone());
+        for (module_id, plugin) in &self.command_plugins {
+            command_dispatcher.register_plugin_for_module(plugin.clone(), module_id);
         }
         let report_guard = self.host_plugin_report.read().unwrap();
         if let Some(report) = report_guard.as_ref() {
@@ -1785,8 +1839,12 @@ impl Runtime {
                 }
             };
             if matches!(entry.api_version.as_str(), "0.4" | "0.5" | "0.6")
-                && let Err(err) =
-                    runtime.bind_host_api_v1(&handle, &entry.path, self.proactive_send_hub.clone())
+                && let Err(err) = runtime.bind_host_api_v1(
+                    &handle,
+                    &entry.path,
+                    &entry.plugin_id,
+                    self.proactive_send_hub.clone(),
+                )
             {
                 tracing::error!(
                     plugin = %entry.plugin_id,
@@ -2667,11 +2725,10 @@ impl Runtime {
             .as_deref()
             .unwrap_or(system_dispatcher);
         if let Some(signal) = system_dispatcher
-            .dispatch(Self::build_system_event_context(
-                bot,
-                &payload,
-                &runtime_ctx,
-            ))
+            .dispatch_with_enabled_plugins(
+                Self::build_system_event_context(bot, &payload, &runtime_ctx),
+                bot.enabled_plugins.as_deref(),
+            )
             .await
         {
             return Ok(match signal {
@@ -2682,7 +2739,12 @@ impl Runtime {
                     };
                     if let Some(report) = report_clone.as_ref()
                         && let Some((signal, sends)) = self
-                            .execute_dynamic_system_route(report, &route, &payload)
+                            .execute_dynamic_system_route(
+                                report,
+                                &route,
+                                &payload,
+                                bot.enabled_plugins.as_deref(),
+                            )
                             .await?
                     {
                         if !sends.is_empty() {
@@ -2836,11 +2898,10 @@ impl Runtime {
         event: NormalizedEvent,
     ) -> Result<()> {
         if let Some(signal) = system_dispatcher
-            .dispatch(Self::build_system_event_context(
-                bot,
-                &event.raw_json,
-                runtime_ctx,
-            ))
+            .dispatch_with_enabled_plugins(
+                Self::build_system_event_context(bot, &event.raw_json, runtime_ctx),
+                bot.enabled_plugins.as_deref(),
+            )
             .await
         {
             match signal {
@@ -2851,7 +2912,12 @@ impl Runtime {
                     };
                     if let Some(report) = report_clone.as_ref()
                         && let Some((signal, sends)) = self
-                            .execute_dynamic_system_route(report, &route, &event.raw_json)
+                            .execute_dynamic_system_route(
+                                report,
+                                &route,
+                                &event.raw_json,
+                                bot.enabled_plugins.as_deref(),
+                            )
                             .await?
                     {
                         if !sends.is_empty() {
@@ -2943,33 +3009,37 @@ impl Runtime {
             return Ok(SessionSignal::EventHandled);
         }
 
-        if !self
-            .interceptor_chain
-            .read()
-            .unwrap()
-            .pre_handle(&bot.id, &event)
-            .await
-        {
-            let sends = self.drain_interceptor_sends();
-            if !sends.is_empty() {
-                runtime_ctx.process_dynamic_sends(sends).await?;
-            }
+        let (allowed, sends) = INTERCEPTOR_SENDS
+            .scope(Default::default(), async {
+                let allowed = self
+                    .interceptor_chain
+                    .read()
+                    .unwrap()
+                    .pre_handle_for_plugins(&bot.id, &event, bot.enabled_plugins.as_deref())
+                    .await;
+                (allowed, INTERCEPTOR_SENDS.with(std::cell::RefCell::take))
+            })
+            .await;
+        if !sends.is_empty() {
+            runtime_ctx.process_dynamic_sends(sends).await?;
+        }
+        if !allowed {
             tracing::debug!(bot_id = %bot.id, "interceptor chain blocked event");
             return Ok(SessionSignal::EventHandled);
         }
 
-        {
-            let sends = self.drain_interceptor_sends();
-            if !sends.is_empty() {
-                runtime_ctx.process_dynamic_sends(sends).await?;
-            }
-        }
-
         let permission = PermissionResolver::resolve(bot, &event);
-        let current_command_dispatcher = self.current_command_dispatcher();
-        let command_dispatcher = current_command_dispatcher
-            .as_deref()
-            .unwrap_or(command_dispatcher);
+        let current_command_dispatcher = self.current_command_dispatcher(&bot.id);
+        let scoped_dispatcher;
+        let command_dispatcher = match (current_command_dispatcher.as_deref(), &bot.enabled_plugins)
+        {
+            (Some(dispatcher), _) => dispatcher,
+            (None, Some(enabled)) => {
+                scoped_dispatcher = command_dispatcher.for_enabled_plugins(enabled);
+                &scoped_dispatcher
+            }
+            (None, None) => command_dispatcher,
+        };
         let command_result = command_dispatcher
             .dispatch(&bot.id, &event, runtime_ctx)
             .with_roles(permission.is_admin, permission.is_owner)
@@ -2990,17 +3060,18 @@ impl Runtime {
             self.metrics.record_reply();
         }
 
-        self.interceptor_chain
-            .read()
-            .unwrap()
-            .after_completion(&bot.id, &event)
+        let sends = INTERCEPTOR_SENDS
+            .scope(Default::default(), async {
+                self.interceptor_chain
+                    .read()
+                    .unwrap()
+                    .after_completion_for_plugins(&bot.id, &event, bot.enabled_plugins.as_deref())
+                    .await;
+                INTERCEPTOR_SENDS.with(std::cell::RefCell::take)
+            })
             .await;
-
-        {
-            let sends = self.drain_interceptor_sends();
-            if !sends.is_empty() {
-                runtime_ctx.process_dynamic_sends(sends).await?;
-            }
+        if !sends.is_empty() {
+            runtime_ctx.process_dynamic_sends(sends).await?;
         }
 
         Ok(SessionSignal::EventHandled)
@@ -3817,14 +3888,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Drain pending send actions accumulated by dynamic interceptors.
-    fn drain_interceptor_sends(&self) -> Vec<SendAction> {
-        self.interceptor_pending_sends
-            .lock()
-            .map(|mut q| q.drain(..).collect())
-            .unwrap_or_default()
-    }
-
     async fn process_qqbot_send_actions(
         &self,
         bot: &BotRuntimeInfo,
@@ -4221,6 +4284,7 @@ impl Runtime {
         report: &HostPluginReport,
         route: &onebot11_dispatch::OneBotSystemRoute,
         payload: &Value,
+        enabled_plugins: Option<&[String]>,
     ) -> Result<Option<(DynamicResponse, Vec<SendAction>)>> {
         let raw_json = payload.to_string();
 
@@ -4234,7 +4298,8 @@ impl Runtime {
                     onebot11_dispatch::NoticeRoute::NotifyHonor(_) => "NotifyHonor",
                     _ => return Ok(None),
                 };
-                if let Some((entry, route_entry)) = find_route_entry(report, "notice", route_label)
+                if let Some((entry, route_entry)) =
+                    find_route_entry(report, "notice", route_label, enabled_plugins)
                 {
                     (
                         entry.path.clone(),
@@ -4242,11 +4307,9 @@ impl Runtime {
                         route_label.to_string(),
                         "notice",
                     )
-                } else if let Some(entry) = report
-                    .dynamic_plugins
-                    .iter()
-                    .find(|e| e.notice_route == route_label)
-                {
+                } else if let Some(entry) = report.dynamic_plugins.iter().find(|e| {
+                    e.notice_route == route_label && plugin_allowed(enabled_plugins, &e.plugin_id)
+                }) {
                     (
                         entry.path.clone(),
                         entry.notice_callback_symbol.clone(),
@@ -4264,7 +4327,8 @@ impl Runtime {
                     onebot11_dispatch::RequestRoute::GroupInvite => "GroupInvite",
                     _ => return Ok(None),
                 };
-                if let Some((entry, route_entry)) = find_route_entry(report, "request", route_label)
+                if let Some((entry, route_entry)) =
+                    find_route_entry(report, "request", route_label, enabled_plugins)
                 {
                     (
                         entry.path.clone(),
@@ -4272,11 +4336,9 @@ impl Runtime {
                         route_label.to_string(),
                         "request",
                     )
-                } else if let Some(entry) = report
-                    .dynamic_plugins
-                    .iter()
-                    .find(|e| e.request_route == route_label)
-                {
+                } else if let Some(entry) = report.dynamic_plugins.iter().find(|e| {
+                    e.request_route == route_label && plugin_allowed(enabled_plugins, &e.plugin_id)
+                }) {
                     (
                         entry.path.clone(),
                         entry.request_callback_symbol.clone(),
@@ -4295,18 +4357,18 @@ impl Runtime {
                     onebot11_dispatch::MetaRoute::LifecycleDisable => "LifecycleDisable",
                     _ => return Ok(None),
                 };
-                if let Some((entry, route_entry)) = find_route_entry(report, "meta", route_label) {
+                if let Some((entry, route_entry)) =
+                    find_route_entry(report, "meta", route_label, enabled_plugins)
+                {
                     (
                         entry.path.clone(),
                         route_entry.callback_symbol.clone(),
                         route_label.to_string(),
                         "meta",
                     )
-                } else if let Some(entry) = report
-                    .dynamic_plugins
-                    .iter()
-                    .find(|e| e.meta_route == route_label)
-                {
+                } else if let Some(entry) = report.dynamic_plugins.iter().find(|e| {
+                    e.meta_route == route_label && plugin_allowed(enabled_plugins, &e.plugin_id)
+                }) {
                     (
                         entry.path.clone(),
                         entry.meta_callback_symbol.clone(),
@@ -4412,11 +4474,15 @@ fn find_route_entry<'a>(
     report: &'a HostPluginReport,
     kind: &str,
     route_label: &str,
+    enabled_plugins: Option<&[String]>,
 ) -> Option<(
     &'a qimen_host_types::DynamicPluginReportEntry,
     &'a qimen_host_types::DynamicRouteEntry,
 )> {
     for entry in &report.dynamic_plugins {
+        if !plugin_allowed(enabled_plugins, &entry.plugin_id) {
+            continue;
+        }
         for route_entry in &entry.routes {
             if route_entry.kind == kind {
                 for name in route_entry.route.split(',').map(|s| s.trim()) {
@@ -6227,6 +6293,7 @@ path = "/onebot/reverse"
             intents: vec!["public_messages".to_string()],
             sandbox: false,
             enabled: true,
+            enabled_plugins: None,
             owners: Vec::new(),
             admins: Vec::new(),
             auto_approve_friend_requests: false,

@@ -24,6 +24,14 @@ impl ModuleRegistry {
         Ok(())
     }
 
+    pub fn collect_plugin_registrations(&self) -> Vec<PluginRegistration> {
+        let mut collector = RegistrationCollector::default();
+        for module in &self.modules {
+            module.register_plugins(&mut collector);
+        }
+        collector.0
+    }
+
     pub fn collect_plugins(&self) -> PluginBundle {
         let mut collector = PluginCollector::default();
 
@@ -32,6 +40,15 @@ impl ModuleRegistry {
         }
 
         collector.bundle
+    }
+}
+
+#[derive(Default)]
+struct RegistrationCollector(Vec<PluginRegistration>);
+
+impl PluginRegistrar for RegistrationCollector {
+    fn register(&mut self, registration: PluginRegistration) {
+        self.0.push(registration);
     }
 }
 

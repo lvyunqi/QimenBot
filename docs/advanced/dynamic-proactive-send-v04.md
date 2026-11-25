@@ -139,8 +139,11 @@ let status = SendBuilder::channel_private("guild-200")
 | InvalidRequest | 字段、目标类型或 JSON 无效 |
 | BotNotFound | `bot_id` 或 `account_id` 没有匹配的 Bot |
 | BotDisabled | Bot 已配置但被禁用 |
+| PluginNotAllowed | 目标 Bot 的插件白名单不允许当前插件发送 |
 | QueueFull | 对应 Bot 的有界队列已满 |
 | HostShuttingDown | Runtime 正在关闭，不再接受请求 |
+
+使用早期 SDK 编译的动态插件会把 `PluginNotAllowed` 解析为 `HostUnavailable`，请求在宿主侧已被拒绝。
 
 ## 后台线程与安全卸载
 

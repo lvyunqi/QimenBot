@@ -769,6 +769,7 @@ pub enum SendEnqueueStatus {
     BotDisabled = 4,
     QueueFull = 5,
     HostShuttingDown = 6,
+    PluginNotAllowed = 7,
 }
 
 impl SendEnqueueStatus {
@@ -781,6 +782,7 @@ impl SendEnqueueStatus {
             4 => Self::BotDisabled,
             5 => Self::QueueFull,
             6 => Self::HostShuttingDown,
+            7 => Self::PluginNotAllowed,
             _ => Self::HostUnavailable,
         }
     }

@@ -171,6 +171,11 @@ enabled = true
 # 留空则使用 official_host.builtin_modules 中的全部模块
 enabled_modules = ["command", "admin", "scheduler"]
 
+# 此 Bot 允许处理消息和事件的插件白名单
+# 未设置时继承全局已启用的插件，[] 表示此 Bot 不触发插件
+# 静态插件填写 Module ID，动态插件填写插件 ID
+# enabled_plugins = ["example-basic"]
+
 # ── 权限配置 ──
 # Bot 所有者的用户 ID 列表（拥有最高权限，如重启、插件管理）
 owners = ["123456"]

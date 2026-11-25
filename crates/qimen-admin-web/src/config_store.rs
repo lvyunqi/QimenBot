@@ -364,6 +364,13 @@ fn apply_bot(table: &mut Table, update: &BotMutation, new_bot: bool) {
     table["sandbox"] = value(update.sandbox);
     table["enabled"] = value(update.enabled);
     table["enabled_modules"] = string_array(&update.enabled_modules);
+    match &update.enabled_plugins {
+        Some(Some(enabled_plugins)) => table["enabled_plugins"] = string_array(enabled_plugins),
+        Some(None) => {
+            table.remove("enabled_plugins");
+        }
+        None => {}
+    }
     table["owners"] = string_array(&update.owners);
     table["admins"] = string_array(&update.admins);
     table["auto_approve_friend_requests"] = value(update.auto_approve_friend_requests);
@@ -481,7 +488,7 @@ mod tests {
         fs::write(&path, test_config()).unwrap();
         let store = ConfigStore::new(&path);
         let current = store.read().await.unwrap();
-        let update = BotMutation {
+        let mut update = BotMutation {
             id: "test-bot".to_string(),
             account_id: Some("10001".to_string()),
             protocol: "onebot11".to_string(),
@@ -496,6 +503,7 @@ mod tests {
             sandbox: false,
             enabled: true,
             enabled_modules: vec!["command".to_string()],
+            enabled_plugins: Some(Some(vec!["example-basic".to_string()])),
             owners: Vec::new(),
             admins: Vec::new(),
             auto_approve_friend_requests: false,
@@ -520,6 +528,31 @@ mod tests {
         assert!(raw.contains("ws://127.0.0.1:4001"));
         assert!(saved.config.bots[0].limiter.enable);
         assert_eq!(saved.config.bots[0].limiter.capacity, 8);
+        assert_eq!(
+            saved.config.bots[0].enabled_plugins,
+            Some(vec!["example-basic".to_string()])
+        );
+        update.enabled_plugins = None;
+        let preserved = store
+            .save_bot(Some("test-bot"), &saved.revision, &update)
+            .await
+            .unwrap();
+        assert_eq!(
+            preserved.config.bots[0].enabled_plugins,
+            Some(vec!["example-basic".to_string()])
+        );
+        update.enabled_plugins = Some(Some(Vec::new()));
+        let empty = store
+            .save_bot(Some("test-bot"), &preserved.revision, &update)
+            .await
+            .unwrap();
+        assert_eq!(empty.config.bots[0].enabled_plugins, Some(Vec::new()));
+        update.enabled_plugins = Some(None);
+        let inherited = store
+            .save_bot(Some("test-bot"), &empty.revision, &update)
+            .await
+            .unwrap();
+        assert_eq!(inherited.config.bots[0].enabled_plugins, None);
         fs::remove_dir_all(directory).unwrap();
     }
 

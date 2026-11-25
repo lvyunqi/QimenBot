@@ -4,6 +4,7 @@ mod notice_handler;
 mod policy;
 mod request_handler;
 
+use crate::plugin_access::plugin_allowed;
 use async_trait::async_trait;
 use qimen_plugin_api::{
     PluginBundle, RuntimeBotContext, SystemMetaRoute, SystemNoticeRoute, SystemPlugin,
@@ -202,10 +203,16 @@ pub trait OneBotSystemEventHandler: Send + Sync {
 #[derive(Clone)]
 pub struct OneBotSystemDispatcher {
     handlers: Vec<Arc<dyn OneBotSystemEventHandler>>,
-    plugins: Vec<Arc<dyn SystemPlugin>>,
+    plugins: Vec<RegisteredSystemPlugin>,
     dynamic_notice_routes: Vec<(String, String, String)>,
     dynamic_request_routes: Vec<(String, String, String)>,
     dynamic_meta_routes: Vec<(String, String, String)>,
+}
+
+#[derive(Clone)]
+struct RegisteredSystemPlugin {
+    plugin: Arc<dyn SystemPlugin>,
+    module_id: &'static str,
 }
 
 impl OneBotSystemDispatcher {
@@ -232,7 +239,17 @@ impl OneBotSystemDispatcher {
     }
 
     pub fn register_plugin(&mut self, plugin: Arc<dyn SystemPlugin>) {
-        self.plugins.push(plugin);
+        let module_id = plugin.metadata().id;
+        self.register_plugin_for_module(plugin, module_id);
+    }
+
+    pub fn register_plugin_for_module(
+        &mut self,
+        plugin: Arc<dyn SystemPlugin>,
+        module_id: &'static str,
+    ) {
+        self.plugins
+            .push(RegisteredSystemPlugin { plugin, module_id });
     }
 
     pub fn register_plugins(&mut self, bundle: &PluginBundle) {
@@ -275,6 +292,14 @@ impl OneBotSystemDispatcher {
         &self,
         ctx: SystemEventContext<'_>,
     ) -> Option<OneBotSystemDispatchSignal> {
+        self.dispatch_with_enabled_plugins(ctx, None).await
+    }
+
+    pub async fn dispatch_with_enabled_plugins(
+        &self,
+        ctx: SystemEventContext<'_>,
+        enabled_plugins: Option<&[String]>,
+    ) -> Option<OneBotSystemDispatchSignal> {
         let route = route_onebot_system_event(ctx.payload)?;
 
         for handler in &self.handlers {
@@ -296,10 +321,15 @@ impl OneBotSystemDispatcher {
             runtime: ctx.runtime,
         };
 
-        let mut sorted_plugins: Vec<_> = self.plugins.iter().collect();
-        sorted_plugins.sort_by_key(|plugin| plugin.priority());
+        let mut sorted_plugins: Vec<_> = self
+            .plugins
+            .iter()
+            .filter(|registered| plugin_allowed(enabled_plugins, registered.module_id))
+            .collect();
+        sorted_plugins.sort_by_key(|registered| registered.plugin.priority());
 
-        for plugin in sorted_plugins {
+        for registered in sorted_plugins {
+            let plugin = &registered.plugin;
             let signal = match &route {
                 OneBotSystemRoute::Notice(route) => {
                     plugin

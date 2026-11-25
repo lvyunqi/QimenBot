@@ -38,11 +38,17 @@ pub struct ParsedCommandInput {
 
 #[derive(Clone)]
 pub struct CommandDispatcher {
-    plugins: Vec<Arc<dyn CommandPlugin>>,
+    plugins: Vec<RegisteredCommandPlugin>,
     dynamic_command_descriptors: Vec<DynamicCommandDescriptor>,
     plugin_priorities: BTreeMap<String, u32>,
     command_config: CommandConfig,
     registry: CommandRegistry,
+}
+
+#[derive(Clone)]
+struct RegisteredCommandPlugin {
+    plugin: Arc<dyn CommandPlugin>,
+    module_id: &'static str,
 }
 
 impl CommandDispatcher {
@@ -70,13 +76,47 @@ impl CommandDispatcher {
     }
 
     pub fn register_plugin(&mut self, plugin: Arc<dyn CommandPlugin>) {
-        self.plugins.push(plugin);
+        let module_id = plugin.metadata().id;
+        self.register_plugin_for_module(plugin, module_id);
+    }
+
+    pub fn register_plugin_for_module(
+        &mut self,
+        plugin: Arc<dyn CommandPlugin>,
+        module_id: &'static str,
+    ) {
+        self.plugins
+            .push(RegisteredCommandPlugin { plugin, module_id });
         self.rebuild_registry();
     }
 
     pub fn set_dynamic_command_descriptors(&mut self, descriptors: Vec<DynamicCommandDescriptor>) {
         self.dynamic_command_descriptors = descriptors;
         self.rebuild_registry();
+    }
+
+    pub(crate) fn for_enabled_plugins(&self, enabled_plugins: &[String]) -> Self {
+        let mut dispatcher = Self {
+            plugins: Vec::new(),
+            dynamic_command_descriptors: Vec::new(),
+            registry: CommandRegistry::with_plugin_priorities(self.plugin_priorities.clone()),
+            plugin_priorities: self.plugin_priorities.clone(),
+            command_config: self.command_config.clone(),
+        };
+        dispatcher.plugins = self
+            .plugins
+            .iter()
+            .filter(|registered| enabled_plugins.iter().any(|id| id == registered.module_id))
+            .cloned()
+            .collect();
+        dispatcher.dynamic_command_descriptors = self
+            .dynamic_command_descriptors
+            .iter()
+            .filter(|descriptor| enabled_plugins.iter().any(|id| id == &descriptor.plugin_id))
+            .cloned()
+            .collect();
+        dispatcher.rebuild_registry();
+        dispatcher
     }
 
     pub fn registry(&self) -> &CommandRegistry {
@@ -134,10 +174,10 @@ impl CommandDispatcher {
             registry.add_builtin(definition);
         }
         let mut sorted_plugins: Vec<_> = self.plugins.iter().collect();
-        sorted_plugins.sort_by_key(|plugin| plugin.priority());
-        for plugin in sorted_plugins {
-            for definition in plugin.commands() {
-                registry.add_plugin(plugin.clone(), definition);
+        sorted_plugins.sort_by_key(|registered| registered.plugin.priority());
+        for registered in sorted_plugins {
+            for definition in registered.plugin.commands() {
+                registry.add_plugin(registered.plugin.clone(), definition);
             }
         }
         for descriptor in &self.dynamic_command_descriptors {
@@ -671,6 +711,69 @@ mod tests {
                 Some(CommandPluginSignal::Continue)
             }
         }
+    }
+
+    #[test]
+    fn bot_plugin_allowlist_uses_the_registered_module_id() {
+        let mut dispatcher = CommandDispatcher::new(CommandConfig::default());
+        dispatcher.register_plugin_for_module(Arc::new(PluginEcho), "echo-module");
+
+        assert!(
+            dispatcher
+                .for_enabled_plugins(&["echo-module".to_string()])
+                .registry()
+                .match_command("status")
+                .is_some()
+        );
+        assert!(
+            dispatcher
+                .for_enabled_plugins(&["plugin-echo".to_string()])
+                .registry()
+                .match_command("status")
+                .is_none()
+        );
+        assert!(
+            dispatcher
+                .for_enabled_plugins(&[])
+                .registry()
+                .match_command("status")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn bot_plugin_allowlist_applies_before_command_precedence() {
+        let priorities = BTreeMap::from([("dynamic-status".to_string(), 100)]);
+        let mut dispatcher = CommandDispatcher::with_plugin_priorities(priorities);
+        dispatcher.register_plugin_for_module(Arc::new(PluginEcho), "echo-module");
+        dispatcher.set_dynamic_command_descriptors(vec![DynamicCommandDescriptor {
+            plugin_id: "dynamic-status".to_string(),
+            command_name: "status".to_string(),
+            command_description: "Dynamic status command".to_string(),
+            callback_symbol: "status".to_string(),
+            library_path: "status.so".to_string(),
+            aliases: vec!["st".to_string()],
+            category: "dynamic".to_string(),
+            required_role: "anyone".to_string(),
+            scope: "all".to_string(),
+        }]);
+        let event = sample_event("/st");
+        assert!(matches!(
+            dispatcher
+                .dispatch("qq-main", &event, &TEST_RUNTIME)
+                .execute()
+                .await,
+            Some(CommandDispatchSignal::DynamicCommand { .. })
+        ));
+
+        let restricted = dispatcher.for_enabled_plugins(&["echo-module".to_string()]);
+        assert!(matches!(
+            restricted.dispatch("qq-main", &event, &TEST_RUNTIME).execute().await,
+            Some(CommandDispatchSignal::Reply(message)) if message.plain_text() == "plugin status"
+        ));
+        let help = restricted.render_help(1);
+        assert!(help.contains("Status from plugin"));
+        assert!(!help.contains("Dynamic status command"));
     }
 
     struct PluginHelp;

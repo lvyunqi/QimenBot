@@ -256,6 +256,9 @@ pub struct BotConfig {
     pub enabled: bool,
     #[serde(default)]
     pub enabled_modules: Vec<String>,
+    /// Plugin IDs allowed to process this bot. None preserves global behavior.
+    #[serde(default)]
+    pub enabled_plugins: Option<Vec<String>>,
     #[serde(default)]
     pub owners: Vec<String>,
     #[serde(default)]
@@ -744,6 +747,7 @@ endpoint = "ws://127.0.0.1:3001"
         assert_eq!(config.bots[0].protocol, "onebot11");
         assert_eq!(config.bots[0].transport, "ws-forward");
         assert!(config.bots[0].enabled);
+        assert!(config.bots[0].enabled_plugins.is_none());
     }
 
     #[test]

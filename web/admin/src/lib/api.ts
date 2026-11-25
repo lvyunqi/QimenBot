@@ -46,6 +46,7 @@ export interface BotView {
   reconnect_count: number
   last_error?: string | null
   enabled_modules: string[]
+  enabled_plugins?: string[] | null
   owners: string[]
   admins: string[]
   auto_approve_friend_requests: boolean
@@ -588,6 +589,7 @@ export interface BotMutation {
   sandbox: boolean
   enabled: boolean
   enabled_modules: string[]
+  enabled_plugins?: string[] | null
   owners: string[]
   admins: string[]
   auto_approve_friend_requests: boolean

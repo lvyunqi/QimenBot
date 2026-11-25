@@ -31,6 +31,7 @@ config/base.toml
 │  [[bots]] qq-main        │  [[bots]] qq-backup      │
 │  ├─ 连接地址 endpoint     │  ├─ 监听地址 bind         │
 │  ├─ enabled_modules      │  ├─ enabled_modules      │
+│  ├─ enabled_plugins      │  ├─ enabled_plugins      │
 │  ├─ owners / admins      │  ├─ owners / admins      │
 │  └─ 各种策略配置           │  └─ ...                  │
 └──────────────────────────┴──────────────────────────┘
@@ -40,6 +41,7 @@ config/base.toml
 - `[official_host]` 控制"加载哪些模块到内存"
 - `[[bots]].enabled_modules` 控制"这个 Bot 实际启用哪些模块"
 - 全局可加载多个模块，各 Bot 通过 `enabled_modules` 选择实际启用的模块
+- `[[bots]].enabled_plugins` 控制"这个 Bot 允许哪些插件处理消息和事件"，未配置时继承全局插件状态
 
 ## `[runtime]` — 运行时
 
@@ -339,6 +341,7 @@ path      = "/onebot/reverse"       # WS 路径
 ```toml
 # 此 Bot 启用的模块
 enabled_modules = ["command", "admin", "scheduler"]
+enabled_plugins = ["example-basic"]
 
 # 所有者（最高权限）
 owners = ["123456"]
@@ -346,6 +349,8 @@ owners = ["123456"]
 # 管理员
 admins = ["789012"]
 ```
+
+`enabled_plugins` 是可选 Bot 级插件白名单。插件仍需先在 `[official_host].plugin_modules` 中加载（静态插件）或在插件状态中全局启用（动态插件），然后才可能被 Bot 使用。列表可写静态插件 Module ID 或动态插件 ID。未填写该字段时继承全局已启用插件，填写 `[]` 时此 Bot 不触发插件；该名单也覆盖插件命令、系统事件、消息拦截器和动态插件主动发送。配置保存后重启宿主生效。
 
 ::: info 权限层级
 | 角色 | 能力 |
