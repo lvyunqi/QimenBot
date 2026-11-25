@@ -2,6 +2,7 @@ use crate::DynError;
 use crate::config::UpdateChannel;
 use futures_util::StreamExt;
 use qimen_update_protocol::{UpdatePhase, UpdateStatus, write_status};
+use reqwest::Url;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use semver::Version;
 use serde::Deserialize;
@@ -13,14 +14,12 @@ use tokio::io::AsyncWriteExt;
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReleaseAsset {
     pub name: String,
-    pub browser_download_url: String,
     pub size: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct GithubRelease {
     tag_name: String,
-    html_url: String,
     draft: bool,
     prerelease: bool,
     assets: Vec<ReleaseAsset>,
@@ -39,6 +38,7 @@ pub struct GithubClient {
     client: reqwest::Client,
     repository: String,
     channel: UpdateChannel,
+    github_proxy: Option<Url>,
     authorization: Option<HeaderValue>,
 }
 
@@ -47,6 +47,7 @@ impl GithubClient {
         repository: impl Into<String>,
         channel: UpdateChannel,
         timeout: Duration,
+        github_proxy: Option<Url>,
     ) -> Result<Self, DynError> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("QimenBot-Updater"));
@@ -58,29 +59,37 @@ impl GithubClient {
             "x-github-api-version",
             HeaderValue::from_static("2022-11-28"),
         );
-        let authorization = std::env::var("GITHUB_TOKEN")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(|token| HeaderValue::from_str(&format!("Bearer {}", token.trim())))
-            .transpose()?;
+        let authorization = if github_proxy.is_none() {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|token| HeaderValue::from_str(&format!("Bearer {}", token.trim())))
+                .transpose()?
+        } else {
+            None
+        };
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .timeout(timeout)
+            .https_only(true)
             .build()?;
         Ok(Self {
             client,
             repository: repository.into(),
             channel,
+            github_proxy,
             authorization,
         })
     }
 
     /// 查询比当前版本更新的 GitHub Release。
     pub async fn find_update(&self, current: &Version) -> Result<Option<ReleaseInfo>, DynError> {
-        let url = format!("https://api.github.com/repos/{}/releases", self.repository);
+        let url = format!(
+            "https://api.github.com/repos/{}/releases?per_page=20",
+            self.repository
+        );
         let releases = self
             .request(&url)
-            .query(&[("per_page", "20")])
             .send()
             .await?
             .error_for_status()?
@@ -96,8 +105,11 @@ impl GithubClient {
                 let version = Version::parse(release.tag_name.trim_start_matches('v')).ok()?;
                 (version > *current).then_some(ReleaseInfo {
                     version,
+                    html_url: format!(
+                        "https://github.com/{}/releases/tag/{}",
+                        self.repository, release.tag_name
+                    ),
                     tag: release.tag_name,
-                    html_url: release.html_url,
                     assets: release.assets,
                 })
             })
@@ -121,7 +133,7 @@ impl GithubClient {
         let asset = find_asset(&release.assets, &asset_name)?;
         let checksum_asset = find_asset(&release.assets, &checksum_name)?;
         let expected_checksum = self
-            .request(&checksum_asset.browser_download_url)
+            .request(&self.release_asset_url(&release.tag, &checksum_asset.name))
             .send()
             .await?
             .error_for_status()?
@@ -138,7 +150,7 @@ impl GithubClient {
         }
         let temporary = destination.with_extension("download");
         let response = self
-            .request(&asset.browser_download_url)
+            .request(&self.release_asset_url(&release.tag, &asset.name))
             .send()
             .await?
             .error_for_status()?;
@@ -178,7 +190,19 @@ impl GithubClient {
         Ok(destination.to_path_buf())
     }
 
+    fn release_asset_url(&self, tag: &str, name: &str) -> String {
+        format!(
+            "https://github.com/{}/releases/download/{tag}/{name}",
+            self.repository
+        )
+    }
+
     fn request(&self, url: &str) -> reqwest::RequestBuilder {
+        if let Some(proxy) = &self.github_proxy {
+            return self
+                .client
+                .get(format!("{}/{url}", proxy.as_str().trim_end_matches('/')));
+        }
         let request = self.client.get(url);
         if let Some(authorization) = &self.authorization {
             request.header(AUTHORIZATION, authorization.clone())
@@ -247,5 +271,39 @@ mod tests {
     #[test]
     fn digest_bytes_are_rendered_as_lower_hex() {
         assert_eq!(lower_hex(&[0x00, 0xab, 0xff]), "00abff");
+    }
+
+    #[test]
+    fn proxy_wraps_release_urls_without_forwarding_authorization() {
+        let mut client = GithubClient::new(
+            "owner/repo",
+            UpdateChannel::Stable,
+            Duration::from_secs(1),
+            Some(Url::parse("https://mirror.example/github/").unwrap()),
+        )
+        .unwrap();
+        let token = HeaderValue::from_static("Bearer test-token");
+        client.authorization = Some(token.clone());
+
+        let release_list = "https://api.github.com/repos/owner/repo/releases?per_page=20";
+        let daemon_url = client.release_asset_url("v0.2.0", "qimenbotd-v0.2.0-linux");
+        assert_eq!(
+            daemon_url,
+            "https://github.com/owner/repo/releases/download/v0.2.0/qimenbotd-v0.2.0-linux"
+        );
+        let checksum_url = format!("{daemon_url}.sha256");
+        for url in [release_list, &daemon_url, &checksum_url] {
+            let request = client.request(url).build().unwrap();
+            assert_eq!(
+                request.url().as_str(),
+                format!("https://mirror.example/github/{url}")
+            );
+            assert!(!request.headers().contains_key(AUTHORIZATION));
+        }
+
+        client.github_proxy = None;
+        let request = client.request(release_list).build().unwrap();
+        assert_eq!(request.url().as_str(), release_list);
+        assert_eq!(request.headers().get(AUTHORIZATION), Some(&token));
     }
 }

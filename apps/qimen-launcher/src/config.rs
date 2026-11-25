@@ -1,4 +1,5 @@
 use crate::DynError;
+use reqwest::Url;
 use serde::Deserialize;
 use std::fs;
 use std::net::IpAddr;
@@ -58,6 +59,7 @@ pub struct UpdateConfig {
     pub enabled: bool,
     pub repository: String,
     pub channel: UpdateChannel,
+    pub github_proxy: Option<String>,
     pub auto_install: bool,
     pub check_interval_secs: u64,
     pub request_timeout_secs: u64,
@@ -70,6 +72,7 @@ impl Default for UpdateConfig {
             enabled: true,
             repository: "lvyunqi/QimenBot".to_string(),
             channel: UpdateChannel::Stable,
+            github_proxy: None,
             auto_install: false,
             check_interval_secs: 21_600,
             request_timeout_secs: 30,
@@ -104,6 +107,7 @@ pub struct ResolvedConfig {
     pub working_dir: PathBuf,
     pub binary_path: PathBuf,
     pub update_dir: PathBuf,
+    pub github_proxy: Option<Url>,
 }
 
 impl ResolvedConfig {
@@ -141,6 +145,7 @@ impl ResolvedConfig {
             LauncherConfig::default()
         };
         validate(&raw)?;
+        let github_proxy = parse_github_proxy(raw.update.github_proxy.as_deref())?;
 
         let working_dir = absolute_from(&install_dir, &raw.process.working_dir);
         let binary_path = raw
@@ -156,6 +161,7 @@ impl ResolvedConfig {
             working_dir,
             binary_path,
             update_dir,
+            github_proxy,
         })
     }
 
@@ -197,7 +203,7 @@ fn validate(config: &LauncherConfig) -> Result<(), DynError> {
 }
 
 fn validate_health_url(value: &str) -> Result<(), DynError> {
-    let url = reqwest::Url::parse(value.trim())?;
+    let url = Url::parse(value.trim())?;
     let host = url
         .host_str()
         .ok_or("process.health_url must include a host")?
@@ -215,6 +221,26 @@ fn validate_health_url(value: &str) -> Result<(), DynError> {
         return Err("process.health_url must use a loopback HTTP address".into());
     }
     Ok(())
+}
+
+fn parse_github_proxy(value: Option<&str>) -> Result<Option<Url>, DynError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let url = Url::parse(value).map_err(|error| format!("invalid update.github_proxy: {error}"))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "update.github_proxy must use an HTTPS URL without credentials, a query, or a fragment"
+                .into(),
+        );
+    }
+    Ok(Some(url))
 }
 
 fn validate_repository(repository: &str) -> Result<(), DynError> {
@@ -279,6 +305,30 @@ mod tests {
         assert!(validate_health_url("http://localhost:3210/healthz").is_ok());
         assert!(validate_health_url("https://localhost:3210/healthz").is_err());
         assert!(validate_health_url("http://127.0.0.1:80@invalid.example").is_err());
+    }
+
+    #[test]
+    fn github_proxy_is_optional_and_requires_a_plain_https_prefix() {
+        assert!(parse_github_proxy(None).unwrap().is_none());
+        assert!(parse_github_proxy(Some(" ")).unwrap().is_none());
+        let config: LauncherConfig =
+            toml::from_str("[update]\ngithub_proxy = 'https://mirror.example/github/'").unwrap();
+        assert_eq!(
+            parse_github_proxy(config.update.github_proxy.as_deref())
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            "https://mirror.example/github/"
+        );
+        for invalid in [
+            "mirror.example",
+            "http://mirror.example/",
+            "https://user:token@mirror.example/",
+            "https://mirror.example/?token=secret",
+            "https://mirror.example/#fragment",
+        ] {
+            assert!(parse_github_proxy(Some(invalid)).is_err(), "{invalid}");
+        }
     }
 
     #[test]

@@ -291,6 +291,19 @@ $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 
 更新只替换 `runtime/qimenbotd`，不会改动配置、插件和数据库。新版本未通过 `/healthz` 时会自动恢复旧核心。根目录的 `qimenbot` 需要升级时，停止服务后用新压缩包中的同名文件手工覆盖。
 
+#### GitHub 下载代理
+
+GitHub 访问不稳定时，在 `config/qimenbot.toml` 的现有 `[update]` 段加入 `github_proxy`，然后重启 `qimenbot` 启动器。
+
+```toml
+[update]
+github_proxy = "https://gh-proxy.com/"
+```
+
+可以更换为支持在 HTTPS 地址后拼接完整 GitHub URL 的服务。服务需同时支持 `api.github.com` 的 Release 列表和 `github.com` 的 Release 制品下载。省略 `github_proxy` 或将其留空即使用 GitHub 直连。
+
+使用代理时，Release 列表、核心程序和 `.sha256` 文件均经该服务获取，请选择可信的代理。启动器向代理发起匿名请求，安装前仍校验 SHA256。已经部署旧版启动器的用户需要先从新 Release 包中手动替换根目录的 `qimenbot`，Windows 对应 `qimenbot.exe`。Docker 部署继续通过 Compose 拉取镜像。
+
 ### 5. 校验下载文件（可选）
 
 完整压缩包带有同名 `.sha256`。以下命令以 `v0.1.22` Linux x86_64 GNU 包为例：
