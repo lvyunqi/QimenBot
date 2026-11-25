@@ -1,6 +1,6 @@
 # 部署 QimenBot
 
-第一次部署优先使用 Docker。它不需要安装 Rust，配置和插件也会保存在宿主机。只有不能使用 Docker，或者需要修改源码时，再选择二进制或源码构建。
+Linux 服务器可以使用 Docker。Windows、macOS 或希望直接在主机运行时，下载 Release 二进制包即可，不需要安装 Rust 或 Node.js。使用二进制时，推荐通过根目录的 `qimenbot` 启动器运行和更新核心程序。修改框架源码时再从源码构建。
 
 ## 选择安装方式
 
@@ -8,10 +8,10 @@
 | --- | --- | --- |
 | Docker 一键安装 | Linux 服务器，接入 QQ 官方机器人 | 重新拉取镜像 |
 | Docker Compose | NAS、Portainer、OneBot、自定义数据盘 | 修改镜像 Tag 后重建容器 |
-| Release 二进制 | Windows、macOS、没有 Docker 的 Linux | `qimenbot` 受控更新 |
+| Release 二进制 | Windows、macOS、Linux 主机 | 用 `qimenbot` 启动，更新由启动器管理 |
 | 源码构建 | 修改框架或静态插件 | 拉取代码后重新构建 |
 
-Docker Hub 镜像是 [`mryunqi/qimenbot`](https://hub.docker.com/r/mryunqi/qimenbot)，支持 `linux/amd64` 和 `linux/arm64`。预编译二进制在 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases)。
+Docker Hub 镜像是 [`mryunqi/qimenbot`](https://hub.docker.com/r/mryunqi/qimenbot)，支持 `linux/amd64` 和 `linux/arm64`。Windows、macOS 和 Linux 的预编译二进制在 [GitHub Releases](https://github.com/lvyunqi/QimenBot/releases)。
 
 ## Docker 一键安装
 
@@ -195,7 +195,7 @@ docker compose --env-file deploy/docker/.env logs --tail 100 qimenbot
 
 ## Release 二进制
 
-不能使用 Docker 时，下载 `QimenBot-*` 完整压缩包。根目录的 `qimenbot` 是唯一入口，负责启动、重启、更新和失败回滚；`runtime/qimenbotd` 是内部核心，不要单独运行。
+不能使用 Docker，或希望直接在主机运行时，下载 `QimenBot-*` 完整压缩包。根目录的 `qimenbot` 是启动入口。生产环境可按[生产环境运维](/advanced/operations)将它配置为 systemd 或 Windows 服务。
 
 ### 1. 下载正确版本
 
@@ -231,7 +231,7 @@ Copy-Item .\config\base.toml.example .\config\base.toml -ErrorAction SilentlyCon
 Copy-Item .\config\qimenbot.toml.example .\config\qimenbot.toml -ErrorAction SilentlyContinue
 ```
 
-编辑 `config/base.toml`，或者先使用包内默认配置启动，再从本机管理面板修改。QQ 官方 Bot 的完整配置见[官方 QQ Bot 接入](/guide/qq-official-quickstart)。
+编辑 `config/base.toml`，或者用包内默认配置启动后再从管理面板修改。QQ 官方 Bot 的配置见[官方 QQ Bot 接入](/guide/qq-official-quickstart)。启动器配置位于 `config/qimenbot.toml`，常规使用可以先保留默认值。
 
 希望把凭据放到环境变量时，先在 `base.toml` 的对应字段中使用占位符：
 
@@ -267,7 +267,9 @@ $env:QQBOT_SECRET = "你的 Secret"
 $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 ```
 
-### 3. 启动 QimenBot
+### 3. 用启动器启动 QimenBot
+
+推荐通过 `qimenbot` 启动。运行后它会启动并监视 `runtime/qimenbotd`，检查和安装更新时也由它完成文件校验、替换和失败回滚。
 
 ```bash
 ./qimenbot run
@@ -277,7 +279,9 @@ $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 .\qimenbot.exe run
 ```
 
-打开 `http://127.0.0.1:3210/`。服务器远程访问不要直接暴露无加密面板，按[生产环境运维](/advanced/operations)配置 systemd、Windows Service 或 HTTPS 反向代理。
+程序会在当前终端运行。Linux 服务器长期运行时，按[生产环境运维](/advanced/operations)配置 systemd；Windows 可配置 Windows Service。服务启动命令同样使用 `qimenbot run`，不要将 `qimenbotd` 单独配置为服务。
+
+启动后打开 `http://127.0.0.1:3210/`。如需远程访问管理面板，按[生产环境运维](/advanced/operations)配置 HTTPS 反向代理。
 
 ### 4. 在线更新
 
@@ -293,16 +297,15 @@ $env:QIMEN_ADMIN_TOKEN = "随机管理 Token"
 
 #### GitHub 下载代理
 
-GitHub 访问不稳定时，在 `config/qimenbot.toml` 的现有 `[update]` 段加入 `github_proxy`，然后重启 `qimenbot` 启动器。
+GitHub 访问不稳定时，编辑 `config/qimenbot.toml`，在已有的 `[update]` 项下加入 `github_proxy`，然后重启 `qimenbot`。
 
 ```toml
-[update]
 github_proxy = "https://gh-proxy.com/"
 ```
 
-可以更换为支持在 HTTPS 地址后拼接完整 GitHub URL 的服务。服务需同时支持 `api.github.com` 的 Release 列表和 `github.com` 的 Release 制品下载。省略 `github_proxy` 或将其留空即使用 GitHub 直连。
+也可填写其他支持在 HTTPS 地址后拼接 GitHub URL 的代理服务。该服务需要同时支持读取 `api.github.com` 上的 Release 列表，以及下载 `github.com` 上的 Release 文件。省略该项或将值留空时，启动器直连 GitHub。
 
-使用代理时，Release 列表、核心程序和 `.sha256` 文件均经该服务获取，请选择可信的代理。启动器向代理发起匿名请求，安装前仍校验 SHA256。已经部署旧版启动器的用户需要先从新 Release 包中手动替换根目录的 `qimenbot`，Windows 对应 `qimenbot.exe`。Docker 部署继续通过 Compose 拉取镜像。
+使用代理时，版本信息、核心程序和 `.sha256` 校验文件都会经过代理，请使用可信的服务。启动器不向代理发送 GitHub 凭据，安装前仍会校验 SHA256。旧版启动器尚不识别 `github_proxy`，需要先从新版 Release 包替换根目录的 `qimenbot`，Windows 文件名为 `qimenbot.exe`。Docker 镜像仍通过 Compose 更新。
 
 ### 5. 校验下载文件（可选）
 
